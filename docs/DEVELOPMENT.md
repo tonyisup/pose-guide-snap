@@ -1,6 +1,6 @@
 # Development Environment
 
-> **Project status: planning/bootstrap; no working app yet.** This document records the command-line Android toolchain verified on 2026-08-28. The Android project and Gradle wrapper are Task 3 work and do not exist yet.
+> **Project status: buildable Android/Compose prototype.** This document records the command-line Android toolchain and Task 3 bootstrap verified on 2026-08-28. Camera, pose detection, coaching, capture, storage, export, and the product workflow are not implemented. No device or emulator test has been run.
 
 ## Verified host
 
@@ -10,6 +10,10 @@
 | Xcode Command Line Tools | `/Library/Developer/CommandLineTools` |
 | Homebrew | 6.0.20 at `/opt/homebrew/bin/brew` |
 | JDK | Homebrew OpenJDK 17.0.20.1 |
+| Gradle wrapper | 9.5.0, distribution SHA-256 pinned |
+| Android Gradle Plugin | 9.3.2 with built-in Kotlin 2.2.10 |
+| Compose compiler plugin | 2.2.10 |
+| Compose BOM | 2026.08.00 (UI 1.12.0, Material 3 1.4.0) |
 | `JAVA_HOME` | `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home` |
 | Android command-line tools | Homebrew cask `15859902`; Android CLI `1.0.15985488`; legacy `sdkmanager` `22.0` |
 | Android SDK root | `/Users/juicebox/Library/Android/sdk` |
@@ -18,7 +22,7 @@
 | Android platform tools | `37.0.1`; ADB `1.0.41` |
 | Android Studio | Not installed; the approved equivalent official JDK + command-line SDK path is used |
 
-The toolchain deliberately does not depend on a running Android Studio GUI. [Android Gradle plugin 9.3](https://developer.android.com/build/releases/agp-9-3-0-release-notes) uses JDK 17, Gradle 9.5, and Build Tools 36.0.0; the project will pin those build versions when Task 3 creates the wrapper. Android's [Java build guidance](https://developer.android.com/build/jdks) is the source of truth for the JDK requirement.
+The toolchain deliberately does not depend on a running Android Studio GUI. [Android Gradle plugin 9.3](https://developer.android.com/build/releases/agp-9-3-0-release-notes) uses JDK 17, Gradle 9.5, and Build Tools 36.0.0; the project pins that stack in its wrapper, version catalog, and app build configuration. AGP's built-in Kotlin 2.2.10 is used, so the project does not apply `org.jetbrains.kotlin.android`; the Compose compiler plugin matches Kotlin at 2.2.10. Android's [Java build guidance](https://developer.android.com/build/jdks) is the source of truth for the JDK requirement.
 
 ## Shell configuration
 
@@ -81,6 +85,52 @@ zsh -lic 'android sdk list "build-tools*"'
 
 The verified installed packages are `platform-tools 37.0.1`, `platforms/android-37.0` revision `2.0.0`, and `build-tools/36.0.0`.
 
+## Project bootstrap verification
+
+From the repository root, run the pinned wrapper and JVM contract tests:
+
+```sh
+./gradlew --version
+./gradlew :app:testDebugUnitTest
+```
+
+Compile both the prototype and its instrumentation test APK:
+
+```sh
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+```
+
+The clean, combined proof used for the Task 3 candidate is:
+
+```sh
+./gradlew clean \
+  :app:testDebugUnitTest \
+  :app:assembleDebug \
+  :app:assembleDebugAndroidTest
+```
+
+The app APK is `app/build/outputs/apk/debug/app-debug.apk`. Hash that exact file before inspecting it:
+
+```sh
+shasum -a 256 app/build/outputs/apk/debug/app-debug.apk
+```
+
+Do not use `apkanalyzer` on this verified split Homebrew/SDK layout. Inspect the exact hashed APK with the pinned Build Tools binary:
+
+```sh
+"$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree \
+  app/build/outputs/apk/debug/app-debug.apk \
+  --file AndroidManifest.xml
+"$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree \
+  app/build/outputs/apk/debug/app-debug.apk \
+  --file res/xml/backup_rules.xml
+"$ANDROID_HOME/build-tools/36.0.0/aapt2" dump xmltree \
+  app/build/outputs/apk/debug/app-debug.apk \
+  --file res/xml/data_extraction_rules.xml
+```
+
+The Task 3 JVM suite checks the provisional package/version configuration and structurally parses the source manifest and both backup-rule resources. The Android instrumentation test checks that the installed package requests only AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` and that `FLAG_ALLOW_BACKUP` is clear; it is compiled by `assembleDebugAndroidTest` but has **not** been run because this bootstrap verification uses no device or emulator. That permission protects non-exported dynamic receivers and grants no camera, storage, or network capability.
+
 ## Current boundary
 
-This toolchain verification does **not** prove an Android application builds. Task 3 must create and pin the Gradle wrapper, bootstrap the app, run its unit test task, and assemble a debug APK before Gate 0 can pass.
+The command-line bootstrap is GREEN: the native Compose prototype and instrumentation test APK compile, the JVM tests pass, and exact packaged-resource inspection verifies the package/version/SDK and fail-closed backup boundary. This proves only that Gate 0 can bootstrap and build. The app currently renders `Pose Guide Snap — prototype`; it has no camera, pose detection, coaching, capture, persistence, export, analytics, cloud, or product workflow.

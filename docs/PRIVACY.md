@@ -1,6 +1,6 @@
 # Privacy and Local Data Contract
 
-> **Project status: planning/bootstrap; no working app yet.** No app data is currently collected because no runtime exists. This document defines the privacy behavior that implementation and acceptance testing must prove.
+> **Project status: buildable prototype only.** The bootstrap requests no `INTERNET`, camera, or storage permission, includes no network/cloud/analytics library, persists no product data, disables system backup, and excludes all app storage domains from supported backup/transfer rules. AndroidX contributes only the app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` for its non-exported dynamic receivers. The lifecycle below remains planned behavior that later implementation and acceptance testing must prove.
 
 ## Privacy boundary
 

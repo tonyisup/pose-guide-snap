@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: planning/bootstrap; no working app yet.** This document defines the intended architecture and ownership rules. No runtime components or contracts described here have been implemented.
+> **Project status: buildable prototype only.** A minimal Compose activity exists; this document defines intended architecture and ownership rules for product components that have not been implemented.
 
 ## Fixed MVP decisions
 

@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: planning/bootstrap; no working app yet.** Everything below defines approved MVP behavior to build and verify. It does not describe an available application.
+> **Project status: buildable prototype only.** A native Android bootstrap exists, but everything below defines approved MVP behavior still to build and verify. It does not describe an available guided-capture product.
 
 ## Product goal
 

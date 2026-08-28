@@ -11,7 +11,7 @@ Pose Guide Snap depends on tight camera preview/analysis/capture coordination, p
 
 Building simultaneous Android and iOS clients, or adding a cross-platform abstraction before the core interaction is proven, would widen camera, audio, lifecycle, and packaging risk without evidence that audio-only pose correction and conservative auto-capture are trustworthy.
 
-The repository is currently in planning/bootstrap and has no working app.
+The repository currently has only a buildable native Android/Compose prototype; no camera or guided-capture workflow exists.
 
 ## Decision
 

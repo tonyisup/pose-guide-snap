@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: planning/bootstrap; no working app or test suite yet.** This document defines the evidence required before implementation claims can be made.
+> **Project status: bootstrap GREEN only.** A JVM bootstrap/privacy contract suite passes and the app plus instrumentation test APKs compile. No instrumentation, emulator, private-device, camera, pose, coaching, capture, storage, or workflow test has run.
 
 ## Testing principles
 
@@ -26,7 +26,7 @@
 | Gate 3: complete local MVP loop | Import/order at least five references; bounded speech; stable lock triggers the same private three-photo pipeline; Room confirmation advances once and queues export; five-pose no-touch completion; airplane-mode operation | The local MVP loop works in the tested conditions, with export reported separately |
 | Gate 4: real-device acceptance | Same APK digest across functional, privacy, audio, storage/export/deletion, and quality/security checks; full Pixel 6 matrix | Only the exact documented behavior and conditions; still no store/publication claim |
 
-The present repository has passed none of these runtime gates. It contains only the contract needed to begin Gate 0.
+Gate 0's command-line bootstrap is GREEN on the verified host: the native prototype builds, JVM tests pass, and the exact APK's manifest and backup resources have been inspected. Gates 1–4 have not passed; the instrumentation test is compile-only and no device or emulator evidence exists.
 
 ## Pure JVM test matrix
 
