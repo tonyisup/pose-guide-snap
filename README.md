@@ -2,7 +2,7 @@
 
 > **Project status: planning/bootstrap; no working app yet.**
 >
-> This repository currently contains the approved product and architecture contract only. There is no Android project, installable APK, camera preview, pose detection, spoken coaching, or capture workflow.
+> This repository currently contains the approved product/architecture contract and a verified command-line Android toolchain record. There is no Android project, installable APK, camera preview, pose detection, spoken coaching, or capture workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -30,8 +30,9 @@ These are product and architecture commitments, not claims of implemented behavi
 | [Architecture](docs/ARCHITECTURE.md) | Planned component boundaries, state ownership, matching, coaching, and capture invariants |
 | [Testing](docs/TESTING.md) | Planned test layers, quality gates, and Pixel 6 acceptance matrix |
 | [Privacy](docs/PRIVACY.md) | Planned local data lifecycle, retention, logging, and deletion behavior |
+| [Development environment](docs/DEVELOPMENT.md) | Verified command-line JDK/Android SDK versions, paths, reproduction, and checks |
 | [ADR 0001: Android native first](docs/adr/0001-android-native-first.md) | Reversible platform decision and consequences |
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
 | [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates |
 
-Runtime setup, build, install, and usage instructions will be added only after those workflows exist and have been verified.
+Application build, install, and usage instructions will be added only after those workflows exist and have been verified.
