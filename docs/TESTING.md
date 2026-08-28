@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: bootstrap GREEN only.** A JVM bootstrap/privacy contract suite passes and the app plus instrumentation test APKs compile. No instrumentation, emulator, private-device, camera, pose, coaching, capture, storage, or workflow test has run.
+> **Project status: deterministic JVM engine GREEN; Android inference compile-only.** JVM tests cover domain boundaries, canonicalization, matching, coaching, and the shoot reducer. The app and MoveNet instrumentation test APKs compile, but no instrumentation, emulator, private-device, camera, runtime inference, durable capture, storage, export, or end-to-end workflow test has run.
 
 ## Testing principles
 
@@ -21,12 +21,12 @@
 | Gate | Required evidence | Claims allowed after passing |
 |---|---|---|
 | Gate 0: approved boundary and toolchain | Approved product docs; verified JDK, Android SDK, platform/build tools, and `adb`; blank debug APK and unit tests from the command line | The project can bootstrap and build, not that guided capture works |
-| Gate 1: deterministic offline engine | Pure JVM tests for normalization, mirror handling, separated gates, cue choice, hysteresis, idempotency, and sequence transitions; no Android/CameraX/MediaPipe/Room/TTS types in domain | Offline domain behavior matches its fixtures, not live pose accuracy |
+| Gate 1: deterministic offline engine | Pure JVM tests for normalization, mirror handling, separated gates, cue choice, hysteresis, idempotency, and sequence transitions; no Android/CameraX/LiteRT/Room/TTS types in domain | Offline domain behavior matches its fixtures, not live pose accuracy |
 | Gate 2: single-reference camera slice | Licensed bundled reference; on-device extraction; Pixel 6 preview, analysis overlay, match report, and reducer-owned manual trigger through the unified private three-photo confirmation pipeline; auto-capture disabled | The manual slice and common durable capture protocol work on the tested APK/device |
 | Gate 3: complete local MVP loop | Import/order at least five references; bounded speech; stable lock triggers the same private three-photo pipeline; Room confirmation advances once and queues export; five-pose no-touch completion; airplane-mode operation | The local MVP loop works in the tested conditions, with export reported separately |
 | Gate 4: real-device acceptance | Same APK digest across functional, privacy, audio, storage/export/deletion, and quality/security checks; full Pixel 6 matrix | Only the exact documented behavior and conditions; still no store/publication claim |
 
-Gate 0's command-line bootstrap is GREEN on the verified host: the native prototype builds, JVM tests pass, and the exact APK's manifest and backup resources have been inspected. Gates 1–4 have not passed; the instrumentation test is compile-only and no device or emulator evidence exists.
+Gate 0's command-line bootstrap is GREEN on the verified host: the native prototype builds, JVM tests pass, and the exact APK's manifest and backup resources have been inspected. The pure domain portion of Gate 1 is implemented and JVM-tested, but Gate 1 is not complete until the on-device model boundary and integration evidence pass. Gates 1–4 therefore remain unpassed; instrumentation is compile-only and no device or emulator evidence exists.
 
 ## Pure JVM test matrix
 
@@ -57,7 +57,8 @@ Planned coverage:
 
 Planned coverage:
 
-- MediaPipe model load and deterministic static-fixture extraction within documented tolerance.
+- Exact MoveNet model load and deterministic one-person, black zero-person, and composed two-person extraction within documented tolerance; currently compile-only until authorized device execution.
+- Camera keep-latest scheduling with one bounded off-UI blocking-detector worker, guaranteed `ImageProxy` closure, per-frame detector/mapper failure containment, and no unbounded queue.
 - Rotation, crop, rear-camera, and mirror coordinate transforms.
 - Room transactions, ordering, migrations, command-token/receipt uniqueness, and atomic confirmation + three private outputs + one advance + outbox creation.
 - System photo-picker result handling, app-private copy, and failed-import cleanup.
@@ -96,7 +97,7 @@ The exact candidate APK digest must be recorded and used for every item below:
 - Default horizontal mirror matching and per-pose opt-out.
 - Airplane-mode operation after app and model installation.
 - Authorized backup/restore inspection where Android tools permit, confirming no sensitive capture, Room, outbox, preference, tombstone, or quarantine state is transported or partially restored.
-- Sustained 15-minute camera analysis with inference latency, dropped frames, thermal behavior, and battery impact recorded.
+- Sustained 15-minute camera analysis with inference latency, dropped frames, allocations/GC pressure, thermal behavior, battery impact, and analysis-resource cleanup recorded.
 - Storage and log inspection confirming that analysis frames, raw landmark arrays, private paths, and MediaStore URIs are not retained or logged contrary to [the privacy contract](PRIVACY.md).
 
 Failure must be recorded honestly. Thresholds may not be lowered merely to manufacture a pass. Any code change creates a new APK digest and requires the affected same-digest reviews to run again.

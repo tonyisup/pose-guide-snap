@@ -8,6 +8,7 @@ lifecycleRuntimeKtx = "2.11.0"
 cameraX = "1.6.2"
 room = "2.8.4"
 dataStore = "1.2.1"
+liteRt = "1.4.2"
 coroutines = "1.11.0"
 turbine = "1.2.1"
 junit = "4.13.2"
@@ -33,6 +34,7 @@ androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "dataStore" }
+litert = { module = "com.google.ai.edge.litert:litert", version.ref = "liteRt" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }

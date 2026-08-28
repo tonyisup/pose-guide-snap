@@ -4,11 +4,11 @@
 
 **Goal:** Build an Android-first, privacy-preserving guided selfie app that imports a sequence of reference-pose photos, coaches one person through the sequence over normal Android audio routing, and captures/advances automatically only after a stable, high-confidence pose match.
 
-**Architecture:** Start with a single Android app module whose boundaries are explicit but not prematurely split into Gradle modules. Keep pose normalization, scoring, coaching, and session transitions as pure Kotlin domain code; place MediaPipe, CameraX, app-private capture storage, Room, Text-to-Speech, MediaStore export, and Compose behind narrow adapters. Automatic and manual capture share one reducer-owned, exactly-three-output private capture pipeline. A Room transaction owns logical confirmation and advancement; MediaStore export follows through an idempotent outbox.
+**Architecture:** Start with a single Android app module whose boundaries are explicit but not prematurely split into Gradle modules. Keep pose normalization, scoring, coaching, and session transitions as pure Kotlin domain code; place direct LiteRT/MoveNet inference, CameraX, app-private capture storage, Room, Text-to-Speech, MediaStore export, and Compose behind narrow adapters. Automatic and manual capture share one reducer-owned, exactly-three-output private capture pipeline. A Room transaction owns logical confirmation and advancement; MediaStore export follows through an idempotent outbox.
 
-**Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; MediaPipe Tasks Pose Landmarker; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
+**Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; direct LiteRT `1.4.2` with MoveNet MultiPose Lightning float16 v1; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
 
-**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–8 are authorized for implementation under the staged-digest review gates in this plan.
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–8 are implemented. On 2026-08-28, the user authorized a telemetry-free Task 9 revision after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. This revision supersedes every MediaPipe-specific instruction below.
 
 ---
 
@@ -77,25 +77,25 @@ These defaults were explicitly approved before implementation:
 2. **Rear camera first.** The earbuds-first interaction matters most when the user cannot see the screen, and rear-camera output gives the sharper proof of value. Add front-camera support only after the state machine is sound.
 3. **No cloud in MVP.** Pose landmarks and matching can run on-device, eliminating account, upload, latency, and sensitive-image retention problems.
 4. **Conservative shutter policy.** A missed capture is recoverable; an unintended burst and sequence advance destroys trust. Auto-capture therefore requires independent coverage, framing, similarity, and stability gates.
-5. **Pure domain core.** Camera frames and MediaPipe results become immutable domain observations before any decision logic runs. Camera, speech, time, storage, and capture are ports—not owners of shoot policy.
+5. **Pure domain core.** Camera frames and detector results become immutable domain observations before any decision logic runs. Camera, speech, time, storage, and capture are ports—not owners of shoot policy.
 6. **Single app module initially.** Enforce package boundaries and dependency rules in tests. Split modules only after build times or ownership justify it.
 
 ## 4. Runtime Architecture
 
-CameraX provides separate preview, CPU image-analysis, and still-image-capture use cases; the app will bind those use cases together without enabling camera extensions in MVP.[1] MediaPipe Pose Landmarker will run in IMAGE mode for imported references and LIVE_STREAM mode for CameraX frames.[2]
+CameraX provides separate preview, CPU image-analysis, and still-image-capture use cases; the app will bind those use cases together without enabling camera extensions in MVP.[1] The exact bundled MoveNet MultiPose model runs through direct LiteRT for both imported references and upright camera frames.[2] Because the detector is blocking, the camera adapter owns one bounded off-UI keep-latest worker rather than an asynchronous model callback.
 
 ```text
 System Photo Picker
         │
         ▼
-ReferencePoseImporter ──> PoseDetector(IMAGE) ──> ReferencePose
+ReferencePoseImporter ──> MoveNetDetector(blocking) ──> ReferencePose
         │                                           │
         └──────────────> ShootRepository(Room) <────┘
                                                     │
 CameraX Preview + ImageAnalysis                    ▼
         │                                  GuidedShootCoordinator
         ▼                                           │
-PoseDetector(LIVE_STREAM) ─> PoseObservation ─> PoseMatcher
+MoveNetDetector(blocking, off-UI) ─> PoseObservation ─> PoseMatcher
                                                     │
                                           MatchResult + CoachingCue
                                              │              │
@@ -125,8 +125,8 @@ Room is appropriate for the shoot/pose/session relationships because they are st
 - `domain/match`: normalization, mirroring, feature extraction, scoring, and independent gates.
 - `domain/coach`: deterministic selection of one actionable cue plus suppression rules.
 - `domain/session`: reducer/state machine; the only authority allowed to request capture or advance the sequence.
-- `pose/mediapipe`: model loading and conversion from MediaPipe results to domain observations.
-- `camera`: CameraX binding, frame delivery, rotation/crop transforms, and still capture.
+- `pose/movenet`: fixed bundled-model loading, direct blocking LiteRT inference, letterbox geometry, and conversion into immutable 17-point 2D domain observations.
+- `camera`: CameraX binding, upright conversion, one bounded off-UI keep-latest inference worker, per-frame failure containment, `ImageProxy` closure, rotation/crop transforms, and still capture.
 - `audio`: TextToSpeech lifecycle, cadence, queue policy, and audio-focus behavior. Android audio-focus handling must follow current platform behavior rather than force routing.[4]
 - `data`: Room entities/DAOs, DataStore settings, app-private reference/capture assets, and MediaStore export records.
 - `ui`: Compose screens and rendering only; UI does not calculate scores or decide capture.
@@ -137,8 +137,12 @@ Planned domain contracts:
 
 ```kotlin
 interface PoseDetector {
-    suspend fun detectReference(image: PoseImage): PoseDetection
-    fun observeLiveFrames(frames: Flow<PoseFrame>): Flow<PoseDetection>
+    fun detectUpright(image: UprightPoseImage): PoseDetection
+}
+
+interface LivePoseScheduler {
+    fun submitLatest(frame: PoseFrame)
+    fun observeDetections(): Flow<PoseDetection>
 }
 
 interface PoseMatcher {
@@ -265,7 +269,7 @@ Rules:
 
 - Pure JVM tests prove normalization, mirror handling, gate separation, cue choice, hysteresis, idempotency, and sequence transitions.
 - Synthetic jitter and negative-control fixtures are deterministic.
-- No Android camera, TTS, Room, or MediaPipe object enters the domain package.
+- No Android camera, TTS, Room, or LiteRT object enters the domain package.
 
 ### Gate 2 — Single-reference camera slice
 
@@ -388,7 +392,7 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 ### Task 4: Define immutable domain models and dependency boundaries
 
-**Objective:** Establish app-independent data contracts before bringing in MediaPipe or CameraX.
+**Objective:** Establish app-independent data contracts before bringing in a platform detector runtime or CameraX.
 
 **Files:**
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/Landmark.kt`
@@ -401,7 +405,7 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Steps:**
 
-1. Write a causal architecture test that scans `domain/` imports and rejects Android, CameraX, MediaPipe, Room, and Compose packages.
+1. Write a causal architecture test that scans `domain/` imports and rejects Android, CameraX, detector SDKs including LiteRT, Room, and Compose packages.
 2. Add immutable value types with validated normalized-coordinate and confidence ranges.
 3. Make timestamps explicit values supplied by a clock, not calls to system time inside models.
 4. Run the architecture test and all JVM tests.
@@ -491,31 +495,31 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Verification:** A generated/replayed event sequence can never advance two poses from one capture token.
 
-### Task 9: Add MediaPipe reference and live detectors
+### Task 9: Add telemetry-free MoveNet reference and live detector boundary
 
-**Objective:** Translate MediaPipe outputs into the domain without leaking SDK types across the adapter boundary.
+**Objective:** Execute the exact bundled MoveNet MultiPose model through minimal direct LiteRT, then translate its 17-point 2D output into the domain without leaking Android or LiteRT types into pure mapping policy.
 
 **Files:**
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipePoseDetector.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipeResultMapper.kt`
-- Create: `app/src/main/assets/pose_landmarker_lite.task`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/movenet/MoveNetPoseDetector.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/movenet/MoveNetResultMapper.kt`
+- Create: `app/src/main/assets/movenet_multipose_lightning_float16_v1.tflite`
 - Create: `docs/MODELS.md`
-- Create: `app/src/test/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipeResultMapperTest.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/pose/MediaPipePoseDetectorTest.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/pose/movenet/MoveNetResultMapperTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/pose/MoveNetPoseDetectorTest.kt`
 - Create: `app/src/androidTest/assets/pose-fixtures/*`
 - Create: `app/src/androidTest/assets/pose-fixtures/ATTRIBUTION.md`
 
 **Steps:**
 
-1. Document the official model source, exact version, license, SHA-256, and intended IMAGE/LIVE_STREAM modes.
-2. Add mapper REDs for rotation, mirroring, visibility, missing pose, and two-person rejection.
-3. Implement the mapper and detector adapter.
-4. Add a licensed static-image instrumentation fixture and verify one-person extraction.
-5. Ensure the detector's frame callback cannot block CameraX analysis.
-6. Run mapper unit tests and detector instrumentation test.
+1. Document the exact MoveNet model/runtime pins, license, SHA-256, 17-point 2D limitations, score-alias semantics, and the rejected MediaPipe telemetry path.
+2. Add mapper REDs for exact output shape, deterministic letterbox unpadding, immutable raw snapshots, person count/selection, invalid evidence, and the 17-to-domain identity map.
+3. Implement the pure mapper and fixed direct-LiteRT blocking detector. The detector accepts only upright caller-owned bitmaps and owns no clock, threshold, executor, queue, or CameraX policy.
+4. Add the licensed static-image instrumentation fixture plus black zero-person and composed two-person controls. Compile the contract without claiming execution.
+5. Prove the exact APK has only the generated app-signature permission, the runtime graph is exactly LiteRT `1.4.2` plus `litert-api:1.4.2`, and model/fixture bytes match reviewed hashes.
+6. Keep real detector instrumentation and threshold calibration pending for the authorized Pixel 6 gate.
 7. Commit: `feat: integrate on-device pose landmark detection`.
 
-**Verification:** The same image produces a stable landmark payload within documented tolerance and no SDK type appears under `domain/`.
+**Verification:** Pure mapping is deterministic; no Android/LiteRT type appears under `domain/`; exact APK/runtime/model privacy and provenance gates pass. Runtime inference remains compile-only until authorized device acceptance.
 
 ### Task 10: Build the single-reference CameraX vertical slice
 
@@ -534,11 +538,11 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 **Steps:**
 
 1. Write transform REDs for sensor rotation, crop, preview scaling, and rear-camera coordinates.
-2. Bind Preview, ImageAnalysis with keep-latest backpressure, and ImageCapture.
+2. Bind Preview, ImageAnalysis with keep-latest backpressure, and ImageCapture. Convert each accepted analysis frame into an upright bitmap, close every `ImageProxy` in `finally`, and run the blocking MoveNet detector on one bounded off-UI worker. A newer pending frame replaces an older pending frame; never queue unbounded inference work.
 3. Render a bundled reference and live skeleton in the same coordinate space.
 4. Display named gate states rather than only an aggregate score.
 5. Add deterministic same-directory temp writes, appropriate sync, and per-file atomic no-clobber publication for exactly three private outputs. Keep the user-facing manual trigger disabled until Task 14 connects these mechanics to the reducer, Room confirmation, and export outbox; there must be no second protocol.
-6. Measure analysis latency and dropped-frame behavior locally without logging images.
+6. Contain detector/mapper exceptions per frame so malformed output cannot terminate analysis. Measure latency, dropped frames, allocations/GC pressure, thermal behavior, and sustained resource cleanup locally without logging images, raw tensors, landmarks, or private paths.
 7. Run on the Pixel 6 and save an evidence note under `docs/validation/`.
 8. Commit: `feat: prove single-reference guided camera slice`.
 
@@ -764,7 +768,8 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 ### Android instrumentation tests
 
-- MediaPipe model load and static fixture extraction.
+- Exact MoveNet model load and one/zero/two-person static fixture extraction; compile first and run only on an authorized device.
+- Bounded off-UI keep-latest scheduling, guaranteed `ImageProxy` closure, per-frame detector/mapper failure containment, and no unbounded inference queue.
 - Room transactions, ordering, migration, and uniqueness.
 - Photo-picker import result handling.
 - Compose create/import/reorder/start flow.
@@ -798,7 +803,7 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 | Capture duplicates or advances early | Core trust failure | Pure reducer for automatic/manual triggers, deterministic tokens, durable private outputs, unique Room receipt, transactional advancement, crash/replay tests |
 | Speech becomes noisy or stale | User confusion when screen is distant | One-cue policy, persistence, bounded queue, state priority, cancellation tests |
 | TTS is inaudible or steals audio unexpectedly | Hands-free flow fails | Current media route, transient focus, explicit phone/earbud acceptance, visual fallback |
-| MediaPipe/model changes alter scores | Existing references drift | Persist detector version, model digest, calibration fixtures, explicit reprocessing path |
+| MoveNet/model or preprocessing changes alter scores | Existing references drift | Persist detector version, model digest, preprocessing version, calibration fixtures, explicit reprocessing path |
 | Private authority or export state is lost/duplicated | Privacy or trust harm | No-clobber publication, exact-three outbox rows, exclusive create claim, exact-URI authority, ambiguous-create reconciliation, deletion barrier, and privacy acceptance |
 | Android backup/transfer partially restores private state | Privacy leak or broken authority/receipt invariants | `allowBackup=false`, fail-closed legacy/API31+/cross-platform XML rules, no BackupAgent, merged-manifest/rule tests, authorized platform inspection |
 | Reference imports retain sensitive images unexpectedly | Privacy harm | App-private copy, no frame persistence, deletion contract, privacy acceptance |
@@ -815,25 +820,26 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 5. **Reference semantics:** Automatic horizontal mirroring by default, with a per-pose opt-out.
 6. **Capture policy:** Exactly three photos per automatic or manual reducer command. Manual bypasses only pose-match/lock eligibility; both paths require three durable private outputs and the same Room confirmation/advance receipt.
 7. **Storage contract:** App-private captures are authoritative. One Room transaction owns confirmation, three output records, exactly-once advancement, receipt application, and export-outbox creation. MediaStore export is idempotent post-confirmation work with explicit separate deletion behavior.
+8. **Pose runtime:** The exact bundled MoveNet MultiPose model runs through minimal direct LiteRT `1.4.2`. The detector is fixed and blocking; imported references call it off the UI thread, while live CameraX analysis uses a separate one-worker keep-latest scheduler with per-frame failure containment.
 
-**Approval recorded:** Defaults 1–5 and the bounded Tasks 1–8 phase were approved on 2026-08-27. The current approved decisions 6–7 supersede the earlier MediaStore-authoritative capture/storage wording. Later changes to these boundaries require an explicit plan revision.
+**Approval recorded:** Defaults 1–5 and the bounded Tasks 1–8 phase were approved on 2026-08-27. Decisions 6–7 supersede the earlier MediaStore-authoritative capture/storage wording. Decision 8 was approved on 2026-08-28 after the MediaPipe telemetry conflict and replacement spikes. Later changes to these boundaries require an explicit plan revision.
 
-## 11. First Execution Slice
+## 11. First Execution Slice — Completed
 
-After approval, execute **Tasks 1–8 only** as the first bounded phase:
+The approved first bounded phase executed **Tasks 1–8 only**:
 
 - establish docs and toolchain,
 - bootstrap the app,
 - build the pure pose/match/coach/session domain,
 - produce a deterministic replay report,
-- stop before MediaPipe, camera, earbuds, or image access.
+- stop before detector integration, camera, earbuds, or private image access.
 
-This yields the core ownership boundary and causal tests without touching private device data. Review that exact staged digest before continuing to the MediaPipe/CameraX phase.
+This yielded the core ownership boundary and causal tests without touching private device data. Those exact staged increments were reviewed before the separately approved MoveNet/LiteRT Task 9 phase; CameraX remains Task 10.
 
 ## Sources
 
 [1] https://developer.android.com/media/camera/camerax/architecture — CameraX architecture
-[2] https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker/android — MediaPipe Pose Landmarker for Android
+[2] https://www.kaggle.com/models/google/movenet/tfLite — official Google MoveNet registry and model contract
 [3] https://developer.android.com/training/data-storage/room — Save data in a local database using Room
 [4] https://developer.android.com/media/optimize/audio-focus — Manage audio focus
 [5] https://developer.android.com/identity/data/autobackup — Android Auto Backup, device transfer, and cross-platform transfer configuration

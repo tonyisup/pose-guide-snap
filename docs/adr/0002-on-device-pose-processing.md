@@ -1,6 +1,6 @@
 # ADR 0002: On-Device Pose Processing
 
-- **Status:** Accepted product boundary; implementation pending
+- **Status:** Accepted product boundary; direct MoveNet/LiteRT model boundary implemented, device acceptance pending
 - **Date:** 2026-08-27
 - **Decision owners:** Pose Guide Snap product and architecture review
 - **Reversibility:** Reversible only through a new data and privacy decision
@@ -11,19 +11,21 @@ Reference photos and live camera frames may contain sensitive personal images. T
 
 A monocular pose detector is still limited when run locally: it cannot perfectly reconstruct depth, occluded joints, hand shape, or viewpoint. Moving inference to a server would not justify stronger product claims.
 
-The repository is currently in planning/bootstrap and has no pose model or working inference path.
+The repository now bundles an exact MoveNet MultiPose model and implements a direct LiteRT detector plus pure mapper. The Android inference contract compiles but has not run on a device or emulator.
 
 ## Decision
 
 Run pose landmark extraction and pose matching on the Android device for both explicitly selected reference images and live camera observations.
 
-- Use the planned MediaPipe Pose Landmarker adapter in IMAGE mode for references and LIVE_STREAM mode for camera observations.
+- Use the exact bundled MoveNet MultiPose Lightning float16 v1 model through minimal direct LiteRT `1.4.2` for both references and live observations. The blocking detector receives upright bitmaps; the camera layer must schedule it on one bounded off-UI worker with keep-latest backpressure and per-frame failure containment.
 - Copy selected references into app-private storage and keep derived landmarks and model metadata app-private.
 - Never persist live camera-analysis frames.
 - Keep confirmed captures authoritative in app-private storage and export them afterward through the separate idempotent MediaStore outbox and deletion contract.
 - Provide local-only operation after the app and model are installed. Coaching must use an installed TTS voice verified as not requiring a network connection, or fail safely to visual-only mode; the MVP requests no Android `INTERNET` permission.
 - Explicitly exclude every sensitive app-private and device-protected domain from Android cloud backup, device-to-device transfer, and supported cross-platform transfer. Partial restore of capture, Room receipt, outbox claim/URI, tombstone, or quarantine state is forbidden; no custom `BackupAgent` may bypass the fail-closed XML rules.
 - Do not add accounts, cloud upload, remote inference, or analytics SDKs to the MVP.
+
+MediaPipe Tasks was evaluated and rejected for this boundary: its mandatory Google metrics path conflicts with the no-analytics/no-network contract, while excluding the transport stack breaks detector creation. Direct BlazePose execution was also rejected after a bounded spike required bespoke graph reconstruction and miscounted the one- and two-person controls. The selected MoveNet path preserves exact 1/0/2 person evidence in the denied-network spike but deliberately reduces the observation contract to 17 image-plane keypoints with `z = 0`.
 
 ## Rationale
 
@@ -50,7 +52,7 @@ This decision is a privacy and reliability boundary. It is not a claim that on-d
 - App-private authority must remain coherent across export and deletion: one exactly-three-row outbox uses an exclusive durable pre-create claim and exact-URI-only MediaStore mutation; deletion uses a generation barrier and retains visible quarantine/tombstones when safe resolution is impossible.
 - OS clear-data or uninstall may remove private authority and quarantine but cannot guarantee removal of already or ambiguously exported MediaStore rows.
 - There is no server-side fallback for unsupported devices or difficult inputs.
-- On-device monocular inference retains viewpoint, depth, occlusion, and hand-shape limitations.
+- The selected 17-point 2D model retains viewpoint, depth, occlusion, hand/foot-detail, and image-plane-angle limitations.
 
 ## Alternatives considered
 

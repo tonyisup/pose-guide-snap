@@ -31,7 +31,7 @@ ReferencePoseImporter --> PoseDetector(IMAGE) --> ReferencePose
 CameraX Preview + ImageAnalysis                   v
         |                                GuidedShootCoordinator
         v                                         |
-PoseDetector(LIVE_STREAM) -> PoseObservation -> PoseMatcher
+PoseDetector(blocking, off-UI) -> PoseObservation -> PoseMatcher
                                                   |
                                         MatchResult + CoachingCue
                                            |                |
@@ -50,7 +50,7 @@ PoseDetector(LIVE_STREAM) -> PoseObservation -> PoseMatcher
                               MediaStore export outbox worker
 ```
 
-CameraX is planned to provide preview, CPU image analysis, and still image capture. MediaPipe Pose Landmarker is planned in IMAGE mode for imported references and LIVE_STREAM mode for camera observations. Room is planned for ordered shoot, pose, session, and capture relationships. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
+CameraX is planned to provide preview, CPU image analysis, and still image capture. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the future camera adapter owns one bounded off-UI worker, keep-latest backpressure, rotation/crop conversion, per-frame failure containment, and `ImageProxy` closure. Room is planned for ordered shoot, pose, session, and capture relationships. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
 
 ## State and policy ownership
 
@@ -59,15 +59,15 @@ CameraX is planned to provide preview, CPU image analysis, and still image captu
 | `domain/model` | Immutable pose, match, cue, shoot, capture-token, and session values | Android or SDK objects |
 | `domain/match` | Coordinate-independent normalization, allowed mirroring, feature extraction, scoring, and independent lock gates | Camera lifecycle, capture, speech, persistence, or sequence advancement |
 | `domain/coach` | Deterministic selection of one actionable cue and suppression policy | Free-form generation, audio routing, shoot state, or capture policy |
-| `domain/session` | The reducer/state machine and the sole authority to request capture or advance the sequence | CameraX, MediaPipe, Room, TTS, Compose, or wall-clock calls |
-| `pose/mediapipe` | Model loading and conversion of SDK results into immutable domain observations | Match thresholds, coaching policy, capture, or sequence state |
-| `camera` | CameraX binding, frame delivery, rotation/crop transforms, and still-capture mechanics | Lock policy or sequence advancement |
+| `domain/session` | The reducer/state machine and the sole authority to request capture or advance the sequence | CameraX, LiteRT, Room, TTS, Compose, or wall-clock calls |
+| `pose/movenet` | Fixed bundled-model loading, direct blocking LiteRT inference, deterministic letterbox geometry, and conversion into immutable 17-point 2D domain observations | Camera scheduling, hidden clocks, match thresholds beyond explicit mapper policy, coaching, capture, or sequence state |
+| `camera` | CameraX binding, upright frame conversion, one bounded off-UI inference worker, keep-latest backpressure, per-frame failure containment, rotation/crop transforms, `ImageProxy` closure, and still-capture mechanics | Lock policy or sequence advancement |
 | `audio` | Text-to-Speech lifecycle, bounded cadence/queue behavior, audio focus, and current-route playback | Bespoke Bluetooth routing or shoot policy |
 | `data` | Room entities/DAOs, DataStore preferences, app-private reference/capture assets, and MediaStore export state | Match, coaching, capture eligibility, or sequence-advancement decisions |
 | `ui` | Compose rendering, accessibility, input, and display of named states | Score calculation, hidden threshold changes, capture decisions, or sequence advancement |
 | `GuidedShootCoordinator` | Translate adapter inputs into reducer events and interpret reducer effects through ports | Invent policy outside reducer transitions |
 
-Camera frames and MediaPipe results must become immutable domain observations before decision logic runs. Camera, speech, time, storage, and capture are ports. They are not owners of shoot policy.
+Camera frames and MoveNet outputs must become immutable domain observations before decision logic runs. Camera, speech, time, storage, and capture are ports. They are not owners of shoot policy.
 
 ## Planned state machine
 
@@ -120,7 +120,7 @@ The match pipeline must not collapse trust decisions into one Euclidean distance
 7. Return named coverage, framing, angular-similarity, positional-similarity, and overall-match values.
 8. Refuse lock whenever any required gate fails. A high aggregate score cannot hide missing legs, poor framing, or a second person.
 
-A monocular 2D/weak-3D detector cannot perfectly recover depth, occluded joints, hand shape, or viewpoint. Architecture and UI must preserve that limitation. The system reports a **pose match**, never a perfect pose or guaranteed good photograph.
+The selected 17-point MoveNet model is strictly 2D. It cannot recover depth and omits hand detail, heels, foot indices, mouth corners, and inner/outer eye points; occlusion and viewpoint remain ambiguous. Architecture and UI must preserve that limitation. The system reports a **pose match**, never a perfect pose or guaranteed good photograph.
 
 ## Coaching contract
 
@@ -156,7 +156,7 @@ See [Privacy](PRIVACY.md) for the complete data contract and [Testing](TESTING.m
 
 ## Dependency direction
 
-Domain packages must remain pure Kotlin. They may not import Android, CameraX, MediaPipe, Room, Text-to-Speech, Compose, or concrete storage APIs. Adapters depend inward on domain contracts. UI and platform callbacks submit events; they do not mutate session state directly.
+Domain packages must remain pure Kotlin. They may not import Android, CameraX, LiteRT, Room, Text-to-Speech, Compose, or concrete storage APIs. Adapters depend inward on domain contracts. UI and platform callbacks submit events; they do not mutate session state directly.
 
 This direction will be enforced with source-level dependency tests before camera or model integration begins.
 

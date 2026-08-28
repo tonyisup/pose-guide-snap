@@ -2,7 +2,7 @@
 
 > **Project status: buildable Android/Compose prototype.**
 >
-> This repository contains a real native Android project, a minimal prototype screen, JVM bootstrap/privacy contract tests, and an instrumentation test that compiles into a test APK. The prototype does **not** implement camera preview, pose detection, coaching, capture, storage, export, or the planned product workflow. No device or emulator test has been run.
+> This repository contains a real native Android project, a minimal prototype screen, deterministic JVM pose/matching/coaching/session policy, and a direct LiteRT MoveNet detector adapter. The detector's 1/0/2-person instrumentation contract compiles into a test APK but has **not** run on a device or emulator. Camera preview, durable capture, storage, export, and the end-to-end product workflow remain unimplemented.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -48,8 +48,9 @@ These are product and architecture commitments, not claims of implemented behavi
 | [Testing](docs/TESTING.md) | Current bootstrap gate and planned quality/Pixel 6 acceptance matrix |
 | [Privacy](docs/PRIVACY.md) | Implemented bootstrap boundary and planned local data lifecycle, retention, logging, and deletion behavior |
 | [Development environment](docs/DEVELOPMENT.md) | Verified toolchain, build/test commands, and exact APK inspection procedure |
+| [Model and runtime](docs/MODELS.md) | Exact MoveNet/LiteRT pins, provenance, privacy decision, 2D limitations, and upgrade gates |
 | [ADR 0001: Android native first](docs/adr/0001-android-native-first.md) | Reversible platform decision and consequences |
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
-| [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates |
+| [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates, amended by the approved telemetry-free MoveNet/LiteRT revision |
 
 Install and product-usage instructions will be added only after those workflows exist and have been verified on an authorized target.

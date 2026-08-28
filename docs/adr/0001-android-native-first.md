@@ -23,7 +23,7 @@ Keep one Android app module initially, with explicit package and dependency boun
 
 ## Rationale
 
-Native Android is the shortest route to testing the riskiest interaction on the device that is already available. It lets CameraX, app-private file storage, Text-to-Speech, audio focus, Room, MediaStore export, DataStore, Compose, and MediaPipe adapters follow their platform contracts directly while the pure Kotlin domain remains isolated from Android dependencies.
+Native Android is the shortest route to testing the riskiest interaction on the device that is already available. It lets CameraX, app-private file storage, Text-to-Speech, audio focus, Room, MediaStore export, DataStore, Compose, and the direct LiteRT/MoveNet adapter follow their platform contracts while the pure Kotlin domain remains isolated from Android dependencies.
 
 This choice optimizes for evidence, not permanent platform exclusivity.
 
