@@ -1,0 +1,839 @@
+# Pose Guide Snap Android MVP Implementation Plan
+
+> **For Hermes:** Use the `software-development:subagent-driven-development` skill to implement this plan task-by-task. Require specification and quality/security approval of the same exact staged digest before each commit.
+
+**Goal:** Build an Android-first, privacy-preserving guided selfie app that imports a sequence of reference-pose photos, coaches one person through the sequence over normal Android audio routing, and captures/advances automatically only after a stable, high-confidence pose match.
+
+**Architecture:** Start with a single Android app module whose boundaries are explicit but not prematurely split into Gradle modules. Keep pose normalization, scoring, coaching, and session transitions as pure Kotlin domain code; place MediaPipe, CameraX, app-private capture storage, Room, Text-to-Speech, MediaStore export, and Compose behind narrow adapters. Automatic and manual capture share one reducer-owned, exactly-three-output private capture pipeline. A Room transaction owns logical confirmation and advancement; MediaStore export follows through an idempotent outbox.
+
+**Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; MediaPipe Tasks Pose Landmarker; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
+
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–8 are authorized for implementation under the staged-digest review gates in this plan.
+
+---
+
+## 1. Baseline Audit
+
+As inspected on 2026-08-27:
+
+- The repository root existed but contained no files, including no hidden project files.
+- It is not a Git repository.
+- The host currently has no usable JDK, Gradle, Android SDK, `adb`, or Android Studio installation.
+- Homebrew and Xcode Command Line Tools are present.
+- A Pixel 6 running Android 16 is available as the intended first real-device acceptance target.
+
+This means the first implementation step is a fail-loud toolchain gate, not application code. Do not generate an Android project and then discover midway that it cannot build or run.
+
+## 2. Product Boundary
+
+### 2.1 MVP user journey
+
+1. The user creates a named shoot.
+2. The user imports 3–20 reference photos and arranges them in order.
+3. The app validates each image locally and rejects references that do not contain exactly one sufficiently visible person.
+4. The user mounts the phone, selects rear-camera capture, optionally connects earbuds, and starts the shoot.
+5. The app announces framing corrections first, then the single highest-value pose correction.
+6. When coverage, framing, similarity, and stability gates all pass for a configured dwell period, the app announces capture and writes exactly three authoritative app-private photos.
+7. One Room transaction confirms all three durable outputs, advances exactly once, marks the confirmation/advance receipt applied, and queues MediaStore export. Manual capture uses this same pipeline and bypasses only the match/lock gate.
+8. The process continues while an idempotent worker exports confirmed captures to MediaStore afterward; private capture authority and session advancement never depend on export completion.
+
+### 2.2 MVP scope
+
+- Android-first native application.
+- One person, static full-body or three-quarter-body poses.
+- Local reference-image import through Android's system picker.
+- Ordered pose playlists.
+- Rear camera first; front-camera support is deferred until the rear-camera loop passes the real-device gate.
+- On-device reference and live pose landmark extraction.
+- Visual overlay, score, and concise spoken correction.
+- Spoken output through Android's current media route, including connected earbuds; the app will not implement bespoke Bluetooth routing.
+- Stable-match auto-capture with hysteresis, cooldown, idempotency, and a reducer-owned manual trigger that bypasses only pose-match/lock eligibility.
+- Exactly three authoritative app-private outputs per automatic or manual command, with post-confirmation MediaStore export.
+- Local-only operation after the model and app are installed.
+- Explicit exclusion of all sensitive app-private data from Android cloud backup, device-to-device transfer, and supported cross-platform transfer; partial restore is forbidden.
+- No account and no cloud upload.
+
+### 2.3 Explicit non-goals for MVP
+
+- iOS or cross-platform UI.
+- Couples, groups, children-specific flows, or multiple simultaneous bodies.
+- Dynamic/action pose sequences.
+- Facial-expression scoring, attractiveness scoring, body-shape judgment, or beauty filters.
+- Generative pose suggestions.
+- Background, outfit, lighting-quality, or scene-aesthetic scoring.
+- Automatic correction for arbitrary camera azimuth or severe perspective differences.
+- Remote model inference, analytics SDKs, ads, subscriptions, or app-store publication.
+- A claim that a high skeleton-match score guarantees a good photograph.
+
+### 2.4 Product truth that must remain visible
+
+A monocular 2D/weak-3D detector cannot perfectly reconstruct depth, occluded joints, hand shape, or viewpoint. The app should say **“pose match”**, not **“perfect pose.”** References with a substantially different viewpoint from the live camera may be impossible to match reliably; the import validator and live UI must explain this rather than silently lowering thresholds.
+
+## 3. Approved Product Decisions
+
+These defaults were explicitly approved before implementation:
+
+1. **Android first.** This is the fastest path to a real test on the available Pixel 6 and avoids compromising camera/audio behavior for cross-platform abstraction before the core interaction is proven.
+2. **Rear camera first.** The earbuds-first interaction matters most when the user cannot see the screen, and rear-camera output gives the sharper proof of value. Add front-camera support only after the state machine is sound.
+3. **No cloud in MVP.** Pose landmarks and matching can run on-device, eliminating account, upload, latency, and sensitive-image retention problems.
+4. **Conservative shutter policy.** A missed capture is recoverable; an unintended burst and sequence advance destroys trust. Auto-capture therefore requires independent coverage, framing, similarity, and stability gates.
+5. **Pure domain core.** Camera frames and MediaPipe results become immutable domain observations before any decision logic runs. Camera, speech, time, storage, and capture are ports—not owners of shoot policy.
+6. **Single app module initially.** Enforce package boundaries and dependency rules in tests. Split modules only after build times or ownership justify it.
+
+## 4. Runtime Architecture
+
+CameraX provides separate preview, CPU image-analysis, and still-image-capture use cases; the app will bind those use cases together without enabling camera extensions in MVP.[1] MediaPipe Pose Landmarker will run in IMAGE mode for imported references and LIVE_STREAM mode for CameraX frames.[2]
+
+```text
+System Photo Picker
+        │
+        ▼
+ReferencePoseImporter ──> PoseDetector(IMAGE) ──> ReferencePose
+        │                                           │
+        └──────────────> ShootRepository(Room) <────┘
+                                                    │
+CameraX Preview + ImageAnalysis                    ▼
+        │                                  GuidedShootCoordinator
+        ▼                                           │
+PoseDetector(LIVE_STREAM) ─> PoseObservation ─> PoseMatcher
+                                                    │
+                                          MatchResult + CoachingCue
+                                             │              │
+                                             ▼              ▼
+                                      ShootStateReducer  SpeechCoach
+                                             │
+                                      CaptureCommand(token)
+                                             │
+                                             ▼
+                                    CameraX ImageCapture
+                                             │
+                                             ▼
+                            App-private capture files
+                                      │
+                                      ▼
+                      Room confirmation + sequence advance
+                                      │
+                                      ▼
+                          MediaStore export outbox worker
+```
+
+Room is appropriate for the shoot/pose/session relationships because they are structured data with transactional ordering requirements.[3] DataStore is reserved for small user preferences such as voice enabled, speech cadence, dwell duration, and match threshold.
+
+### 4.1 Ownership boundaries
+
+- `domain/model`: immutable pose, match, cue, shoot, and session values.
+- `domain/match`: normalization, mirroring, feature extraction, scoring, and independent gates.
+- `domain/coach`: deterministic selection of one actionable cue plus suppression rules.
+- `domain/session`: reducer/state machine; the only authority allowed to request capture or advance the sequence.
+- `pose/mediapipe`: model loading and conversion from MediaPipe results to domain observations.
+- `camera`: CameraX binding, frame delivery, rotation/crop transforms, and still capture.
+- `audio`: TextToSpeech lifecycle, cadence, queue policy, and audio-focus behavior. Android audio-focus handling must follow current platform behavior rather than force routing.[4]
+- `data`: Room entities/DAOs, DataStore settings, app-private reference/capture assets, and MediaStore export records.
+- `ui`: Compose screens and rendering only; UI does not calculate scores or decide capture.
+
+### 4.2 Core contracts
+
+Planned domain contracts:
+
+```kotlin
+interface PoseDetector {
+    suspend fun detectReference(image: PoseImage): PoseDetection
+    fun observeLiveFrames(frames: Flow<PoseFrame>): Flow<PoseDetection>
+}
+
+interface PoseMatcher {
+    fun compare(reference: ReferencePose, live: PoseObservation): MatchResult
+}
+
+interface SpeechCoach {
+    suspend fun speak(cue: CoachingCue)
+    suspend fun stop()
+}
+
+interface CapturePort {
+    suspend fun captureThreePrivateOutputs(command: CaptureCommand): PrivateCaptureResult
+}
+
+interface ShootRepository {
+    fun observeShoot(id: ShootId): Flow<Shoot>
+    suspend fun replacePoseOrder(id: ShootId, poseIds: List<PoseId>)
+    suspend fun confirmCaptureAdvanceAndEnqueueExport(result: PrivateCaptureResult): CaptureReceipt
+}
+```
+
+All automatic and manual capture commands carry a unique token derived from session ID, pose ID, and attempt number. A successful token can be applied only once. Manual capture is not a second port or protocol; it is a reducer event that skips only pose-match/lock eligibility before emitting the same command.
+
+### 4.3 Pose scoring
+
+Do not reduce the problem to a single raw Euclidean distance.
+
+1. Reject observations with zero people or more than one sufficiently visible person.
+2. Transform sensor coordinates into the displayed/captured crop coordinate system.
+3. Remove landmarks below the visibility/presence floor.
+4. Compute both normal and horizontally mirrored candidates where the reference allows mirroring.
+5. Normalize translation around torso center and scale by torso length/shoulder-hip geometry.
+6. Compute weighted joint-angle features for shoulders, elbows, wrists, hips, knees, ankles, and torso lean.
+7. Compute normalized landmark-position error separately.
+8. Return independent values for landmark coverage, framing, angular similarity, positional similarity, and overall match.
+9. Refuse lock if any required gate fails; a weighted average must never hide missing legs, poor framing, or a second person.
+
+No production threshold is accepted merely because it “looks reasonable.” Thresholds remain development defaults until fixture and real-device calibration produce a documented positive/negative separation report.
+
+### 4.4 Coaching policy
+
+- Framing/coverage corrections have priority over limb corrections.
+- Emit one concise cue at a time.
+- Select the largest actionable semantic error whose confidence is high enough.
+- Require persistence across several frames before speaking.
+- Suppress repeats for a configurable interval unless the error materially worsens.
+- Prefer relative language: “raise your left hand,” “step back,” “turn your shoulders slightly right.”
+- Never speak numeric match scores through earbuds during normal shooting.
+- Announce lock, capture, next pose, pause, and completion as explicit state changes.
+
+### 4.5 Capture state machine
+
+```text
+Preparing
+  -> SearchingForPerson
+  -> Framing
+  -> Coaching
+  -> LockCandidate
+  -> Locked
+  -> Capturing(token)
+  -> ConfirmingAndAdvancing(token)
+  -> CaptureConfirmedAndAdvanced(token)
+  -> SearchingForPerson | Completed
+
+Any active state -> Paused -> previous safe state
+Any active state -> Failed(recoverable | terminal)
+Capturing + CaptureFailureCleanupConfirmed(token) -> Coaching
+Capturing + CaptureFailureReconciliationRequired(token) -> Failed(terminal)
+```
+
+Required invariants:
+
+- Automatic `CaptureCommand` can be emitted only from `Locked`; `ManualCaptureRequested` is reducer-owned and bypasses only pose-match/lock eligibility before emitting the same command.
+- Every command writes exactly three authoritative app-private outputs with deterministic `(commandToken, burstOrdinal 0..2)` identities. Each file uses a same-directory temporary write, appropriate sync, and atomic no-clobber final publication; the three-file set is not claimed to be filesystem-atomic.
+- A pose cannot advance until all three private files exist durably and one Room transaction confirms the attempt, records the outputs, advances exactly once, marks the receipt applied, and creates the export outbox.
+- Capture or confirmation failure does not advance or create an outbox. It returns to a re-armed coaching state only after unconfirmed private files are cleaned or quarantined; uncertain resolution enters reconciliation-required with no automatic recapture.
+- After Room confirmation, capture and advancement are complete. MediaStore export is idempotent outbox work and retries never recapture or re-advance.
+- Replayed/stale frames cannot emit another command for an already confirmed token.
+- Falling below the release threshold re-arms lock; the acquire threshold is higher than the release threshold.
+- Pausing cancels pending speech and capture countdowns.
+
+## 5. Data and Privacy Design
+
+Planned Room entities:
+
+- `ShootEntity(id, name, createdAt, updatedAt, currentOrderVersion, lifecycleState, deletionGeneration)`
+- `PoseEntity(id, shootId, sortIndex, label, referenceAssetPath, landmarkPayload, detectorVersion, mirrorAllowed, validationStatus)`
+- `SessionEntity(id, shootId, startedAt, completedAt, state)`
+- `CaptureAttemptEntity(commandToken, sessionId, poseId, triggerType, state, reconciliationRequired, startedAt, confirmedAt)`
+- `PrivateCaptureOutputEntity(commandToken, burstOrdinal, deterministicPrivatePath, durabilityState, scoreSummary, capturedAt, integrityMetadata)`
+- `CaptureConfirmationReceiptEntity(commandToken, appliedAt)` with a unique command-token key
+- `CaptureExportOutboxEntity(commandToken, state, createdAt, updatedAt, retryMetadata)` with exactly one committed row per confirmed command
+- `CaptureExportOutputEntity(commandToken, burstOrdinal, targetCollectionUri, targetVolume, intendedDisplayName, intendedRelativePath, intendedMimeType, claimToken, exportState, mediaUriString: String?, ambiguityState)` with composite primary key/uniqueness `(commandToken, burstOrdinal)` and a database ordinal constraint of 0–2
+
+Rules:
+
+- Copy selected reference images into app-private storage after explicit selection; do not depend indefinitely on an external provider URI.
+- Store the extracted landmark payload, detector/model version, and coordinate-transform metadata with each reference.
+- Treat one automatic or manual capture token as one exactly-three-output attempt; identify outputs by `(commandToken, burstOrdinal)` for ordinals 0–2.
+- Write each image to a same-directory temporary file, sync it and its directory as appropriate, and atomically publish its deterministic final app-private path without clobber. A collision is a failure, not permission to replace. Do not claim multi-file filesystem atomicity.
+- Confirm only after all three authoritative private files are durable. In one Room transaction, confirm the attempt, record all three private outputs, advance once, apply the idempotent receipt, and create one durable MediaStore export outbox with exactly three per-output rows. Verify output cardinality is exactly three inside that transaction before commit. This is the session ownership boundary.
+- If private write/finalization or the Room transaction fails, do not advance or create an outbox. Clean or quarantine unconfirmed files; if resolution cannot be proven, require reconciliation and forbid automatic recapture.
+- On startup, resolve pre-transaction private files by deterministic attempt identity before retry. For committed attempts, replay only pending export work.
+- Export afterward through a worker that first wins a durable Room compare-and-set from pending to claimed with a fresh unique claim token. Only that winner may call `MediaStore.insert()`. Claimed/create-started work without a durably stored exact URI never returns to pending and is never auto-created again after timeout/restart; it enters reconciliation-required.
+- Persist exact target collection/volume and intended metadata for diagnostics, but never treat display name or relative path as unique authority. After `insert()` returns, durably record the exact URI before any fallible publication step. Automatic update/delete is allowed only through that output's exact durable URI; ambiguous missing-URI outcomes fail closed and preserve foreign rows.
+- Never persist camera-analysis frames.
+- Never log raw image paths, landmark arrays, or MediaStore URIs in release builds.
+- Delete through an atomic Room barrier: mark the shoot deleting, advance its deletion generation, block capture/advance and new exporter claims, and cancel untouched pending work. Workers recheck the barrier before external create and before publication. Do not remove authority during claim/create/publish; wait for or resolve exact-URI work, and retain a minimal tombstone with reconciliation-required state if safe completion is impossible. Report incomplete rather than success.
+- Keep quarantined images app-private and backup/transfer-excluded, tied to reconciliation metadata, visible as a user-facing unresolved count/state, and retained until explicit resolution or successful app-level deletion. Delete-all uses the same barrier. Clear-data/uninstall can forcibly remove private quarantine/state but cannot promise removal of already or ambiguously exported MediaStore rows.
+- The Task 3 manifest sets `android:allowBackup="false"`, `android:fullBackupContent="@xml/backup_rules"`, and `android:dataExtractionRules="@xml/data_extraction_rules"`. Both resources exclude every applicable `root`, `file`, `database`, `sharedpref`, `external`, `device_root`, `device_file`, `device_database`, and `device_sharedpref` domain for cloud backup and device transfer; compile SDK 37 also includes a fail-closed `cross-platform-transfer platform="ios"` section. No custom `BackupAgent` is permitted. Partial restore of capture/Room/outbox state is forbidden because it can violate authority and receipt invariants.[5]
+- Add `docs/PRIVACY.md` before any distribution build.
+
+## 6. Quality Gates
+
+### Gate 0 — Approved boundary and usable toolchain
+
+- This plan and the product boundary are approved.
+- JDK, Android SDK, platform/build tools, and `adb` are installed.
+- `java -version`, `sdkmanager --list`, and `adb version` succeed.
+- A blank debug APK builds and unit tests run.
+
+### Gate 1 — Deterministic offline engine
+
+- Pure JVM tests prove normalization, mirror handling, gate separation, cue choice, hysteresis, idempotency, and sequence transitions.
+- Synthetic jitter and negative-control fixtures are deterministic.
+- No Android camera, TTS, Room, or MediaPipe object enters the domain package.
+
+### Gate 2 — Single-reference camera slice
+
+- One bundled, licensed reference fixture is extracted on-device.
+- Camera preview, analysis overlay, and a live match report run on the Pixel 6.
+- The reducer-owned manual trigger succeeds through the same exactly-three-output private confirmation and export-outbox protocol used by automatic capture; only auto-lock eligibility is disabled.
+- Auto-capture remains disabled.
+
+### Gate 3 — Complete local MVP loop
+
+- A user can import and order at least five references.
+- Speech is concise and rate-limited.
+- Stable matching triggers exactly one private three-photo capture, the Room confirmation transaction advances exactly one pose and queues export, and all five poses can complete without touching the phone.
+- Airplane mode does not break the session.
+
+### Gate 4 — Real-device acceptance
+
+- Same exact APK digest is used for functional, privacy, audio-route, and quality/security review.
+- Pixel 6 acceptance matrix passes rear camera, phone speaker, connected earbuds, permission denial/recovery, app background/foreground, pre/post-confirmation restart, capture/export/reconciliation and deletion behavior, low light, partial occlusion, no person, and a second person entering frame.
+- No publication or store claim is made until this gate passes.
+
+## 7. Implementation Tasks
+
+The tasks below are intentionally sequential. Bootstrap establishes a truthful GREEN baseline; later REDs must be causal behavior failures, not manufactured tests that fail only because a class has not been created.
+
+**Execution pre-flight:** Because Tasks 1 and 2 each end in a commit, initialize the empty directory with `git init -b main` before Task 1. This establishes version-control history only; it does not scaffold application code.
+
+### Task 1: Approve and document the product boundary
+
+**Objective:** Turn the recommendations in this plan into the repository's explicit product contract before runtime work.
+
+**Files:**
+- Modify: `.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md`
+- Create: `README.md`
+- Create: `docs/PRODUCT.md`
+- Create: `docs/ARCHITECTURE.md`
+- Create: `docs/TESTING.md`
+- Create: `docs/PRIVACY.md`
+- Create: `docs/adr/0001-android-native-first.md`
+- Create: `docs/adr/0002-on-device-pose-processing.md`
+
+**Steps:**
+
+1. Copy the approved scope, non-goals, user journey, state ownership, and truth-in-claims language into the named docs.
+2. Mark the project status as “planning/bootstrap; no working app yet.”
+3. Record Android-first and on-device inference as reversible ADRs with consequences.
+4. Add an explicit deferred-features table.
+5. Review docs for claims that imply camera, coaching, or capture already works.
+6. Commit: `docs: define pose guide snap MVP boundary`.
+
+**Verification:** `README.md` links every required document and none claims an implemented feature.
+
+### Task 2: Install and verify the Android toolchain
+
+**Objective:** Establish a reproducible build environment before scaffolding.
+
+**Files:**
+- Create: `docs/DEVELOPMENT.md`
+
+**Steps:**
+
+1. Install the current stable Android Studio or an equivalent official JDK + Android command-line SDK toolchain. Prefer Android Studio because the host currently has none of these components.
+2. Record exact installed versions and paths in `docs/DEVELOPMENT.md`.
+3. Set `ANDROID_HOME`/`ANDROID_SDK_ROOT` consistently and expose `platform-tools` on `PATH`.
+4. Verify:
+   - `java -version`
+   - `sdkmanager --list`
+   - `adb version`
+5. Stop immediately if the SDK license, JDK, or platform tool cannot be verified.
+6. Commit: `docs: record Android development toolchain`.
+
+**Verification:** A fresh shell can execute all three verification commands without relying on Android Studio's GUI process.
+
+### Task 3: Bootstrap the Android project and truthful GREEN baseline
+
+**Objective:** Create the smallest buildable native Android app with pinned stable dependencies.
+
+**Files:**
+- Create: `.gitignore`
+- Create: `settings.gradle.kts`
+- Create: `build.gradle.kts`
+- Create: `gradle.properties`
+- Create: `gradle/libs.versions.toml`
+- Create: `gradlew`, `gradlew.bat`, and `gradle/wrapper/*`
+- Create: `app/build.gradle.kts`
+- Create: `app/proguard-rules.pro`
+- Create: `app/src/main/AndroidManifest.xml`
+- Create: `app/src/main/res/xml/backup_rules.xml`
+- Create: `app/src/main/res/xml/data_extraction_rules.xml`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/MainActivity.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/App.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/BootstrapTest.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/BackupExclusionContractTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/BackupExclusionManifestTest.kt`
+
+**Steps:**
+
+1. Verify the repository is on `main` and that only the approved documentation/toolchain work from Tasks 1–2 is present.
+2. Use application ID `com.tonyisup.poseguidesnap` provisionally; change it now if a different publishing identity is required.
+3. Set `minSdk = 29`; resolve and pin current stable compile/target SDK, AGP, Kotlin, Compose BOM, CameraX, Room, DataStore, coroutines, and test versions. Do not select alpha dependencies without a written reason.
+4. Set the application manifest to `android:allowBackup="false"`, reference both backup-rule resources, and declare no custom `BackupAgent`. Add fail-closed legacy and API 31+ XML rules excluding all nine supported credential/device-protected domains from cloud and device transfer; when compiling with SDK 37, include the supported iOS cross-platform-transfer section with the same exclusions and non-authoritative counterpart metadata.
+5. Add source/merged-manifest and parsed rule-content tests. Prove every required domain is excluded in every applicable mode and reject partial capture/Room/outbox restoration.
+6. Add a minimal Compose screen that states “Pose Guide Snap — prototype.”
+7. Add one bootstrap test that asserts the package/version configuration, not a fabricated missing-class RED.
+8. Run:
+   - `./gradlew --version`
+   - `./gradlew :app:testDebugUnitTest`
+   - `./gradlew :app:assembleDebug`
+9. Hash the exact candidate APK, then use the pinned SDK Build Tools `aapt2 dump xmltree` against that APK—not only source or merged intermediates—to inspect `AndroidManifest.xml`, `res/xml/backup_rules.xml`, and `res/xml/data_extraction_rules.xml`. Require the packaged manifest references and the complete nine-domain exclusion set in every applicable packaged rule section; also assert the packaged manifest has no `android.permission.INTERNET`.
+10. Where authorized platform tooling permits, inspect a forced backup/restore or transfer dry run and record that no sensitive app state is included.
+11. Commit: `build: bootstrap Android application`.
+
+The planned rule content is fail-closed, not an allowlist of selected sensitive paths:
+
+- `backup_rules.xml` contains a `<full-backup-content>` root and `<exclude domain="…" path="."/>` for each of `root`, `file`, `database`, `sharedpref`, `external`, `device_root`, `device_file`, `device_database`, and `device_sharedpref`.
+- `data_extraction_rules.xml` contains `<cloud-backup>`, `<device-transfer>`, and, for compile SDK 37, `<cross-platform-transfer platform="ios">`. Each section contains the same nine whole-domain exclusions and no sensitive-data include. Any required cross-platform counterpart fields are non-authoritative transfer metadata and cannot weaken those exclusions.
+- Contract tests parse the XML structure and compare each section's exclusion-domain set to that exact nine-domain set; token-presence checks alone are insufficient.
+
+**Verification:** The debug APK exists and the test task is GREEN from the command line. Source and merged manifests retain `allowBackup=false` plus both rule references. Inspection of the exact hashed APK proves its packaged manifest retains those references and no `INTERNET` permission, while both packaged compiled XML resources contain the exact whole-domain exclusion sets. Authorized platform inspection is recorded where tools permit.
+
+### Task 4: Define immutable domain models and dependency boundaries
+
+**Objective:** Establish app-independent data contracts before bringing in MediaPipe or CameraX.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/Landmark.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/PoseObservation.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/ReferencePose.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/MatchResult.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/CoachingCue.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/model/Shoot.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/architecture/DomainBoundaryTest.kt`
+
+**Steps:**
+
+1. Write a causal architecture test that scans `domain/` imports and rejects Android, CameraX, MediaPipe, Room, and Compose packages.
+2. Add immutable value types with validated normalized-coordinate and confidence ranges.
+3. Make timestamps explicit values supplied by a clock, not calls to system time inside models.
+4. Run the architecture test and all JVM tests.
+5. Commit: `feat: define pose guidance domain contracts`.
+
+**Verification:** Domain source compiles as pure Kotlin and the boundary test proves forbidden dependencies are absent.
+
+### Task 5: Implement canonicalization and pose feature extraction
+
+**Objective:** Convert raw landmark observations into comparable, viewpoint-limited pose features.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/match/PoseCanonicalizer.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/match/PoseFeatures.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/domain/match/PoseCanonicalizerTest.kt`
+- Create: `app/src/test/resources/poses/*.json`
+
+**Steps:**
+
+1. Add deterministic fixture observations for baseline, translated, scaled, mirrored, low-confidence, and occluded cases.
+2. Write behavioral REDs proving translation/scale invariance, explicit mirror handling, and confidence filtering.
+3. Implement torso-centered normalization and weighted joint-angle extraction.
+4. Add property-style jitter tests with seeded random input.
+5. Run: `./gradlew :app:testDebugUnitTest --tests '*PoseCanonicalizerTest'`.
+6. Commit: `feat: canonicalize pose landmarks deterministically`.
+
+**Verification:** Equal poses remain close under permitted translation/scale/jitter; occluded landmarks are excluded rather than replaced with invented coordinates.
+
+### Task 6: Implement multi-gate pose matching
+
+**Objective:** Produce explainable match results without allowing one aggregate score to hide a failed safety gate.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/match/DefaultPoseMatcher.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/match/MatchPolicy.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/domain/match/DefaultPoseMatcherTest.kt`
+
+**Steps:**
+
+1. Write REDs for same-pose, clearly different pose, mirrored match, insufficient coverage, poor framing, and multiple-person rejection.
+2. Return named subscores and gate failures in `MatchResult`.
+3. Keep development thresholds in `MatchPolicy`; do not scatter constants.
+4. Ensure overall score cannot set `eligibleForLock=true` when any mandatory gate fails.
+5. Run focused and full JVM tests.
+6. Commit: `feat: add explainable multi-gate pose matcher`.
+
+**Verification:** Test output identifies exactly which gate blocked lock for every negative control.
+
+### Task 7: Implement deterministic coaching cues
+
+**Objective:** Convert stable match errors into one concise, actionable correction.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/coach/CoachingPolicy.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/coach/DefaultCoachingEngine.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/domain/coach/DefaultCoachingEngineTest.kt`
+
+**Steps:**
+
+1. Write REDs proving framing precedes limb cues, low-confidence joints produce no cue, and left/right respects mirror transforms.
+2. Implement a fixed semantic cue vocabulary rather than free-form text generation.
+3. Add persistence and material-change requirements to prevent frame-to-frame chatter.
+4. Test cue priority and no-cue states.
+5. Commit: `feat: derive concise pose coaching cues`.
+
+**Verification:** Identical match inputs always produce the same cue and no cue judges appearance or body shape.
+
+### Task 8: Implement the shoot reducer and capture invariants
+
+**Objective:** Make capture/advance policy deterministic and independently testable.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/session/ShootState.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/session/ShootEvent.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/session/ShootEffect.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/domain/session/ShootReducer.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/domain/session/ShootReducerTest.kt`
+
+**Steps:**
+
+1. Write transition-table REDs for acquire dwell, release hysteresis, pause, stale frame, automatic capture, `ManualCaptureRequested` bypassing only match/lock, shared capture success, explicit `CaptureFailureCleanupConfirmed` recovery, explicit `CaptureFailureReconciliationRequired` terminal failure, duplicate confirmation/advance receipt, export-status events that cannot advance, and final completion.
+2. Implement a pure `(state, event) -> state + effects` reducer.
+3. Emit unique capture tokens and reject duplicate/stale receipts.
+4. Use injected monotonic timestamps in tests.
+5. Run focused tests repeatedly to prove determinism.
+6. Commit: `feat: add idempotent guided shoot state machine`.
+
+**Verification:** A generated/replayed event sequence can never advance two poses from one capture token.
+
+### Task 9: Add MediaPipe reference and live detectors
+
+**Objective:** Translate MediaPipe outputs into the domain without leaking SDK types across the adapter boundary.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipePoseDetector.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipeResultMapper.kt`
+- Create: `app/src/main/assets/pose_landmarker_lite.task`
+- Create: `docs/MODELS.md`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/pose/mediapipe/MediaPipeResultMapperTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/pose/MediaPipePoseDetectorTest.kt`
+- Create: `app/src/androidTest/assets/pose-fixtures/*`
+- Create: `app/src/androidTest/assets/pose-fixtures/ATTRIBUTION.md`
+
+**Steps:**
+
+1. Document the official model source, exact version, license, SHA-256, and intended IMAGE/LIVE_STREAM modes.
+2. Add mapper REDs for rotation, mirroring, visibility, missing pose, and two-person rejection.
+3. Implement the mapper and detector adapter.
+4. Add a licensed static-image instrumentation fixture and verify one-person extraction.
+5. Ensure the detector's frame callback cannot block CameraX analysis.
+6. Run mapper unit tests and detector instrumentation test.
+7. Commit: `feat: integrate on-device pose landmark detection`.
+
+**Verification:** The same image produces a stable landmark payload within documented tolerance and no SDK type appears under `domain/`.
+
+### Task 10: Build the single-reference CameraX vertical slice
+
+**Objective:** Prove preview, coordinate transforms, live detection, overlay, and exactly-three-output app-private capture mechanics on the real device before auto-capture. Do not expose a standalone manual persistence path.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/camera/CameraController.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/camera/CameraXController.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/camera/CoordinateTransform.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraScreen.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/PoseOverlay.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraViewModel.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/camera/CoordinateTransformTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraScreenTest.kt`
+
+**Steps:**
+
+1. Write transform REDs for sensor rotation, crop, preview scaling, and rear-camera coordinates.
+2. Bind Preview, ImageAnalysis with keep-latest backpressure, and ImageCapture.
+3. Render a bundled reference and live skeleton in the same coordinate space.
+4. Display named gate states rather than only an aggregate score.
+5. Add deterministic same-directory temp writes, appropriate sync, and per-file atomic no-clobber publication for exactly three private outputs. Keep the user-facing manual trigger disabled until Task 14 connects these mechanics to the reducer, Room confirmation, and export outbox; there must be no second protocol.
+6. Measure analysis latency and dropped-frame behavior locally without logging images.
+7. Run on the Pixel 6 and save an evidence note under `docs/validation/`.
+8. Commit: `feat: prove single-reference guided camera slice`.
+
+**Verification:** Preview, overlay, and all three candidate private captures align on the exact APK under test; write/finalization failure and collision do not clobber final files; camera-analysis resources close when leaving the screen. Gate 2 manual acceptance remains pending until Task 14 connects the full common protocol.
+
+### Task 11: Add Room persistence and reference import
+
+**Objective:** Let users create a shoot and import locally validated reference poses.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/AppDatabase.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/*Entity.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/*Dao.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/RoomShootRepository.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/ReferenceAssetStore.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporter.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporterTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/RoomShootRepositoryTest.kt`
+
+**Steps:**
+
+1. Write REDs for atomic pose ordering, unique command tokens and confirmation receipts, one-outbox/exactly-three-output cardinality, composite output uniqueness, ordinal bounds, deletion-generation barriers, valid import, no-person rejection, multiple-person rejection, low-coverage rejection, and failed-copy cleanup.
+2. Add Room schema and migrations from version 1 onward for attempts, authoritative private outputs, confirmation/advance receipts, one export outbox, and exactly three per-output rows with composite `(commandToken, burstOrdinal)` identity, ordinal 0–2 constraint, claim state/token, exact target collection/volume, intended metadata, and exact URI; never use destructive fallback in release code.
+3. Copy selected references to app-private storage before extraction.
+4. Store detector/model metadata with serialized landmarks.
+5. Make import transactional: no partial pose row survives a failed asset copy or validation. Add the repository transaction that atomically confirms an already-durable three-output attempt, records its private outputs, advances once, applies the unique receipt, creates one outbox plus exactly three output rows, and verifies that cardinality before commit. Add the atomic deleting/deletion-generation transition that blocks capture/advance and claims while cancelling untouched pending work.
+6. Run repository instrumentation and importer JVM tests.
+7. Commit: `feat: persist shoots and import reference poses`.
+
+**Verification:** Force-close/relaunch preserves shoot order and validated references. Repository tests prove duplicate confirmation cannot advance twice; a failed cardinality or confirmation transaction creates no advance, receipt, or outbox; and a deletion barrier blocks capture/advance and new claims without deleting in-progress authority.
+
+### Task 12: Build shoot creation and playlist editing UI
+
+**Objective:** Provide the minimum usable preparation workflow for a hands-free session.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/shoots/ShootListScreen.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorScreen.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorViewModel.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/AppNavHost.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorFlowTest.kt`
+
+**Steps:**
+
+1. Write a Compose flow RED for create → import → validation result → reorder → start.
+2. Implement explicit loading, rejection, empty, and retry states.
+3. Require 3–20 validated references to start; reject a shoot outside the approved playlist bounds.
+4. Add accessible labels and do not communicate validity by color alone.
+5. Run Compose instrumentation tests.
+6. Commit: `feat: add pose playlist editor`.
+
+**Verification:** A five-pose shoot can be created and reordered without entering the camera screen during imports.
+
+### Task 13: Add Text-to-Speech coaching with cadence control
+
+**Objective:** Deliver concise cues through the active Android media route without flooding or owning shoot policy.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/AndroidSpeechCoach.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/SpeechScheduler.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/AudioFocusController.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/audio/SpeechSchedulerTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/audio/AndroidSpeechCoachTest.kt`
+
+**Steps:**
+
+1. Write REDs for cue deduplication, material-change replacement, state-announcement priority, pause cancellation, and TTS initialization failure.
+2. Implement a bounded speech queue and deterministic cadence.
+3. Select only an installed TTS voice whose `Voice.isNetworkConnectionRequired` value is false; do not request the Android `INTERNET` permission for MVP speech.
+4. Request transient audio focus appropriately; do not force a Bluetooth route.
+5. If no verified offline voice is available, fail safely to recoverable visual-only mode and do not synthesize speech.
+6. Add instrumentation tests for offline-voice selection, network-required voice rejection, and visual-only fallback; defer actual earbud audibility to the explicit device gate.
+7. Commit: `feat: add rate-limited spoken pose coaching`.
+
+**Verification:** A rapid synthetic cue stream produces the expected bounded utterance sequence with no stale instruction spoken after pause or pose advance.
+
+### Task 14: Add unified durable capture and MediaStore export outbox
+
+**Objective:** Connect both stable-lock and manual reducer effects to one exactly-three-output private capture protocol, exactly-once Room confirmation/advance, and post-confirmation idempotent export.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/camera/CameraXCapturePort.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/PrivateCaptureStore.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/MediaStoreCaptureWriter.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/MediaStoreExportWorker.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/session/GuidedShootCoordinator.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/session/GuidedShootCoordinatorTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/session/GuidedShootCaptureTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/MediaStoreExportConcurrencyTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/ShootDeletionBarrierTest.kt`
+
+**Steps:**
+
+1. Write REDs using fake detector, clock, speech, repository, capture store, and export ports for automatic/manual success, manual bypass of only match/lock, duplicate callback/receipt, timeout, each private-file write/sync/finalization failure, final-path collision/no-clobber, Room transaction/cardinality failure, quarantine/uncertain cleanup, pre/post-transaction crash, exactly-once advancement, composite uniqueness/ordinal bounds, known-URI resume, ambiguous MediaStore create, paused two-worker one-insert interleaving, every claim/create/URI/publication crash seam, foreign-row preservation, pause-during-lock, stale frames, deletion-vs-worker interleavings, quarantine retention/resolution/visible count, delete-all, and incomplete tombstone retention.
+2. Make the coordinator the only interpreter of reducer effects.
+3. Assign deterministic `(commandToken, burstOrdinal 0..2)` private identities. For each output, write a same-directory temp file, sync as appropriate, and publish the final private file atomically without clobber. Do not represent the three publications as one filesystem transaction.
+4. Only after all three files are durable, call one Room transaction to confirm the attempt, record all three authoritative outputs, advance exactly once, apply the unique receipt, and create the export outbox. Automatic and manual commands use this identical path.
+5. If private capture or the Room transaction fails, create no advance/outbox and clean or quarantine unconfirmed files. Re-arm only when resolution is proven; otherwise enter reconciliation-required and do not recapture automatically.
+6. On startup, resolve deterministic pre-transaction private files before retry. For a committed attempt, leave capture/advance complete and replay only pending outbox work.
+7. Export only after a unique Room compare-and-set claim wins. Recheck the deletion generation before `MediaStore.insert()` and before publication. Persist the returned exact URI before later fallible publication. A claimed/create-started missing-URI row is permanently reconciliation-required unless explicitly resolved; timeout/restart cannot return it to pending or issue another create. Never use display name/relative path to update, delete, or reconcile.
+8. Delete-shoot and delete-all first atomically establish the deletion-generation barrier, block capture/advance and new claims, and cancel untouched pending work. Wait for or resolve exact-URI in-progress work; otherwise return incomplete/reconciliation-required while retaining minimal tombstone/quarantine state and preserving foreign rows.
+9. Run coordinator JVM tests before any real capture test.
+10. Run automatic and manual instrumentation capture/export tests on the exact candidate APK.
+11. Commit: `feat: add unified exactly-once capture pipeline`.
+
+**Verification:** Every confirmed automatic or manual token has exactly three durable authoritative private outputs, one applied receipt, one advance, one outbox, and exactly three constrained output rows. Private write/finalization/collision or Room/cardinality failure produces no advance/outbox. The paused two-worker test proves one insert. Every claim/create/URI/publication seam fails closed without auto-recreate; exact-URI work alone may update/delete. Delete races preserve in-progress authority and foreign rows, and unresolved quarantine remains visible until explicit safe resolution.
+
+### Task 15: Integrate the complete hands-free sequence
+
+**Objective:** Deliver the full import → coach → capture → advance → complete loop.
+
+**Files:**
+- Modify: `app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraViewModel.kt`
+- Modify: `app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraScreen.kt`
+- Modify: `app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/AppNavHost.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/session/FivePoseSessionTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/session/GuidedShootEndToEndTest.kt`
+
+**Steps:**
+
+1. Add a fixture-driven five-pose RED using replayed landmark streams.
+2. Integrate repository, matcher, coaching, reducer, speech, and capture ports.
+3. Add pause, resume, skip, retry, manual capture, and stop controls. The manual control dispatches `ManualCaptureRequested` to the reducer and uses Task 14's exact three-photo private confirmation/outbox pipeline; it bypasses no durability, ownership, cleanup, or receipt rule.
+4. Add progress announcements and completion summary.
+5. Keep diagnostics user-visible in debug builds: gate status, score components, cue, state, inference latency, and capture token suffix.
+6. Run the replay E2E test and full JVM/instrumentation suite.
+7. Commit: `feat: complete guided pose sequence workflow`.
+
+**Verification:** The deterministic replay completes five poses with five unique confirmed tokens and the expected bounded utterance transcript. Automatic and manual trigger variants produce the same capture effects and exactly-once confirmation shape.
+
+### Task 16: Calibrate thresholds and harden performance
+
+**Objective:** Replace development defaults with documented evidence and ensure sustained device operation.
+
+**Files:**
+- Create: `tools/calibration/README.md`
+- Create: `tools/calibration/analyze_match_reports.py`
+- Create: `app/src/test/resources/calibration/*`
+- Create: `docs/validation/MATCH_CALIBRATION.md`
+- Create: `docs/validation/PERFORMANCE.md`
+- Modify: `app/src/main/java/com/tonyisup/poseguidesnap/domain/match/MatchPolicy.kt`
+
+**Steps:**
+
+1. Define authorized positive and negative fixture classes without committing private photos.
+2. Export only derived, non-image match reports for offline analysis.
+3. Measure positive/negative separation, false-lock cases, time-to-lock, inference latency, cue rate, and duplicate-capture rate.
+4. Select acquire/release/coverage/dwell defaults from the evidence; retain user-safe bounds.
+5. Add regression fixtures at the chosen boundaries.
+6. Run a sustained 15-minute camera-analysis session and inspect thermal/battery/frame-latency behavior.
+7. Commit: `test: calibrate pose lock and performance gates`.
+
+**Verification:** `MATCH_CALIBRATION.md` states dataset limits and does not imply population-wide accuracy from a small internal set.
+
+### Task 17: Run the explicit Pixel 6 and earbud acceptance gate
+
+**Objective:** Verify the actual interaction on the private device without substituting emulator or desktop evidence.
+
+**Files:**
+- Create: `docs/validation/PIXEL_6_ACCEPTANCE.md`
+- Create: `docs/validation/PRIVACY_ACCEPTANCE.md`
+
+**Steps:**
+
+1. Pause for explicit permission before using the private device and earbuds.
+2. Record the APK SHA-256 and device/build identifiers.
+3. Exercise phone speaker and connected-earbud routes without forcing routing APIs.
+4. Run the full Gate 4 matrix: five-pose sequence, unified automatic/manual capture, no person, partial body, low light, occlusion, second person, permission denial/recovery, background/foreground, private-file write/finalization/collision failure, Room transaction/cardinality failure, pre/post-confirmation restart, exactly-once advancement, exclusive-claim export races and crash seams, deletion-barrier/reconciliation/quarantine behavior, and airplane mode.
+5. Inspect app-private storage, Room/outbox state, MediaStore, and logs for authoritative-output durability, unintended frame/landmark retention, duplicate export, exact-URI authority, foreign-row preservation, and deletion-barrier behavior. Inspect source/merged manifests and rule resources, then exercise authorized backup/restore tooling where the platform permits to confirm sensitive state is not transported or partially restored.
+6. Record failures honestly; do not lower thresholds to manufacture a pass.
+7. Rebuild only if code changes, then repeat all same-digest reviews.
+8. Commit: `test: document Pixel 6 guided shoot acceptance`.
+
+**Verification:** The report names exact artifact/device evidence and clearly separates automated, replay, and authorized-real results.
+
+### Task 18: Final documentation and release-readiness review
+
+**Objective:** Make the repository truthful, reproducible, and ready for a separate distribution decision.
+
+**Files:**
+- Modify: `README.md`
+- Modify: `docs/PRODUCT.md`
+- Modify: `docs/ARCHITECTURE.md`
+- Modify: `docs/TESTING.md`
+- Modify: `docs/PRIVACY.md`
+- Modify: `docs/DEVELOPMENT.md`
+- Create: `docs/KNOWN_LIMITATIONS.md`
+- Create: `docs/RELEASE_CHECKLIST.md`
+
+**Steps:**
+
+1. Document only verified features, including separate private-capture confirmation and MediaStore export status.
+2. Add setup, build, test, install, permission, data-deletion, reconciliation, export-retry, and troubleshooting instructions. State that shoot deletion and delete-all use the deletion-generation barrier and may retain a visible unresolved tombstone/quarantine rather than report false success; clear-data/uninstall cannot promise deletion of already or ambiguously exported MediaStore items.
+3. Document viewpoint, occlusion, lighting, clothing, mobility, and detector limitations.
+4. Run:
+   - `./gradlew clean testDebugUnitTest lintDebug assembleDebug`
+   - connected instrumentation tests on the approved device
+5. Stage the exact candidate, calculate its digest, and perform same-digest specification and quality/security review.
+6. Commit only after both reviews approve the same staged digest.
+7. Do not publish; create a separate distribution plan if publication is requested.
+
+**Verification:** A new developer can build and run tests from the documented environment, and a user can understand what data exists and how to delete it.
+
+## 8. Test Matrix
+
+### Pure JVM tests
+
+- Coordinate validation and immutable model invariants.
+- Translation/scale normalization.
+- Mirror semantics and left/right cue correctness.
+- Joint-angle and position scoring.
+- Coverage/framing/second-person gate separation.
+- Seeded jitter stability.
+- Cue selection, persistence, cooldown, and priority.
+- Reducer transition table, automatic/manual ownership, hysteresis, timing, idempotent confirmation/advance receipt, pause, failure, and completion.
+- Exactly-three private output identities, per-file write/sync/finalization failure, no-clobber collision, and cleanup/quarantine behavior.
+- Atomic Room confirmation + three authoritative output records + one advance + one receipt + one export outbox entry, including transaction rollback.
+- Pre-/post-Room crash boundaries, exactly-once advancement, one-outbox/exactly-three-row cardinality, composite uniqueness, and ordinal constraints.
+- Exclusive pre-create claim, paused two-worker one-insert interleaving, claim/create/URI/publication crash seams, exact-URI-only mutation, missing-URI reconciliation without lease reset, and foreign-row preservation.
+- Atomic deletion-generation barrier, delete-vs-worker interleavings, quarantine retention/resolution/visible state, delete-all through the same barrier, incomplete tombstone behavior, and exported/ambiguous/foreign-row preservation.
+- Repository/coordinator behavior through fakes.
+- Five-pose replay transcript and capture tokens.
+
+### Android instrumentation tests
+
+- MediaPipe model load and static fixture extraction.
+- Room transactions, ordering, migration, and uniqueness.
+- Photo-picker import result handling.
+- Compose create/import/reorder/start flow.
+- Camera permission denial/recovery.
+- Preview/analysis/capture coordinate alignment.
+- Text-to-Speech offline-voice selection, network-required voice rejection, absent `INTERNET` permission, lifecycle, and visual-only fallback.
+- Exactly three deterministic app-private output publications for automatic and manual capture, including temp cleanup, sync/finalization failure, no-clobber collision, and durable-file inspection.
+- Room confirmation transaction rollback, receipt uniqueness, exactly-once advancement, pre/post-transaction process restart, cleanup/quarantine, and reconciliation blocking.
+- Post-confirmation MediaStore outbox export with exact three-row schema, compare-and-set claim, exact target and URI state, paused concurrency, full crash-seam coverage, ambiguous-create fail-closed behavior, foreign-row preservation, and no capture/advance replay.
+- Shoot deletion-generation ordering, claim/create/publication barrier rechecks, untouched-pending cancellation, in-progress authority retention, quarantine lifecycle/visible unresolved state, delete-all, and preservation of already or ambiguously exported and foreign MediaStore items.
+- Source and merged manifest plus XML-rule assertions for complete cloud/device/cross-platform backup exclusion, with authorized platform backup/restore inspection where tools permit.
+
+### Authorized real-device tests
+
+- Rear camera full-body framing at practical tripod distances.
+- Speaker and Bluetooth earbuds.
+- Five-pose no-touch completion plus reducer-owned manual capture through the identical three-photo protocol.
+- Low light, occlusion, second person, and subject exit/re-entry.
+- App pause/resume; private capture, Room confirmation, export, cleanup, and reconciliation failure recovery.
+- Shoot deletion and clear-data/uninstall behavior, including the platform limit for already exported MediaStore photos.
+- Authorized backup/restore inspection where supported, including source/merged manifest and exact rule-content evidence that capture, Room, DataStore, outbox, tombstone, and quarantine state is excluded.
+- Airplane-mode operation.
+- Sustained performance and thermal behavior.
+
+## 9. Risks and Mitigations
+
+| Risk | Impact | Mitigation / gate |
+|---|---|---|
+| 2D pose similarity fails under viewpoint changes | Incorrect cues or impossible lock | Import warnings, viewpoint-limited MVP, independent angle/position gates, calibration negatives |
+| Coordinate mismatch between analysis and captured crop | Overlay looks right but saved image is wrong | One transform authority, deterministic transform tests, Gate 2 real-device evidence |
+| Capture duplicates or advances early | Core trust failure | Pure reducer for automatic/manual triggers, deterministic tokens, durable private outputs, unique Room receipt, transactional advancement, crash/replay tests |
+| Speech becomes noisy or stale | User confusion when screen is distant | One-cue policy, persistence, bounded queue, state priority, cancellation tests |
+| TTS is inaudible or steals audio unexpectedly | Hands-free flow fails | Current media route, transient focus, explicit phone/earbud acceptance, visual fallback |
+| MediaPipe/model changes alter scores | Existing references drift | Persist detector version, model digest, calibration fixtures, explicit reprocessing path |
+| Private authority or export state is lost/duplicated | Privacy or trust harm | No-clobber publication, exact-three outbox rows, exclusive create claim, exact-URI authority, ambiguous-create reconciliation, deletion barrier, and privacy acceptance |
+| Android backup/transfer partially restores private state | Privacy leak or broken authority/receipt invariants | `allowBackup=false`, fail-closed legacy/API31+/cross-platform XML rules, no BackupAgent, merged-manifest/rule tests, authorized platform inspection |
+| Reference imports retain sensitive images unexpectedly | Privacy harm | App-private copy, no frame persistence, deletion contract, privacy acceptance |
+| CameraX use-case combination degrades resolution/performance | Poor photo or low inference FPS | No extensions, keep-latest analysis, measured target resolutions, Pixel 6 performance gate |
+| Empty-repo bootstrap expands into architecture theater | Slow delivery | Single module, first useful vertical slice, defer front camera/iOS/groups/generative features |
+| Threshold tuning papers over representation errors | False confidence | Named subscores, negative controls, no production threshold before calibration report |
+
+## 10. Approved Decisions
+
+1. **Platform:** Android-native first rather than React Native/Flutter or simultaneous iOS.
+2. **Publishing identity:** Provisional application ID `com.tonyisup.poseguidesnap`; any permanent publishing-identity change requires a later explicit decision.
+3. **Minimum Android version:** `minSdk 29` for MVP simplicity, with market coverage revisited only after proof of value.
+4. **Rear-camera-first scope:** Front camera is post-Gate-4 work.
+5. **Reference semantics:** Automatic horizontal mirroring by default, with a per-pose opt-out.
+6. **Capture policy:** Exactly three photos per automatic or manual reducer command. Manual bypasses only pose-match/lock eligibility; both paths require three durable private outputs and the same Room confirmation/advance receipt.
+7. **Storage contract:** App-private captures are authoritative. One Room transaction owns confirmation, three output records, exactly-once advancement, receipt application, and export-outbox creation. MediaStore export is idempotent post-confirmation work with explicit separate deletion behavior.
+
+**Approval recorded:** Defaults 1–5 and the bounded Tasks 1–8 phase were approved on 2026-08-27. The current approved decisions 6–7 supersede the earlier MediaStore-authoritative capture/storage wording. Later changes to these boundaries require an explicit plan revision.
+
+## 11. First Execution Slice
+
+After approval, execute **Tasks 1–8 only** as the first bounded phase:
+
+- establish docs and toolchain,
+- bootstrap the app,
+- build the pure pose/match/coach/session domain,
+- produce a deterministic replay report,
+- stop before MediaPipe, camera, earbuds, or image access.
+
+This yields the core ownership boundary and causal tests without touching private device data. Review that exact staged digest before continuing to the MediaPipe/CameraX phase.
+
+## Sources
+
+[1] https://developer.android.com/media/camera/camerax/architecture — CameraX architecture
+[2] https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker/android — MediaPipe Pose Landmarker for Android
+[3] https://developer.android.com/training/data-storage/room — Save data in a local database using Room
+[4] https://developer.android.com/media/optimize/audio-focus — Manage audio focus
+[5] https://developer.android.com/identity/data/autobackup — Android Auto Backup, device transfer, and cross-platform transfer configuration
