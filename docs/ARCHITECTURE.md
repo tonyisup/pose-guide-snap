@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: buildable prototype only.** A minimal Compose activity exists; this document defines intended architecture and ownership rules for product components that have not been implemented.
+> **Project status: Tasks 1–9 committed; Task 10 is an uncommitted camera-slice candidate.** The candidate implements rear CameraX preview/analysis, a fixed bundled public reference and named uncalibrated match evidence, direct on-device MoveNet, and internal exactly-three app-private candidate capture. Reference import, durable coordination/confirmation, MediaStore export, audio, and deletion remain planned.
 
 ## Fixed MVP decisions
 
@@ -18,7 +18,7 @@
 
 The implementation will begin as one Android app module. Package boundaries and dependency tests will enforce separation before build time or ownership provides evidence that Gradle modules are worth their cost.
 
-## Planned runtime shape
+## Runtime shape
 
 ```text
 System Photo Picker
@@ -50,7 +50,7 @@ PoseDetector(blocking, off-UI) -> PoseObservation -> PoseMatcher
                               MediaStore export outbox worker
 ```
 
-CameraX is planned to provide preview, CPU image analysis, and still image capture. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the future camera adapter owns one bounded off-UI worker, keep-latest backpressure, rotation/crop conversion, per-frame failure containment, and `ImageProxy` closure. Room is planned for ordered shoot, pose, session, and capture relationships. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
+CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. No user-facing shutter or session advancement is exposed yet. Room remains planned for ordered shoot, pose, session, confirmation, and capture relationships. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
 
 ## State and policy ownership
 
@@ -93,11 +93,11 @@ Required invariants:
 
 1. An automatic `CaptureCommand` can be emitted only from `Locked`. A manual request is also a reducer event and bypasses only the pose-match/lock gate; both paths produce the same three-photo command and protocol.
 2. One command token identifies exactly three outputs with deterministic `(commandToken, burstOrdinal)` identities for ordinals 0–2.
-3. For each output, the capture adapter writes a same-directory temporary file, syncs file data as appropriate, and atomically publishes the final app-private file without clobbering an existing identity. Each final-file publication is atomic; the three-file set is not.
-4. Capture is not eligible for confirmation until all three authoritative private files exist durably. A collision, private write/finalization failure, or uncertain cleanup produces no advancement.
+3. For each output, the capture adapter atomically claims the absent deterministic final identity with an exclusive empty reservation, writes and syncs a same-directory temporary file, verifies that exact reservation by stable filesystem identity, atomically replaces only that owned reservation with the complete temporary bytes, and syncs the directory. The dedicated capture-candidates directory is exclusively owned by this publisher and the future reconciler; all supported in-process mutation uses one process-wide guard so verification and rename/removal are indivisible within that ownership model. Code that bypasses the adapter is outside the supported concurrency contract and must not mutate this directory. A pre-existing final is never replaced. Each final-file publication is atomic; the three-file set is not.
+4. An empty reservation is not an authoritative output and may never be accepted by filesystem scanning. Capture is not eligible for confirmation until all three non-empty authoritative private files exist durably. A reservation leftover, ownership mismatch, or deterministic-final collision is reconciliation-required. A failed cleanup retains its prepared-output ownership, reports that a final may exist, blocks conflicting submissions, and exposes explicit serialized retry until cleanup succeeds or remains pending. None of these states permits advancement or blind recapture.
 5. One Room transaction is the logical ownership boundary: it confirms the attempt, records all three authoritative private outputs, advances the pose exactly once, marks the unique confirmation/advance receipt applied, and creates a durable MediaStore export outbox entry.
 6. If that Room transaction fails, it creates no confirmation, advance, receipt, or outbox. Unconfirmed private files are cleaned or quarantined. If resolution cannot be proven, the attempt enters reconciliation-required and automatic recapture is forbidden.
-7. A crash before the Room transaction may leave only unconfirmed private files; startup resolves them by deterministic attempt identity before retry. A crash after the transaction leaves capture and advancement complete and replays only pending export work.
+7. A crash before the Room transaction may leave an empty reservation, a temporary file, or non-empty unconfirmed private files; startup resolves them through deterministic attempt identity plus recorded protocol state before retry and never treats filename presence alone as authority. A crash after the transaction leaves capture and advancement complete and replays only pending export work.
 8. The confirmation transaction creates one committed outbox and exactly three per-output rows. `CaptureExportOutput` has composite primary key or uniqueness `(commandToken, burstOrdinal)`, a database constraint limiting `burstOrdinal` to 0–2, and a transaction-time cardinality assertion of exactly three before commit.
 9. A Room compare-and-set transition from `pending` to `claimed` with a fresh unique claim token is the exclusive pre-create authority. Only the winner may call `MediaStore.insert()`. A row that reaches claimed/create-started without a durably stored exact URI is never returned to pending, never lease-expired into another create, and enters reconciliation-required after interruption.
 10. Each output stores the exact target MediaStore collection/volume and intended metadata for diagnostics. Display name and relative path are not unique authority and may never, alone or together, authorize lookup, update, delete, or reconciliation.

@@ -99,11 +99,31 @@ class BackupExclusionContractTest {
         )
         assertFalse(application.hasAttributeNS(ANDROID_NAMESPACE, "backupAgent"))
 
-        val requestedPermissions = document.getElementsByTagName("uses-permission")
-            .elements()
+        val permissionElements = document.getElementsByTagName("uses-permission").elements()
+        val requestedPermissions = permissionElements
+            .filterNot { it.getAttributeNS(TOOLS_NAMESPACE, "node") == "remove" }
             .map { it.getAttributeNS(ANDROID_NAMESPACE, "name") }
             .toSet()
+        assertEquals(setOf("android.permission.CAMERA"), requestedPermissions)
         assertFalse("android.permission.INTERNET" in requestedPermissions)
+        assertEquals(
+            setOf("android.permission.ACCESS_NETWORK_STATE"),
+            permissionElements
+                .filter { it.getAttributeNS(TOOLS_NAMESPACE, "node") == "remove" }
+                .map { it.getAttributeNS(ANDROID_NAMESPACE, "name") }
+                .toSet(),
+        )
+
+        val requiredFeatures = document.getElementsByTagName("uses-feature").elements()
+        assertEquals(1, requiredFeatures.size)
+        assertEquals(
+            "android.hardware.camera",
+            requiredFeatures.single().getAttributeNS(ANDROID_NAMESPACE, "name"),
+        )
+        assertEquals(
+            "true",
+            requiredFeatures.single().getAttributeNS(ANDROID_NAMESPACE, "required"),
+        )
     }
 
     @Test
@@ -197,6 +217,7 @@ class BackupExclusionContractTest {
 
     private companion object {
         const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
+        const val TOOLS_NAMESPACE = "http://schemas.android.com/tools"
 
         val EXCLUSIONS = setOf(
             Exclusion("root", "."),

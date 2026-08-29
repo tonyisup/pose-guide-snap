@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: deterministic JVM engine GREEN; Android inference compile-only.** JVM tests cover domain boundaries, canonicalization, matching, coaching, and the shoot reducer. The app and MoveNet instrumentation test APKs compile, but no instrumentation, emulator, private-device, camera, runtime inference, durable capture, storage, export, or end-to-end workflow test has run.
+> **Project status: Tasks 1–9 committed; Task 10 is an uncommitted, hardware-exercised candidate.** The complete JVM suite is 266/266 GREEN. Authorized Pixel 6 instrumentation has exercised direct MoveNet inference, generated-bitmap frame ownership, installed permission/backup boundaries, the packaged fixed public reference, named uncalibrated match evidence, Android app-private no-clobber publication, real rear-camera exactly-three capture, cadence counters, generated-black latency, and live/reference skeleton rendering. No emulator was used. Reference import, Room confirmation/advancement, MediaStore export, audio, deletion, and the end-to-end workflow remain unimplemented or unverified.
 
 ## Testing principles
 
@@ -26,7 +26,7 @@
 | Gate 3: complete local MVP loop | Import/order at least five references; bounded speech; stable lock triggers the same private three-photo pipeline; Room confirmation advances once and queues export; five-pose no-touch completion; airplane-mode operation | The local MVP loop works in the tested conditions, with export reported separately |
 | Gate 4: real-device acceptance | Same APK digest across functional, privacy, audio, storage/export/deletion, and quality/security checks; full Pixel 6 matrix | Only the exact documented behavior and conditions; still no store/publication claim |
 
-Gate 0's command-line bootstrap is GREEN on the verified host: the native prototype builds, JVM tests pass, and the exact APK's manifest and backup resources have been inspected. The pure domain portion of Gate 1 is implemented and JVM-tested, but Gate 1 is not complete until the on-device model boundary and integration evidence pass. Gates 1–4 therefore remain unpassed; instrumentation is compile-only and no device or emulator evidence exists.
+Gate 0's command-line bootstrap is GREEN on the verified host. Task 9's direct MoveNet model boundary has exact authorized Pixel 6 runtime evidence. Task 10's fixed bundled reference, uncalibrated match report, camera/candidate-capture mechanics, and public-target overlay alignment have authorized Pixel evidence but do not complete Gate 2: reference import and the full reducer/Room confirmation/manual-trigger path are intentionally deferred to later tasks. No emulator evidence exists. Gates 2–4 therefore remain unpassed.
 
 ## Pure JVM test matrix
 
@@ -40,7 +40,7 @@ Planned coverage:
 - Deterministic seeded jitter and negative controls.
 - Cue selection, confidence filtering, persistence, cooldown, suppression, and priority.
 - Reducer transition table, dwell, hysteresis, timing, pause, stale frames, automatic and manual requests, manual bypass of only match/lock, capture success/failure, duplicate receipts, idempotency, and completion.
-- Unified exactly-three-output policy; deterministic private identities; same-directory temp writes; private write, sync, and finalization failure; final-path collision/no-clobber; per-file atomicity without a three-file atomicity claim; timeout; and duplicate callback.
+- Unified exactly-three-output policy; deterministic private identities; exclusive non-authoritative empty reservations; same-directory temp writes; stable reservation-identity verification; process-wide supported-mutation serialization; private write, sync, atomic rename, and cleanup failure; final-path collision/no-clobber; typed crash/collision reconciliation; retained prepare-time and post-prepare cleanup ownership with blocked submissions and serialized retry; foreign temp preservation; close-versus-third-publication precedence; per-file atomicity without a three-file atomicity claim; timeout; and duplicate callback.
 - Room confirmation transaction success/failure proving atomic capture confirmation, three private-output records, exactly-once advancement, receipt application, and outbox creation.
 - Crash before the Room transaction with cleanup/quarantine before retry; crash after it with capture/advance complete and export-only replay; cleanup failure and reconciliation-required blocking.
 - One committed outbox with exactly three rows; composite `(commandToken, burstOrdinal)` uniqueness, ordinal 0–2 constraint, transaction-time cardinality assertion, and rollback on any violation.
@@ -57,7 +57,7 @@ Planned coverage:
 
 Planned coverage:
 
-- Exact MoveNet model load and deterministic one-person, black zero-person, and composed two-person extraction within documented tolerance; currently compile-only until authorized device execution.
+- Exact MoveNet model load and deterministic one-person, black zero-person, and composed two-person extraction within documented tolerance; executed on the authorized Pixel 6.
 - Camera keep-latest scheduling with one bounded off-UI blocking-detector worker, guaranteed `ImageProxy` closure, per-frame detector/mapper failure containment, and no unbounded queue.
 - Rotation, crop, rear-camera, and mirror coordinate transforms.
 - Room transactions, ordering, migrations, command-token/receipt uniqueness, and atomic confirmation + three private outputs + one advance + outbox creation.
@@ -74,6 +74,20 @@ Planned coverage:
 - MediaStore outbox schema and worker tests for exact three-row cardinality, composite uniqueness, ordinal bounds, exclusive compare-and-set claims, the complete claim/create/URI/publication crash matrix, exact-URI-only mutation, and a paused two-worker one-insert interleaving.
 - Deletion-generation interleavings with claims and publication, quarantine retention/resolution/visible count, app-level delete-all, incomplete tombstone retention, and preservation of already exported, ambiguously created, and foreign MediaStore rows.
 - Camera-analysis resource cleanup when leaving the guided screen.
+
+Executed Task 9/10 Pixel evidence for the current candidate includes:
+
+- Direct MoveNet public/generated fixture path: 1/1 GREEN.
+- Generated-bitmap frame ownership, cleanup, and inference path: 7/7 GREEN.
+- Installed manifest/permission boundary: 1/1 GREEN.
+- Packaged main public-reference drawable reproduces the exact fixed 17-landmark MoveNet observation: 1/1 GREEN; production and instrumentation notices retain the exact source, CC BY 4.0 license, and SHA-256, and the card visibly credits Google AI Edge.
+- Generated-byte owned-reservation publication and foreign-final no-clobber: 2/2 GREEN.
+- Real reducer-command rear-camera exactly-three JPEG capture plus repeated-token collision/no-clobber: 1/1 GREEN; zero candidate/temp residue after cleanup.
+- Real cadence counters: 61 frames received, 21 accepted, 40 skipped too soon, 0 stale; 9.64 analyzed results/s for the bounded sample.
+- Generated-black direct MoveNet latency over 25 measured runs after warm-up: p50 124.79 ms, p95 126.53 ms, max 126.64 ms.
+- One final-hash 60-second cadence-limited live run: camera active for all 13 samples; mean CPU 148.08%, max CPU 162.0%, post-20-second mean 150.44% in a 140–162% range; PSS 256,793–332,419 KiB with a 324,211–332,419 KiB post-warm range; RSS 408,708–486,192 KiB with a 477,684–486,192 KiB post-warm range; battery 31.0°C to 30.8°C; thermal status 0; no fatal/ANR; 14 GC log entries; camera release within 500 ms after backgrounding. The integrated fixed-reference UI did not reproduce an earlier lower-CPU run and makes no performance-improvement claim; the 15-minute Gate 4 soak remains pending.
+- Permission denial screen, explicit system permission-dialog launch, live rear preview, READY/no-person diagnostics, named fixed-reference evidence, bounded reference card, and background release were visually inspected without retaining screenshots or private frame data.
+- Public-target overlay acceptance reported one person and 17/17 landmarks; the rear-unmirrored live skeleton and distinct fixed-reference ghost guide shared one preview transform. The live skeleton tracked the bundled meditation figure's head, shoulders, arms, hips, crossed legs, and ankles without clipping. The UI labeled framing as not evaluated, each stable pass/fail prototype gate as uncalibrated, and capture lock as disabled; numeric scores remain internal evidence rather than continuously animated text. The transient screenshot was deleted.
 
 ## Pixel 6 real-device acceptance
 

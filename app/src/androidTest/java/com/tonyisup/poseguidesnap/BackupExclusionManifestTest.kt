@@ -11,7 +11,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class BackupExclusionManifestTest {
     @Test
-    fun installedPackageOptsOutOfBackupAndHasOnlyAndroidXSignaturePermission() {
+    fun installedPackageOptsOutOfBackupAndHasOnlyCameraAndAndroidXSignaturePermissions() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val packageInfo = context.packageManager.getPackageInfo(
             context.packageName,
@@ -24,7 +24,7 @@ class BackupExclusionManifestTest {
         assertEquals("com.tonyisup.poseguidesnap", packageInfo.packageName)
         assertEquals(0, applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP)
         assertEquals(
-            setOf(expectedPermission),
+            setOf("android.permission.CAMERA", expectedPermission),
             packageInfo.requestedPermissions.orEmpty().toSet(),
         )
     }
