@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** The bounded slice proves a fixed attributed bundled reference, named uncalibrated match evidence, rear live preview/overlay, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. Gate 2 remains incomplete: there is no user-facing shutter or auto-capture, Room confirmation/advancement, reference import, MediaStore export, audio, deletion flow, or end-to-end guided workflow. Room authority is Task 11A, transactional reference import is Task 11B, and the unified durable coordinator/export protocol remains Task 14.
+> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** The app now has durable Room attempt, confirmation/advance/receipt/outbox, deletion-barrier, and targeted export-claim authority. Gate 2 remains incomplete: there is no user-facing shutter or auto-capture coordinator, reference import, private-file/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Room authority is Task 11A, transactional reference import is Task 11B, and the unified durable coordinator/export protocol remains Task 14.
 
 ## Product goal
 

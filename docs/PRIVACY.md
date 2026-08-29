@@ -1,6 +1,6 @@
 # Privacy and Local Data Contract
 
-> **Project status: Tasks 1–10 are committed; Task 11A's Room authority candidate is host-reviewed and Pixel-exercised but not yet landed.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 11A adds backup-excluded local Room authority, deletion barriers, and export-claim state without creating MediaStore rows or deleting files. User reference import, filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete lifecycle remain unimplemented.
+> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 11A provides backup-excluded local Room authority, deletion barriers, and export-claim state without creating MediaStore rows or deleting files. User reference import, filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete lifecycle remain unimplemented.
 
 ## Privacy boundary
 

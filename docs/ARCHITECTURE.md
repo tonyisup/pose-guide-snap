@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: Tasks 1–10 are committed; Task 11A's Room authority candidate is host-reviewed and Pixel-exercised but not yet landed.** Room now owns attempt registration/start authorization, atomic confirmation/advance/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim authority. Transactional reference import remains Task 11B, and unified filesystem coordination plus MediaStore I/O remains Task 14. Gate 2 is not yet passed.
+> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** Room now owns attempt registration/start authorization, atomic confirmation/advance/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim authority. Transactional reference import remains Task 11B, and unified filesystem coordination plus MediaStore I/O remains Task 14. Gate 2 is not yet passed.
 
 ## Fixed MVP decisions
 

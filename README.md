@@ -1,8 +1,8 @@
 # Pose Guide Snap
 
-> **Project status: Task 11A's Room authority candidate is host-reviewed and Pixel-exercised; final exact-digest landing is pending. Gate 2 remains incomplete.**
+> **Project status: Task 11A's Room authority is committed, host-reviewed, and Pixel-exercised. Gate 2 remains incomplete.**
 >
-> `HEAD` and `origin/main` remain at `d6606ba25de16fc425751a0b85c7158b48d68bc5`; Task 11A is not committed yet. The candidate adds a backup-excluded Room V1 authority schema, deletion-aware attempt registration and capture-start authorization, atomic exactly-three-output confirmation/advancement/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim compare-and-set authority. It still has no product shutter, auto-capture coordinator, reference import, MediaStore I/O worker, physical deletion, TTS/audio, deletion UI, or end-to-end guided workflow.
+> Task 11A landed in `53354660c77e51b039e86c091d644faee209593d` after specification PASS and quality/security APPROVED on exact staged digest `bae48fff2ed2cd4f3cda1c69de46f9114f26e84c088c7cc155d1acadeef415d8`. It adds a backup-excluded Room V1 authority schema, deletion-aware attempt registration and capture-start authorization, atomic exactly-three-output confirmation/advancement/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim compare-and-set authority. It still has no product shutter, auto-capture coordinator, reference import, MediaStore I/O worker, physical deletion, TTS/audio, deletion UI, or end-to-end guided workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -30,7 +30,7 @@ From the repository root on the [verified development environment](docs/DEVELOPM
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 slice.
+The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 camera and Task 11A Room-authority slices, not their end-to-end integration.
 
 ## Approved MVP boundary
 

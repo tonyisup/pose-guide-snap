@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: Tasks 1–10 are committed; Task 11A's Room authority candidate is host-reviewed and Pixel-exercised but awaits exact-digest landing.** The JVM suite is 307/307 GREEN; lint and debug/release/instrumentation builds are GREEN. Across authorized checkpoint runs, all 93 current Room-authority instrumentation methods passed. No emulator was used. Gate 2 remains incomplete because reference import, filesystem/Room coordination through the reducer-owned manual path, MediaStore I/O, audio, physical deletion, and the end-to-end workflow remain unimplemented or unverified.
+> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** The JVM suite is 307/307 GREEN; lint and debug/release/instrumentation builds are GREEN. Across authorized checkpoint runs, all 93 current Room-authority instrumentation methods passed. No emulator was used. Gate 2 remains incomplete because reference import, filesystem/Room coordination through the reducer-owned manual path, MediaStore I/O, audio, physical deletion, and the end-to-end workflow remain unimplemented or unverified.
 
 ## Testing principles
 

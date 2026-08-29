@@ -11,7 +11,7 @@ Pose Guide Snap depends on tight camera preview/analysis/capture coordination, p
 
 Building simultaneous Android and iOS clients, or adding a cross-platform abstraction before the core interaction is proven, would widen camera, audio, lifecycle, and packaging risk without evidence that audio-only pose correction and conservative auto-capture are trustworthy.
 
-At the decision checkpoint, the repository contained only a buildable native Android/Compose prototype and no camera or guided-capture workflow. Current HEAD now includes the reviewed native Task 10 rear-camera/MoveNet slice on the Pixel 6, but still lacks the user-facing shutter, Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion, and complete guided workflow.
+At the decision checkpoint, the repository contained only a buildable native Android/Compose prototype and no camera or guided-capture workflow. Current HEAD now includes the reviewed native Task 10 rear-camera/MoveNet slice and Task 11A Room confirmation/deletion/claim authority on the Pixel 6, but still lacks the user-facing shutter, reference import, camera/filesystem-to-Room coordination, MediaStore I/O, TTS/audio, physical deletion, and complete guided workflow.
 
 ## Decision
 
