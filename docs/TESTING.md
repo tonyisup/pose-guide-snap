@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** The exact Task 10 staged digest `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd` passed specification review and received quality/security approval before commit `605c904`. The complete JVM suite is 266/266 GREEN; lint and debug main/instrumentation builds are GREEN; authorized Pixel 6 relevant instrumentation is 15/15 GREEN. No emulator was used. Gate 2 remains incomplete because reference import, Room confirmation/advancement, the reducer-owned manual path, MediaStore export, audio, deletion, and the end-to-end workflow remain unimplemented or unverified.
+> **Project status: Tasks 1–10 are committed; Task 11A's Room authority candidate is host-reviewed and Pixel-exercised but awaits exact-digest landing.** The JVM suite is 307/307 GREEN; lint and debug/release/instrumentation builds are GREEN. Across authorized checkpoint runs, all 93 current Room-authority instrumentation methods passed. No emulator was used. Gate 2 remains incomplete because reference import, filesystem/Room coordination through the reducer-owned manual path, MediaStore I/O, audio, physical deletion, and the end-to-end workflow remain unimplemented or unverified.
 
 ## Testing principles
 
@@ -26,9 +26,17 @@
 | Gate 3: complete local MVP loop | Import/order at least five references; bounded speech; stable lock triggers the same private three-photo pipeline; Room confirmation advances once and queues export; five-pose no-touch completion; airplane-mode operation | The local MVP loop works in the tested conditions, with export reported separately |
 | Gate 4: real-device acceptance | Same APK digest across functional, privacy, audio, storage/export/deletion, and quality/security checks; full Pixel 6 matrix | Only the exact documented behavior and conditions; still no store/publication claim |
 
-Gate 0's command-line bootstrap is GREEN on the verified host. Task 9's direct MoveNet model boundary and committed Task 10's fixed bundled reference, uncalibrated match report, camera/candidate-capture mechanics, and public-target overlay alignment have exact authorized Pixel evidence. They do not complete Gate 2: Room authority is Task 11A, transactional reference import is Task 11B, and the full reducer/Room confirmation/manual-trigger/export path is Task 14. No emulator evidence exists. Gates 2–4 therefore remain unpassed.
+Gate 0's command-line bootstrap is GREEN on the verified host. Task 9's direct MoveNet model boundary, committed Task 10 camera evidence, and Task 11A's Room authority each have authorized Pixel evidence. They do not complete Gate 2: transactional reference import is Task 11B, while the full reducer/private-file/Room confirmation/manual-trigger/export path is Task 14. No emulator evidence exists. Gates 2–4 therefore remain unpassed.
 
 The reviewed Task 10 APKs were reproducible byte-for-byte: main SHA-256 `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad` and instrumentation SHA-256 `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`.
+
+Task 11A evidence is deliberately narrower than the future end-to-end gate:
+
+- Room V1 schema/runtime: 4/4 Pixel methods.
+- Registration and capture-start authority: 22/22 current methods across the original 20-method run plus two focused negative-generation regressions.
+- Confirmation, duplicate replay, immutable authority, and complete rollback matrix: 33/33 current methods across the original 32-method run plus one focused negative-generation regression.
+- Deletion, targeted claims, restart, deterministic orderings, and two-database concurrency: 34/34 on the final hardening APK in 1.996 seconds.
+- Production database entries and test-database residue were zero after the final 34-method and focused three-method runs. No MediaStore row or private image was created.
 
 ## Pure JVM test matrix
 

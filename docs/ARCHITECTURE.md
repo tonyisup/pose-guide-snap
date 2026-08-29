@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** The bounded slice implements rear CameraX preview/analysis, a fixed attributed bundled reference and named uncalibrated match evidence, direct on-device MoveNet, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. Those mechanics are not the durable product protocol: Room authority and deletion barriers remain Task 11A, transactional reference import remains Task 11B, and unified coordination/confirmation plus MediaStore export remains Task 14. Gate 2 is not yet passed.
+> **Project status: Tasks 1–10 are committed; Task 11A's Room authority candidate is host-reviewed and Pixel-exercised but not yet landed.** Room now owns attempt registration/start authorization, atomic confirmation/advance/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim authority. Transactional reference import remains Task 11B, and unified filesystem coordination plus MediaStore I/O remains Task 14. Gate 2 is not yet passed.
 
 ## Fixed MVP decisions
 
@@ -50,7 +50,7 @@ PoseDetector(blocking, off-UI) -> PoseObservation -> PoseMatcher
                               MediaStore export outbox worker
 ```
 
-CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. This internal candidate path has no user-facing shutter, Room authority, durable confirmation, session advancement, or export and must not be treated as the product capture protocol. Task 11A adds Room authority; Task 14 later connects the reducer, capture adapter, confirmation/advancement, and export. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
+CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. Task 11A implements the separate durable Room authority boundary, but the internal camera path has no user-facing shutter and is not yet connected to Room confirmation, session advancement, or export. Task 14 performs that integration and adds MediaStore I/O. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
 
 ## State and policy ownership
 
@@ -136,7 +136,7 @@ The selected 17-point MoveNet model is strictly 2D. It cannot recover depth and 
 
 ## Data ownership
 
-Planned structured records include shoot, ordered pose, session, and these capture records:
+Task 11A implements shoot, ordered-pose, session, and these capture authority records:
 
 - `CaptureAttempt`: command token, session/pose ownership, automatic/manual trigger, lifecycle state, reconciliation flag, and timestamps.
 - `PrivateCaptureOutput`: command token, ordinal 0–2, deterministic app-private identity/path, durability state, capture metadata, and integrity metadata as needed.

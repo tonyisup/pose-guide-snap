@@ -1,6 +1,7 @@
 [versions]
 agp = "9.3.2"
 kotlin = "2.2.10"
+ksp = "2.3.11"
 composeBom = "2026.08.00"
 coreKtx = "1.19.0"
 activityCompose = "1.13.0"
@@ -31,7 +32,6 @@ androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.r
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraX" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraX" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
-androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "dataStore" }
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "liteRt" }
@@ -48,3 +48,5 @@ androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core",
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+room = { id = "androidx.room", version.ref = "room" }

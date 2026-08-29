@@ -573,6 +573,8 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Verification:** Force-close/relaunch preserves Room state. Repository tests prove duplicate confirmation cannot advance twice; every confirmed token has exactly three private-output records, one unique receipt, one advance, one outbox, and exactly three constrained output rows; a failed cardinality or confirmation transaction creates none of those partial effects; and a deletion barrier blocks capture/advance and new claims without deleting in-progress authority.
 
+**Implementation evidence:** The Task 11A candidate defines the Room V1 authority schema, strict integer ordinal triggers, deletion-aware registration/start authorization, atomic confirmation/advance/receipt/outbox persistence, deletion barriers, and targeted claim CAS with non-authorizing restart replay. JVM 307/307, lint, debug/release/instrumentation builds, schema stability, and all 93 current Room instrumentation methods passed across explicitly authorized Pixel 6 checkpoints. The final Task 11A.4 class passed 34/34, and the three final negative-generation regressions passed 3/3, with zero production-database use and zero test-database residue. This checkpoint adds no private-file coordinator, MediaStore I/O, physical deletion, reference import, UI, TTS, or end-to-end workflow.
+
 ### Task 11B: Add transactional reference import
 
 **Objective:** Handle explicit system-picker results by copying and validating one reference into app-private authority without leaving partial rows or assets.

@@ -1,8 +1,8 @@
 # Pose Guide Snap
 
-> **Project status: Task 10 is committed and hardware-exercised; Gate 2 remains incomplete.**
+> **Project status: Task 11A's Room authority candidate is host-reviewed and Pixel-exercised; final exact-digest landing is pending. Gate 2 remains incomplete.**
 >
-> `HEAD` and `origin/main` both point to the guided CameraX pose slice at `605c904d9c01002e8f231301094a8b3183dc2c36` (`feat: add guided camera pose slice`). The exact staged digest `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd` received specification PASS and quality/security APPROVED before commit. The app now has rear preview/analysis, direct on-device MoveNet, an attributed bundled reference, named uncalibrated match evidence, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. It still has no product shutter, auto-capture, Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion flow, or end-to-end guided workflow.
+> `HEAD` and `origin/main` remain at `d6606ba25de16fc425751a0b85c7158b48d68bc5`; Task 11A is not committed yet. The candidate adds a backup-excluded Room V1 authority schema, deletion-aware attempt registration and capture-start authorization, atomic exactly-three-output confirmation/advancement/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim compare-and-set authority. It still has no product shutter, auto-capture coordinator, reference import, MediaStore I/O worker, physical deletion, TTS/audio, deletion UI, or end-to-end guided workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -10,15 +10,18 @@ Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP w
 
 The provisional application ID is `com.tonyisup.poseguidesnap`; the prototype version is `0.1.0` (`versionCode` 1), with `minSdk 29` and target SDK 37. It requests `android.permission.CAMERA` and AndroidX's app-signature `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network, cloud, or analytics library. The manifest disables Android backup and points to fail-closed legacy and API 31+ rules that exclude every supported app storage domain from cloud backup, device transfer, and the compile-SDK-37 iOS cross-platform transfer surface.
 
-Verified Task 10 evidence:
+Verified Task 10 and Task 11A evidence:
 
 - JVM suite: 266/266 GREEN; lint and debug main/instrumentation builds GREEN.
 - Reproducible APK SHA-256 values: main `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad`; instrumentation `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`.
 - Authorized Pixel 6 relevant instrumentation: 15/15 GREEN. The fixed attributed bundled reference, aligned live/reference skeletons, real rear-camera candidate capture, no-clobber behavior, zero private capture residue, and 400–500 ms camera release all passed.
 - Final 60-second run: mean CPU 148.08%, peak 162%, thermal status 0, battery 31.0→30.8°C, no fatal/ANR, and bounded memory. It did **not** improve over the pre-cadence baseline; the 15-minute Gate 4 soak remains pending.
 - No private images, screenshots, or raw landmark streams are retained.
+- Task 11A JVM suite: 307/307 GREEN; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 schema SHA-256: `e5eb94f4ff96944cc9de1aa5c2f6e8e326ba5caaa224c46f3247056cb1c33ab8`.
+- Across explicitly authorized checkpoint runs, all 93 current Room-authority instrumentation methods passed: schema/runtime 4, registration/start 22, confirmation/rollback 33, and deletion/claim/restart/concurrency 34. The final hardening APK ran the 34-method Task 11A.4 class plus three focused negative-generation regressions; production database entries and test-database residue were zero after both runs.
+- Only a fresh `PENDING → CLAIMED` compare-and-set grants external-create authority. Persisted claim replay is informational and reconciliation-required; Task 11A performs no MediaStore insertion or file deletion.
 
-The internal candidate-capture mechanics are not the durable product protocol. Task 11A adds Room authority and deletion-generation barriers; Task 11B adds transactional reference import; Task 14 later connects the reducer, private capture, Room confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
+The internal camera candidate-capture mechanics are not yet connected to the durable Room protocol. Task 11B adds transactional reference import; Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
