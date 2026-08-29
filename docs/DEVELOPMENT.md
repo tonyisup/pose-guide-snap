@@ -1,6 +1,6 @@
 # Development Environment
 
-> **Project status: buildable Android/Compose prototype.** This document records the command-line Android toolchain and Task 3 bootstrap verified on 2026-08-28. Camera, pose detection, coaching, capture, storage, export, and the product workflow are not implemented. No device or emulator test has been run.
+> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** This document records the command-line Android toolchain, the historical Task 3 bootstrap checkpoint, and the commands used to verify the current prototype. Current HEAD includes rear CameraX preview/analysis, direct on-device MoveNet, a fixed attributed reference, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. Authorized Pixel 6 testing has run; Gate 2 remains incomplete because the user-facing shutter, Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion, and end-to-end workflow do not exist.
 
 ## Verified host
 
@@ -129,8 +129,8 @@ Do not use `apkanalyzer` on this verified split Homebrew/SDK layout. Inspect the
   --file res/xml/data_extraction_rules.xml
 ```
 
-The Task 3 JVM suite checks the provisional package/version configuration and structurally parses the source manifest and both backup-rule resources. The Android instrumentation test checks that the installed package requests only AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` and that `FLAG_ALLOW_BACKUP` is clear; it is compiled by `assembleDebugAndroidTest` but has **not** been run because this bootstrap verification uses no device or emulator. That permission protects non-exported dynamic receivers and grants no camera, storage, or network capability.
+At the historical Task 3 checkpoint, the JVM suite checked the provisional package/version configuration and structurally parsed the source manifest and both backup-rule resources. Its Android instrumentation test checked that the installed package requested only AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` and that `FLAG_ALLOW_BACKUP` was clear; that Task 3 bootstrap verification compiled the test without running a device or emulator. Later Task 9/10 authorization ran the relevant instrumentation on the Pixel 6 against the committed camera slice. The AndroidX permission protects non-exported dynamic receivers and grants no camera, storage, or network capability.
 
 ## Current boundary
 
-The command-line bootstrap is GREEN: the native Compose prototype and instrumentation test APK compile, the JVM tests pass, and exact packaged-resource inspection verifies the package/version/SDK and fail-closed backup boundary. This proves only that Gate 0 can bootstrap and build. The app currently renders `Pose Guide Snap — prototype`; it has no camera, pose detection, coaching, capture, persistence, export, analytics, cloud, or product workflow.
+The command-line build remains GREEN: the native Compose prototype and instrumentation APK compile, the JVM suite passes, and exact packaged-resource inspection verifies the package/version/SDK and fail-closed backup boundary. Current HEAD also contains the committed, authorized-Pixel Task 10 camera slice: rear preview/analysis, direct MoveNet, the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. This is not a completed guided-capture product. It has no user-facing shutter or auto-capture, Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion flow, analytics, cloud, or end-to-end workflow; Gate 2 remains unpassed.

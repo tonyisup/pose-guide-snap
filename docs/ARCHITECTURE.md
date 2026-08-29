@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: Tasks 1–9 committed; Task 10 is an uncommitted camera-slice candidate.** The candidate implements rear CameraX preview/analysis, a fixed bundled public reference and named uncalibrated match evidence, direct on-device MoveNet, and internal exactly-three app-private candidate capture. Reference import, durable coordination/confirmation, MediaStore export, audio, and deletion remain planned.
+> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** The bounded slice implements rear CameraX preview/analysis, a fixed attributed bundled reference and named uncalibrated match evidence, direct on-device MoveNet, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. Those mechanics are not the durable product protocol: Room authority and deletion barriers remain Task 11A, transactional reference import remains Task 11B, and unified coordination/confirmation plus MediaStore export remains Task 14. Gate 2 is not yet passed.
 
 ## Fixed MVP decisions
 
@@ -16,7 +16,7 @@
 | Automatic capture | Three-photo burst after stable lock |
 | Storage | Backup/transfer-excluded app-private references, landmarks, authoritative captures, and quarantine; post-confirmation MediaStore export |
 
-The implementation will begin as one Android app module. Package boundaries and dependency tests will enforce separation before build time or ownership provides evidence that Gradle modules are worth their cost.
+The implementation uses one Android app module. Package boundaries and dependency tests enforce separation until build time or ownership provides evidence that additional Gradle modules are worth their cost.
 
 ## Runtime shape
 
@@ -50,7 +50,7 @@ PoseDetector(blocking, off-UI) -> PoseObservation -> PoseMatcher
                               MediaStore export outbox worker
 ```
 
-CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. No user-facing shutter or session advancement is exposed yet. Room remains planned for ordered shoot, pose, session, confirmation, and capture relationships. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
+CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. This internal candidate path has no user-facing shutter, Room authority, durable confirmation, session advancement, or export and must not be treated as the product capture protocol. Task 11A adds Room authority; Task 14 later connects the reducer, capture adapter, confirmation/advancement, and export. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
 
 ## State and policy ownership
 
@@ -158,7 +158,7 @@ See [Privacy](PRIVACY.md) for the complete data contract and [Testing](TESTING.m
 
 Domain packages must remain pure Kotlin. They may not import Android, CameraX, LiteRT, Room, Text-to-Speech, Compose, or concrete storage APIs. Adapters depend inward on domain contracts. UI and platform callbacks submit events; they do not mutate session state directly.
 
-This direction will be enforced with source-level dependency tests before camera or model integration begins.
+This direction is enforced with source-level dependency tests and remains a required gate as camera, model, persistence, audio, and export adapters are added.
 
 ## Decision records
 

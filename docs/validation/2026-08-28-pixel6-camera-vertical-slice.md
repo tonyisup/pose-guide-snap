@@ -9,10 +9,11 @@ Hardware execution in this note used these candidate artifacts:
 - Main debug APK SHA-256: `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad`
 - Instrumentation APK SHA-256: `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`
 
-These hashes bind the current hardware evidence but are not a commit/review digest. A clean build and a forced rebuild produced byte-identical APK pairs before installation; no APK rebuild occurred after the final pair was installed. Any later production or instrumentation code change requires affected hardware evidence and hashes to be refreshed.
+These hashes bind the accepted Task 10 hardware evidence but are not the staged review digest. A clean build and a forced rebuild produced byte-identical APK pairs before installation; no APK rebuild occurred after the final pair was installed. Any later production or instrumentation code change requires affected hardware evidence and hashes to be refreshed.
 
 ## Passed hardware checks
 
+- Relevant Task 9/10 instrumentation aggregate: 15/15.
 - Direct MoveNet public/generated fixture instrumentation: 1/1.
 - Generated-bitmap camera-frame engine instrumentation: 7/7.
 - Installed permission contract: CAMERA plus the app-signature dynamic-receiver permission only.
@@ -24,7 +25,7 @@ These hashes bind the current hardware evidence but are not a commit/review dige
 - The app rendered the bundled public meditation image in a bounded card with visible `Google AI Edge · CC BY 4.0` credit plus its fixed ghost skeleton in the same preview transform as the live skeleton. The exact source/license/hash notice is also packaged under main assets. Named coverage, angular, positional, overall, and mirror evidence remained separately visible as stable pass/fail states labeled uncalibrated; numeric scores remain internal evidence, framing was explicitly not evaluated, and capture lock was disabled.
 - With the public fixture displayed on the Mac, the live UI reported one person and 17/17 landmarks. The rear-unmirrored live skeleton visibly tracked the public figure's head, shoulders, arms, hips, crossed legs, and ankles without clipping or scale/mirroring displacement. The dense evidence panel and reference card were readable and unclipped on the Pixel 6. The transient screenshots were deleted and are not retained.
 - No capture, lock eligibility, persistence, or advancement claim was shown.
-- Camera active-client state became empty within 500 ms after the app moved to the background.
+- Camera active-client state became empty in the observed 400–500 ms window after the app moved to the background.
 - Generated-byte owned-reservation publication and pre-existing-final no-clobber: 2/2.
 - Real reducer-command rear-camera exactly-three JPEG capture, repeated-token collision, byte preservation, and known-file cleanup: 1/1.
 - After capture acceptance, the candidate/temp directories contained zero residual files.
@@ -87,13 +88,16 @@ A generated-byte disposable spike and the final 2/2 Android publisher acceptance
 5. Atomically rename the complete temporary file over only that owned reservation.
 6. Sync the parent directory.
 
-The reservation is non-authoritative and must never be treated as a durable output by filesystem scanning. Task 14's Room confirmation transaction remains the authority after all three candidate outputs publish. Crash leftovers remain explicit reconciliation work.
+The reservation is non-authoritative and must never be treated as a durable output by filesystem scanning. Task 11A adds the Room confirmation authority after all three candidate outputs publish; Task 14 later connects that transaction to the reducer and capture adapter. Crash leftovers remain explicit reconciliation work.
 
 The final JVM publisher revision also serializes every supported in-process mutation of the exclusively owned capture-candidates directory through one process-wide guard. A deterministic paused-seam test proves a second publisher cannot mutate the identity between reservation verification and atomic rename. This boundary does not claim protection against same-UID code that bypasses the adapter; such mutation is unsupported.
 
 The final capture-mechanics revision maps existing/crash-leftover deterministic identities to reconciliation-required and gives exact-three success precedence when close races after the third publication. It retains cleanup ownership both after a prepared output exists and when deterministic temp creation fails before a prepared output can be returned. The prepare-time owner controls only the verified reservation and cleanup-directory sync state, never the colliding foreign temp. While cleanup is pending, conflicting submission is blocked and serialized retry reports cleaned or still pending without a duplicate terminal callback.
 
-## Pending before Task 10 acceptance
+## Closure and review outcome
 
-- Bind the final no-code-change candidate to an exact staged digest and refresh APK hashes if review changes code.
-- Obtain specification PASS and quality/security APPROVED on the same staged bytes before commit.
+- The final staged Task 10 digest was `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd`.
+- Specification review returned PASS and quality/security review returned APPROVED on those exact staged bytes.
+- JVM verification was 266/266 GREEN; lint and debug main/instrumentation builds were GREEN; the reproducible APK hashes above remained the accepted hardware artifacts.
+- Task 10 was committed as `feat: add guided camera pose slice` at `605c904d9c01002e8f231301094a8b3183dc2c36`.
+- The bounded Task 10 slice is closed. It does not pass Gate 2: auto-capture and the user-facing shutter remain disabled, and no Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion, or end-to-end guided workflow exists. The 15-minute Gate 4 soak also remains pending.

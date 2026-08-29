@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–9 committed; Task 10 is an uncommitted camera-slice candidate.** The candidate proves a fixed bundled public reference, named uncalibrated match evidence, rear live preview/overlay, and internal exactly-three app-private candidate capture. It exposes no user-facing shutter, lock eligibility, persistence confirmation, sequence advancement, import, export, audio, or deletion flow and is not yet an available guided-capture product. The complete journey below remains the approved MVP contract.
+> **Project status: Tasks 1–10 are committed; Task 10 is hardware-exercised.** The bounded slice proves a fixed attributed bundled reference, named uncalibrated match evidence, rear live preview/overlay, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. Gate 2 remains incomplete: there is no user-facing shutter or auto-capture, Room confirmation/advancement, reference import, MediaStore export, audio, deletion flow, or end-to-end guided workflow. Room authority is Task 11A, transactional reference import is Task 11B, and the unified durable coordinator/export protocol remains Task 14.
 
 ## Product goal
 

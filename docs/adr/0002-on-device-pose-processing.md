@@ -1,6 +1,6 @@
 # ADR 0002: On-Device Pose Processing
 
-- **Status:** Accepted product boundary; direct MoveNet/LiteRT model boundary implemented, device acceptance pending
+- **Status:** Accepted product boundary; direct MoveNet/LiteRT and Task 10 live camera slice implemented and hardware-exercised; full product acceptance pending
 - **Date:** 2026-08-27
 - **Decision owners:** Pose Guide Snap product and architecture review
 - **Reversibility:** Reversible only through a new data and privacy decision
@@ -11,7 +11,7 @@ Reference photos and live camera frames may contain sensitive personal images. T
 
 A monocular pose detector is still limited when run locally: it cannot perfectly reconstruct depth, occluded joints, hand shape, or viewpoint. Moving inference to a server would not justify stronger product claims.
 
-The repository now bundles an exact MoveNet MultiPose model and implements a direct LiteRT detector plus pure mapper. The Android inference contract compiles but has not run on a device or emulator.
+The repository now bundles an exact MoveNet MultiPose model and implements a direct LiteRT detector plus pure mapper. Authorized Pixel 6 instrumentation has exercised the fixed public reference, live rear-camera inference, and aligned live/reference skeleton rendering. This bounded evidence does not establish reference import, durable capture confirmation/advancement, calibration, or the complete guided workflow.
 
 ## Decision
 

@@ -1,18 +1,24 @@
 # Pose Guide Snap
 
-> **Project status: buildable Android/Compose prototype.**
+> **Project status: Task 10 is committed and hardware-exercised; Gate 2 remains incomplete.**
 >
-> This repository contains a real native Android project, a minimal prototype screen, deterministic JVM pose/matching/coaching/session policy, and a direct LiteRT MoveNet detector adapter. The detector's 1/0/2-person instrumentation contract compiles into a test APK but has **not** run on a device or emulator. Camera preview, durable capture, storage, export, and the end-to-end product workflow remain unimplemented.
+> `HEAD` and `origin/main` both point to the guided CameraX pose slice at `605c904d9c01002e8f231301094a8b3183dc2c36` (`feat: add guided camera pose slice`). The exact staged digest `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd` received specification PASS and quality/security APPROVED before commit. The app now has rear preview/analysis, direct on-device MoveNet, an attributed bundled reference, named uncalibrated match evidence, aligned live/reference skeletons, and internal exactly-three app-private candidate-capture mechanics. It still has no product shutter, auto-capture, Room confirmation/advancement, reference import, MediaStore export, TTS/audio, deletion flow, or end-to-end guided workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
-## Current prototype
+## Current implementation
 
-The app currently renders only:
+The provisional application ID is `com.tonyisup.poseguidesnap`; the prototype version is `0.1.0` (`versionCode` 1), with `minSdk 29` and target SDK 37. It requests `android.permission.CAMERA` and AndroidX's app-signature `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network, cloud, or analytics library. The manifest disables Android backup and points to fail-closed legacy and API 31+ rules that exclude every supported app storage domain from cloud backup, device transfer, and the compile-SDK-37 iOS cross-platform transfer surface.
 
-> Pose Guide Snap — prototype
+Verified Task 10 evidence:
 
-The provisional application ID is `com.tonyisup.poseguidesnap`; the prototype version is `0.1.0` (`versionCode` 1), with `minSdk 29` and target SDK 37. It requests no `INTERNET`, camera, or storage permission and includes no analytics, cloud, camera, storage, or network library. The manifest disables Android backup and points to fail-closed legacy and API 31+ rules that exclude every supported app storage domain from cloud backup, device transfer, and the compile-SDK-37 iOS cross-platform transfer surface. AndroidX contributes the app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` to protect its non-exported dynamic receivers; it grants no camera, storage, or network capability.
+- JVM suite: 266/266 GREEN; lint and debug main/instrumentation builds GREEN.
+- Reproducible APK SHA-256 values: main `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad`; instrumentation `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`.
+- Authorized Pixel 6 relevant instrumentation: 15/15 GREEN. The fixed attributed bundled reference, aligned live/reference skeletons, real rear-camera candidate capture, no-clobber behavior, zero private capture residue, and 400–500 ms camera release all passed.
+- Final 60-second run: mean CPU 148.08%, peak 162%, thermal status 0, battery 31.0→30.8°C, no fatal/ANR, and bounded memory. It did **not** improve over the pre-cadence baseline; the 15-minute Gate 4 soak remains pending.
+- No private images, screenshots, or raw landmark streams are retained.
+
+The internal candidate-capture mechanics are not the durable product protocol. Task 11A adds Room authority and deletion-generation barriers; Task 11B adds transactional reference import; Task 14 later connects the reducer, private capture, Room confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
@@ -21,7 +27,7 @@ From the repository root on the [verified development environment](docs/DEVELOPM
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works, and the compiled instrumentation test has not been executed on a device or emulator.
+The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 slice.
 
 ## Approved MVP boundary
 

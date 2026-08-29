@@ -8,7 +8,7 @@
 
 **Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; direct LiteRT `1.4.2` with MoveNet MultiPose Lightning float16 v1; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
 
-**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–9 are implemented; Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10 is an uncommitted candidate with JVM and authorized Pixel 6 evidence; exact-digest specification and quality/security approval remain required before commit. This revision supersedes every MediaPipe-specific instruction below.
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–10 are implemented and committed. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's exact staged digest `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd` received specification PASS and quality/security APPROVED, then committed as `feat: add guided camera pose slice` at `605c904`. Its authorized Pixel evidence does not complete Gate 2. The next sequential slices are Task 11A (Room authority, no import UI) and Task 11B (transactional reference import). This revision supersedes every MediaPipe-specific instruction below.
 
 ---
 
@@ -544,39 +544,62 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 5. Add deterministic same-directory temp writes, appropriate sync, and per-file atomic no-clobber publication for exactly three private outputs. On Android, claim the absent final identity with an exclusive empty reservation, verify that exact owned reservation before atomic rename, serialize every supported capture-directory mutation through one process-wide publisher/reconciler guard, and treat every existing/crash-leftover identity as non-authoritative reconciliation work. Retain prepared-output ownership across cleanup failure, block conflicting capture, and expose serialized cleanup retry; exact-three completion wins if close races after the third publication. Keep the user-facing manual trigger disabled until Task 14 connects these mechanics to the reducer, Room confirmation, and export outbox; there must be no second protocol.
 6. Contain detector/mapper exceptions per frame so malformed output cannot terminate analysis. Measure latency, dropped frames, allocations/GC pressure, thermal behavior, and sustained resource cleanup locally without logging images, raw tensors, landmarks, or private paths.
 7. Run on the Pixel 6 and save an evidence note under `docs/validation/`.
-8. Commit: `feat: prove single-reference guided camera slice`.
+8. Commit: `feat: add guided camera pose slice`.
 
 **Verification:** Preview, overlay, and all three candidate private captures align on the exact APK under test; write/finalization failure and collision do not clobber final files; camera-analysis resources close when leaving the screen. Gate 2 manual acceptance remains pending until Task 14 connects the full common protocol.
 
-### Task 11: Add Room persistence and reference import
+**Completion:** Specification PASS and quality/security APPROVED were recorded on exact staged digest `61a3fc581b16902dcd592f992b253ec70fe71ea727136001583c09a422b2f6dd`; commit `605c904` contains the approved bytes. JVM 266/266, lint/build, reproducible APKs, 15/15 relevant Pixel instrumentation, zero private capture residue, camera release, and aligned public live/reference skeleton checks passed. The final 60-second run remained thermally stable with bounded memory but did not improve over the pre-cadence CPU baseline; the 15-minute Gate 4 soak remains pending. No product shutter, auto-capture, Room confirmation/advance, import, export, audio, deletion, or end-to-end flow was enabled.
 
-**Objective:** Let users create a shoot and import locally validated reference poses.
+### Task 11A: Add Room authority for capture, confirmation, and deletion barriers
+
+**Objective:** Establish the durable Room source of truth for shoots and capture authority without adding photo-picker or reference-import UI.
 
 **Files:**
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/AppDatabase.kt`
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/*Entity.kt`
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/db/*Dao.kt`
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/RoomShootRepository.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/ReferenceAssetStore.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporter.kt`
-- Create: `app/src/test/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporterTest.kt`
 - Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/RoomShootRepositoryTest.kt`
 
 **Steps:**
 
-1. Write REDs for atomic pose ordering, unique command tokens and confirmation receipts, one-outbox/exactly-three-output cardinality, composite output uniqueness, ordinal bounds, deletion-generation barriers, valid import, no-person rejection, multiple-person rejection, low-coverage rejection, and failed-copy cleanup.
-2. Add Room schema and migrations from version 1 onward for attempts, authoritative private outputs, confirmation/advance receipts, one export outbox, and exactly three per-output rows with composite `(commandToken, burstOrdinal)` identity, ordinal 0–2 constraint, claim state/token, exact target collection/volume, intended metadata, and exact URI; never use destructive fallback in release code.
-3. Copy selected references to app-private storage before extraction.
-4. Store detector/model metadata with serialized landmarks.
-5. Make import transactional: no partial pose row survives a failed asset copy or validation. Add the repository transaction that atomically confirms an already-durable three-output attempt, records its private outputs, advances once, applies the unique receipt, creates one outbox plus exactly three output rows, and verifies that cardinality before commit. Add the atomic deleting/deletion-generation transition that blocks capture/advance and claims while cancelling untouched pending work.
-6. Run repository instrumentation and importer JVM tests.
-7. Commit: `feat: persist shoots and import reference poses`.
+1. Write REDs for schema migration, atomic pose ordering, capture-attempt identity, unique confirmation receipts, exactly three private-output records, one-outbox/exactly-three-export-output cardinality, composite output uniqueness, ordinal bounds, duplicate confirmation, rollback, and deletion-generation barriers.
+2. Add Room schema and migrations from version 1 onward for shoots/poses/sessions, capture attempts, authoritative private outputs, confirmation/advance receipts, one export outbox, and exactly three constrained per-output rows. Include composite `(commandToken, burstOrdinal)` identity, ordinal 0–2 constraints, claim state/token, exact target collection/volume, intended metadata, exact URI, and deletion-generation state; never use destructive fallback in release code.
+3. Add the repository transaction that atomically confirms an already-durable exactly-three-output attempt, records exactly three authoritative private outputs, advances once, applies the unique receipt, creates one outbox plus exactly three constrained output rows, and verifies cardinality before commit.
+4. Add the atomic deleting/deletion-generation transition that blocks capture/advance and new claims while cancelling untouched pending work without deleting in-progress authority.
+5. Run repository JVM/instrumentation tests, migrations, and force-close/relaunch checks. Do not add photo-picker result handling, reference copying, or import UI in this slice.
+6. Stage the exact candidate, record its digest, and obtain specification PASS plus quality/security APPROVED on those same bytes.
+7. Commit only the approved digest: `feat: add Room capture authority`.
 
-**Verification:** Force-close/relaunch preserves shoot order and validated references. Repository tests prove duplicate confirmation cannot advance twice; a failed cardinality or confirmation transaction creates no advance, receipt, or outbox; and a deletion barrier blocks capture/advance and new claims without deleting in-progress authority.
+**Verification:** Force-close/relaunch preserves Room state. Repository tests prove duplicate confirmation cannot advance twice; every confirmed token has exactly three private-output records, one unique receipt, one advance, one outbox, and exactly three constrained output rows; a failed cardinality or confirmation transaction creates none of those partial effects; and a deletion barrier blocks capture/advance and new claims without deleting in-progress authority.
+
+### Task 11B: Add transactional reference import
+
+**Objective:** Handle explicit system-picker results by copying and validating one reference into app-private authority without leaving partial rows or assets.
+
+**Files:**
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/ReferenceAssetStore.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/importer/ReferencePickerResultHandler.kt`
+- Create: `app/src/main/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporter.kt`
+- Create: `app/src/test/java/com/tonyisup/poseguidesnap/importer/ReferencePoseImporterTest.kt`
+- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/importer/ReferencePickerResultHandlerTest.kt`
+
+**Steps:**
+
+1. Write REDs for accepted system-picker results, cancelled/invalid results, valid one-person import, no-person rejection, multiple-person rejection, low-coverage rejection, failed private copy, detector failure, database failure, and cleanup failure.
+2. Handle only explicit system-picker result URIs; copy selected bytes into app-private storage before extraction and do not retain provider-URI authority.
+3. Run the bundled MoveNet detector off the UI thread and validate person count and required coverage through named policy.
+4. Persist serialized landmarks with exact detector/model digest, runtime version, preprocessing/letterbox version, coordinate-transform metadata, and validation status.
+5. Make asset-plus-row publication transactional at the repository boundary: success exposes both the validated pose row and private reference asset; every failure removes or quarantines the owned partial asset and leaves no active partial row. Never reinterpret an existing row/asset silently.
+6. Run importer JVM tests and picker-result instrumentation tests, including force-close/relaunch preservation of validated references. Broader create/import/reorder UI remains Task 12.
+7. Stage the exact candidate, record its digest, and obtain specification PASS plus quality/security APPROVED on those same bytes.
+8. Commit only the approved digest: `feat: import validated reference poses`.
+
+**Verification:** A valid picker result produces one durable app-private reference and one matching validated pose row with detector/preprocessing metadata. Cancellation, rejection, copy/detector/database failure, or restart exposes no partial active row or orphaned unquarantined asset; force-close/relaunch preserves validated references.
 
 ### Task 12: Build shoot creation and playlist editing UI
 
-**Objective:** Provide the minimum usable preparation workflow for a hands-free session.
+**Objective:** Build on Tasks 11A and 11B to provide the minimum usable preparation workflow for a hands-free session.
 
 **Files:**
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/shoots/ShootListScreen.kt`
@@ -639,7 +662,7 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 1. Write REDs using fake detector, clock, speech, repository, capture store, and export ports for automatic/manual success, manual bypass of only match/lock, duplicate callback/receipt, timeout, each private-file write/sync/finalization failure, final-path collision/no-clobber, Room transaction/cardinality failure, quarantine/uncertain cleanup, pre/post-transaction crash, exactly-once advancement, composite uniqueness/ordinal bounds, known-URI resume, ambiguous MediaStore create, paused two-worker one-insert interleaving, every claim/create/URI/publication crash seam, foreign-row preservation, pause-during-lock, stale frames, deletion-vs-worker interleavings, quarantine retention/resolution/visible count, delete-all, and incomplete tombstone retention.
 2. Make the coordinator the only interpreter of reducer effects.
 3. Assign deterministic `(commandToken, burstOrdinal 0..2)` private identities. For each output, write a same-directory temp file, sync as appropriate, and publish the final private file atomically without clobber. Do not represent the three publications as one filesystem transaction.
-4. Only after all three files are durable, call one Room transaction to confirm the attempt, record all three authoritative outputs, advance exactly once, apply the unique receipt, and create the export outbox. Automatic and manual commands use this identical path.
+4. Only after all three files are durable, call Task 11A's Room authority transaction to confirm the attempt, record all three authoritative outputs, advance exactly once, apply the unique receipt, and create the export outbox. Automatic and manual commands use this identical path.
 5. If private capture or the Room transaction fails, create no advance/outbox and clean or quarantine unconfirmed files. Re-arm only when resolution is proven; otherwise enter reconciliation-required and do not recapture automatically.
 6. On startup, resolve deterministic pre-transaction private files before retry. For a committed attempt, leave capture/advance complete and replay only pending outbox work.
 7. Export only after a unique Room compare-and-set claim wins. Recheck the deletion generation before `MediaStore.insert()` and before publication. Persist the returned exact URI before later fallible publication. A claimed/create-started missing-URI row is permanently reconciliation-required unless explicitly resolved; timeout/restart cannot return it to pending or issue another create. Never use display name/relative path to update, delete, or reconcile.
@@ -824,7 +847,7 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Approval recorded:** Defaults 1–5 and the bounded Tasks 1–8 phase were approved on 2026-08-27. Decisions 6–7 supersede the earlier MediaStore-authoritative capture/storage wording. Decision 8 was approved on 2026-08-28 after the MediaPipe telemetry conflict and replacement spikes. Later changes to these boundaries require an explicit plan revision.
 
-## 11. First Execution Slice — Completed
+## 11. Completed Execution Slices
 
 The approved first bounded phase executed **Tasks 1–8 only**:
 
@@ -834,7 +857,7 @@ The approved first bounded phase executed **Tasks 1–8 only**:
 - produce a deterministic replay report,
 - stop before detector integration, camera, earbuds, or private image access.
 
-This yielded the core ownership boundary and causal tests without touching private device data. Those exact staged increments were reviewed before the separately approved MoveNet/LiteRT Task 9 phase; CameraX remains Task 10.
+This yielded the core ownership boundary and causal tests without touching private device data. Task 9 then added the reviewed direct MoveNet/LiteRT boundary. Task 10 added the committed, authorized-Pixel CameraX pose slice at `605c904`, including the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. Those mechanics are not Room-confirmed product capture and Gate 2 remains unpassed. The next bounded sequence is Task 11A Room authority followed by Task 11B transactional reference import; Tasks 12–18 retain their existing numbers.
 
 ## Sources
 
