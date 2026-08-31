@@ -63,6 +63,7 @@ These are product and architecture commitments, not claims of implemented behavi
 | [ADR 0001: Android native first](docs/adr/0001-android-native-first.md) | Reversible platform decision and consequences |
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
 | [ADR 0003: Persisted reference-import file ledger](docs/adr/0003-persisted-reference-import-file-ledger.md) | Durable cross-storage import authority and restart-recovery contract |
+| [ADR 0004: Room V3 shoot-preparation authority](docs/adr/0004-room-v3-shoot-preparation-authority.md) | Import-attempt/order separation, preparation ownership, and durable start |
 | [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates, amended by the approved telemetry-free MoveNet/LiteRT revision |
 
 Install and product-usage instructions will be added only after those workflows exist and have been verified on an authorized target.

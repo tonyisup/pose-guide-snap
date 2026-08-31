@@ -603,27 +603,24 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Implementation evidence:** The persisted Room file-operation ledger, journal-backed importer, exact cleanup/quarantine recovery, V1→V2 migration, generated-byte picker path, and public-fixture analyzer landed in `d368e96a0335b1281471faca706287c4980652f0`. Host gates pass 413/413 JVM tests, lint, debug/release APK assembly, and instrumentation assembly. The explicitly authorized Pixel 6 gate passed all 25 targeted methods on Android 16/API 36, including migration, restart, concurrency, rollback, redaction, and residue checks. Exact APK hashes and the corrected Room/serialization runtime dependency boundary are recorded in `docs/validation/2026-08-30-task11b-persisted-reference-import-ledger-pixel6.md`. Task 12 UI remains deferred.
 
-### Task 12: Build shoot creation and playlist editing UI
+### Task 12: Add Room V3 shoot preparation and playlist editing UI
 
-**Objective:** Build on Tasks 11A and 11B to provide the minimum usable preparation workflow for a hands-free session.
+**Objective:** Provide the minimum safe preparation workflow for a hands-free session: create → import → validate → reorder → durably start, with camera permission unreachable until Room owns an active session.
 
-**Files:**
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/shoots/ShootListScreen.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorScreen.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorViewModel.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/AppNavHost.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorFlowTest.kt`
+**Approved architecture amendment:** The original UI-only Task 12 was not executable because production code had no shoot create/list/reorder/start API and V2 rejected/quarantined import attempts permanently occupied unique playlist positions. The owner approved Room V3 decoupling of immutable import attempts from mutable active playlist order, durable idempotent Room session creation, and navigation to the existing camera diagnostic only after successful start. See `docs/adr/0004-room-v3-shoot-preparation-authority.md`.
 
-**Steps:**
+**Execution plan:** Follow `.hermes/plans/2026-08-31-task12-room-v3-shoot-preparation.md` exactly. It splits the work into:
 
-1. Write a Compose flow RED for create → import → validation result → reorder → start.
-2. Implement explicit loading, rejection, empty, and retry states.
-3. Require 3–20 validated references to start; reject a shoot outside the approved playlist bounds.
-4. Add accessible labels and do not communicate validity by color alone.
-5. Run Compose instrumentation tests.
-6. Commit: `feat: add pose playlist editor`.
+1. Room-owned maximum-20 import admission before provider access.
+2. V3 migration removing `pose_index` from reference-import intents while preserving V1/V2 authority.
+3. Redacted shoot-preparation create/list/editor/import-allocation contracts.
+4. Atomic validated-pose reorder with `shoot_poses` as the sole order authority.
+5. Durable, idempotent start with exactly one active session per shoot.
+6. Accessible list/editor/Photo Picker UI and camera routing only after start.
 
-**Verification:** A five-pose shoot can be created and reordered without entering the camera screen during imports.
+**Scope boundary:** Task 12 may enter the existing Task 10 camera diagnostic after durable start. It must not add Task 13 TTS or Task 14 automatic/manual capture coordination, MediaStore I/O, or physical deletion behavior.
+
+**Verification:** A five-pose shoot can be created, imported, reordered, and durably started without camera permission during preparation. Room owns every cardinality/order/start decision; a terminal rejected or quarantined import does not block replacement; exact start replay creates no duplicate session.
 
 ### Task 13: Add Text-to-Speech coaching with cadence control
 

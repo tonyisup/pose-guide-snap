@@ -167,3 +167,4 @@ This direction is enforced with source-level dependency tests and remains a requ
 - [ADR 0001: Android native first](adr/0001-android-native-first.md)
 - [ADR 0002: On-device pose processing](adr/0002-on-device-pose-processing.md)
 - [ADR 0003: Persisted reference-import file ledger](adr/0003-persisted-reference-import-file-ledger.md)
+- [ADR 0004: Room V3 shoot-preparation authority](adr/0004-room-v3-shoot-preparation-authority.md)
