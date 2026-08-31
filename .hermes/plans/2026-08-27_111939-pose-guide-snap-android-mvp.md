@@ -579,6 +579,8 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Objective:** Handle explicit system-picker results by copying and validating one reference into app-private authority without leaving partial rows or assets.
 
+**Approved 2026-08-30 architecture amendment:** Three exact-digest candidates proved that current-filename inference plus process-local inode handles cannot safely compose Room with crash-interrupted file publication. Task 11B now requires the persisted reference-import filesystem ledger defined by `docs/adr/0003-persisted-reference-import-file-ledger.md`. Room must journal the admitted stage before and after each file/rename/delete/quarantine/fsync boundary; partial unsynced temp bytes are deleted rather than quarantined; only hash/count-bound synced bytes may be retained; reconciliation-required remains retryable; and logical `ASSET_READY`, `REJECTED_CLEANED`, or `REJECTED_QUARANTINED` cannot be persisted before the corresponding ledger stage is durable. Ordinary reservation replay is nonauthorizing except for exact committed replay; a new user-selected retry after coherent `REJECTED_CLEANED` must use a separate atomic command that resets both logical intent and `CLEANED_DURABLE` ledger authority before any provider read or file claim. This amendment supersedes any narrower Task 11B interpretation based only on deterministic filename inspection.
+
 **Files:**
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/ReferenceAssetStore.kt`
 - Create: `app/src/main/java/com/tonyisup/poseguidesnap/importer/ReferencePickerResultHandler.kt`
@@ -598,6 +600,8 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 8. Commit only the approved digest: `feat: import validated reference poses`.
 
 **Verification:** A valid picker result produces one durable app-private reference and one matching validated pose row with detector/preprocessing metadata. Cancellation, rejection, copy/detector/database failure, or restart exposes no partial active row or orphaned unquarantined asset; force-close/relaunch preserves validated references.
+
+**Implementation evidence:** The persisted Room file-operation ledger, journal-backed importer, exact cleanup/quarantine recovery, V1→V2 migration, generated-byte picker path, and public-fixture analyzer are implemented. Host gates pass 413/413 JVM tests, lint, debug/release APK assembly, and instrumentation assembly. The explicitly authorized Pixel 6 gate passed all 25 targeted methods on Android 16/API 36, including migration, restart, concurrency, rollback, redaction, and residue checks. Exact APK hashes and the corrected Room/serialization runtime dependency boundary are recorded in `docs/validation/2026-08-30-task11b-persisted-reference-import-ledger-pixel6.md`. Task 12 UI remains deferred.
 
 ### Task 12: Build shoot creation and playlist editing UI
 

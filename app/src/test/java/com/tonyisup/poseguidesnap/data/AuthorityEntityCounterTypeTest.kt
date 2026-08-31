@@ -5,6 +5,8 @@ import com.tonyisup.poseguidesnap.data.db.CaptureConfirmationReceiptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutboxEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutputEntity
 import com.tonyisup.poseguidesnap.data.db.PrivateCaptureOutputEntity
+import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
+import com.tonyisup.poseguidesnap.data.db.ReferenceImportIntentEntity
 import com.tonyisup.poseguidesnap.data.db.ShootEntity
 import com.tonyisup.poseguidesnap.data.db.ShootPoseEntity
 import com.tonyisup.poseguidesnap.data.db.ShootSessionEntity
@@ -13,7 +15,7 @@ import org.junit.Test
 
 class AuthorityEntityCounterTypeTest {
     @Test
-    fun persistedNumericFieldsExposeTheCompleteV1GetterWidths() {
+    fun persistedNumericFieldsExposeTheCompleteV2GetterWidths() {
         val actual = mapOf(
             "ShootEntity.createdAtEpochMillis" to
                 ShootEntity::class.java.getMethod("getCreatedAtEpochMillis").returnType,
@@ -23,6 +25,28 @@ class AuthorityEntityCounterTypeTest {
                 ShootEntity::class.java.getMethod("getDeletionGeneration").returnType,
             "ShootPoseEntity.poseIndex" to
                 ShootPoseEntity::class.java.getMethod("getPoseIndex").returnType,
+            "ReferenceImportIntentEntity.poseIndex" to
+                ReferenceImportIntentEntity::class.java.getMethod("getPoseIndex").returnType,
+            "ReferenceImportIntentEntity.createdAtEpochMillis" to
+                ReferenceImportIntentEntity::class.java
+                    .getMethod("getCreatedAtEpochMillis").returnType,
+            "ReferenceImportIntentEntity.updatedAtEpochMillis" to
+                ReferenceImportIntentEntity::class.java
+                    .getMethod("getUpdatedAtEpochMillis").returnType,
+            "ReferenceImportIntentEntity.assetReadyAtEpochMillis" to
+                ReferenceImportIntentEntity::class.java
+                    .getMethod("getAssetReadyAtEpochMillis").returnType,
+            "ReferenceImportIntentEntity.terminalAtEpochMillis" to
+                ReferenceImportIntentEntity::class.java
+                    .getMethod("getTerminalAtEpochMillis").returnType,
+            "ReferenceImportFileOperationEntity.byteCount" to
+                ReferenceImportFileOperationEntity::class.java.getMethod("getByteCount").returnType,
+            "ReferenceImportFileOperationEntity.createdAtEpochMillis" to
+                ReferenceImportFileOperationEntity::class.java
+                    .getMethod("getCreatedAtEpochMillis").returnType,
+            "ReferenceImportFileOperationEntity.updatedAtEpochMillis" to
+                ReferenceImportFileOperationEntity::class.java
+                    .getMethod("getUpdatedAtEpochMillis").returnType,
             "ShootSessionEntity.currentPoseIndex" to
                 ShootSessionEntity::class.java.getMethod("getCurrentPoseIndex").returnType,
             "ShootSessionEntity.nextAttemptNumber" to
@@ -83,6 +107,14 @@ class AuthorityEntityCounterTypeTest {
             "ShootEntity.updatedAtEpochMillis" to primitiveLong,
             "ShootEntity.deletionGeneration" to primitiveLong,
             "ShootPoseEntity.poseIndex" to primitiveInt,
+            "ReferenceImportIntentEntity.poseIndex" to primitiveInt,
+            "ReferenceImportIntentEntity.createdAtEpochMillis" to primitiveLong,
+            "ReferenceImportIntentEntity.updatedAtEpochMillis" to primitiveLong,
+            "ReferenceImportIntentEntity.assetReadyAtEpochMillis" to boxedLong,
+            "ReferenceImportIntentEntity.terminalAtEpochMillis" to boxedLong,
+            "ReferenceImportFileOperationEntity.byteCount" to boxedLong,
+            "ReferenceImportFileOperationEntity.createdAtEpochMillis" to primitiveLong,
+            "ReferenceImportFileOperationEntity.updatedAtEpochMillis" to primitiveLong,
             "ShootSessionEntity.currentPoseIndex" to primitiveInt,
             "ShootSessionEntity.nextAttemptNumber" to primitiveLong,
             "ShootSessionEntity.createdAtEpochMillis" to primitiveLong,

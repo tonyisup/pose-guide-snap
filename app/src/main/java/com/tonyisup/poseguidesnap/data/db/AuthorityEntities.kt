@@ -73,8 +73,66 @@ data class ShootPoseEntity(
     val modelMetadata: String?,
     @ColumnInfo(name = "preprocessing_metadata")
     val preprocessingMetadata: String?,
+    @ColumnInfo(name = "landmark_payload")
+    val landmarkPayload: String? = null,
+    @ColumnInfo(name = "coordinate_metadata")
+    val coordinateMetadata: String? = null,
 ) {
     override fun toString(): String = "ShootPoseEntity(redacted)"
+}
+
+@Entity(
+    tableName = "reference_import_intents",
+    primaryKeys = ["import_token"],
+    foreignKeys = [
+        ForeignKey(
+            entity = ShootEntity::class,
+            parentColumns = ["shoot_id"],
+            childColumns = ["shoot_id"],
+            onDelete = ForeignKey.RESTRICT,
+            onUpdate = ForeignKey.NO_ACTION,
+        ),
+    ],
+    indices = [
+        Index(
+            value = ["shoot_id", "pose_id"],
+            unique = true,
+            name = "index_reference_import_intents_shoot_id_pose_id",
+        ),
+        Index(
+            value = ["shoot_id", "pose_index"],
+            unique = true,
+            name = "index_reference_import_intents_shoot_id_pose_index",
+        ),
+        Index(
+            value = ["lifecycle_state"],
+            name = "index_reference_import_intents_lifecycle_state",
+        ),
+    ],
+)
+data class ReferenceImportIntentEntity(
+    @ColumnInfo(name = "import_token")
+    val importToken: String,
+    @ColumnInfo(name = "shoot_id")
+    val shootId: String,
+    @ColumnInfo(name = "pose_id")
+    val poseId: String,
+    @ColumnInfo(name = "pose_index")
+    val poseIndex: Int,
+    @ColumnInfo(name = "relative_asset_path")
+    val relativeAssetPath: String,
+    @ColumnInfo(name = "lifecycle_state")
+    val lifecycleState: String,
+    @ColumnInfo(name = "created_at_epoch_millis")
+    val createdAtEpochMillis: Long,
+    @ColumnInfo(name = "updated_at_epoch_millis")
+    val updatedAtEpochMillis: Long,
+    @ColumnInfo(name = "asset_ready_at_epoch_millis")
+    val assetReadyAtEpochMillis: Long?,
+    @ColumnInfo(name = "terminal_at_epoch_millis")
+    val terminalAtEpochMillis: Long?,
+) {
+    override fun toString(): String = "ReferenceImportIntentEntity(redacted)"
 }
 
 @Entity(

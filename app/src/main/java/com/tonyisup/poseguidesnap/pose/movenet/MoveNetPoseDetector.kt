@@ -45,11 +45,11 @@ class MoveNetPoseDetector private constructor(
         val letterbox = MoveNetLetterboxGeometry(
             sourceWidth = bitmap.width,
             sourceHeight = bitmap.height,
-            targetSize = INPUT_SIZE,
+            targetSize = MoveNetArtifactContract.INPUT_SIZE,
         )
         val target = Bitmap.createBitmap(
-            INPUT_SIZE,
-            INPUT_SIZE,
+            MoveNetArtifactContract.INPUT_SIZE,
+            MoveNetArtifactContract.INPUT_SIZE,
             Bitmap.Config.ARGB_8888,
         )
         try {
@@ -67,7 +67,7 @@ class MoveNetPoseDetector private constructor(
                 Paint(Paint.FILTER_BITMAP_FLAG),
             )
 
-            val input = packRgbUint8(target, INPUT_SIZE)
+            val input = packRgbUint8(target, MoveNetArtifactContract.INPUT_SIZE)
             val output = Array(BATCH_SIZE) {
                 Array(PERSON_SLOT_COUNT) { FloatArray(VALUES_PER_PERSON_SLOT) }
             }
@@ -113,7 +113,9 @@ class MoveNetPoseDetector private constructor(
             fun create(
                 context: Context,
             ): DetectorResources {
-                val modelBytes = context.assets.open(MODEL_ASSET_PATH).use { it.readBytes() }
+                val modelBytes = context.assets.open(MoveNetArtifactContract.MODEL_ASSET_PATH).use {
+                    it.readBytes()
+                }
                 val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
                     .order(ByteOrder.nativeOrder())
                     .apply {
@@ -138,8 +140,8 @@ class MoveNetPoseDetector private constructor(
 
                     val expectedInputShape = intArrayOf(
                         BATCH_SIZE,
-                        INPUT_SIZE,
-                        INPUT_SIZE,
+                        MoveNetArtifactContract.INPUT_SIZE,
+                        MoveNetArtifactContract.INPUT_SIZE,
                         RGB_CHANNEL_COUNT,
                     )
                     interpreter.resizeInput(INPUT_TENSOR_INDEX, expectedInputShape)
@@ -190,9 +192,6 @@ class MoveNetPoseDetector private constructor(
         fun create(context: Context): MoveNetPoseDetector =
             MoveNetPoseDetector(DetectorResources.create(context))
 
-        private const val MODEL_ASSET_PATH =
-            "movenet_multipose_lightning_float16_v1.tflite"
-        private const val INPUT_SIZE = 256
         private const val NUM_THREADS = 1
         const val BATCH_SIZE = 1
         const val RGB_CHANNEL_COUNT = 3

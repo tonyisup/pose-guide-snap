@@ -1,0 +1,928 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "e2b49e72da25eee38c1a8ed8ef5ef8a8",
+    "entities": [
+      {
+        "tableName": "shoots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`shoot_id` TEXT NOT NULL, `name` TEXT NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, `lifecycle_state` TEXT NOT NULL, `deletion_generation` INTEGER NOT NULL, PRIMARY KEY(`shoot_id`))",
+        "fields": [
+          {
+            "fieldPath": "shootId",
+            "columnName": "shoot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletionGeneration",
+            "columnName": "deletion_generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "shoot_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_shoots_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shoots_lifecycle_state` ON `${TABLE_NAME}` (`lifecycle_state`)"
+          }
+        ]
+      },
+      {
+        "tableName": "shoot_poses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`shoot_id` TEXT NOT NULL, `pose_index` INTEGER NOT NULL, `pose_id` TEXT NOT NULL, `label` TEXT NOT NULL, `reference_asset_path` TEXT, `mirror_allowed` INTEGER NOT NULL, `validation_state` TEXT NOT NULL, `detector_metadata` TEXT, `model_metadata` TEXT, `preprocessing_metadata` TEXT, `landmark_payload` TEXT, `coordinate_metadata` TEXT, PRIMARY KEY(`shoot_id`, `pose_index`), FOREIGN KEY(`shoot_id`) REFERENCES `shoots`(`shoot_id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "shootId",
+            "columnName": "shoot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseIndex",
+            "columnName": "pose_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseId",
+            "columnName": "pose_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "referenceAssetPath",
+            "columnName": "reference_asset_path",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mirrorAllowed",
+            "columnName": "mirror_allowed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "validationState",
+            "columnName": "validation_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detectorMetadata",
+            "columnName": "detector_metadata",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelMetadata",
+            "columnName": "model_metadata",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "preprocessingMetadata",
+            "columnName": "preprocessing_metadata",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "landmarkPayload",
+            "columnName": "landmark_payload",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "coordinateMetadata",
+            "columnName": "coordinate_metadata",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "shoot_id",
+            "pose_index"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_shoot_poses_shoot_id_pose_id",
+            "unique": true,
+            "columnNames": [
+              "shoot_id",
+              "pose_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_shoot_poses_shoot_id_pose_id` ON `${TABLE_NAME}` (`shoot_id`, `pose_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "shoots",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "shoot_id"
+            ],
+            "referencedColumns": [
+              "shoot_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "shoot_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `shoot_id` TEXT NOT NULL, `current_pose_index` INTEGER NOT NULL, `next_attempt_number` INTEGER NOT NULL, `lifecycle_state` TEXT NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, PRIMARY KEY(`session_id`), FOREIGN KEY(`shoot_id`) REFERENCES `shoots`(`shoot_id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "shootId",
+            "columnName": "shoot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentPoseIndex",
+            "columnName": "current_pose_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextAttemptNumber",
+            "columnName": "next_attempt_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_shoot_sessions_shoot_id_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "shoot_id",
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_shoot_sessions_shoot_id_lifecycle_state` ON `${TABLE_NAME}` (`shoot_id`, `lifecycle_state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "shoots",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "shoot_id"
+            ],
+            "referencedColumns": [
+              "shoot_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "capture_attempts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`command_token` TEXT NOT NULL, `session_id` TEXT NOT NULL, `pose_id` TEXT NOT NULL, `pose_index` INTEGER NOT NULL, `attempt_number` INTEGER NOT NULL, `trigger_type` TEXT NOT NULL, `lifecycle_state` TEXT NOT NULL, `reconciliation_required` INTEGER NOT NULL, `captured_deletion_generation` INTEGER NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, `confirmed_at_epoch_millis` INTEGER, PRIMARY KEY(`command_token`), FOREIGN KEY(`session_id`) REFERENCES `shoot_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "commandToken",
+            "columnName": "command_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseId",
+            "columnName": "pose_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseIndex",
+            "columnName": "pose_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attemptNumber",
+            "columnName": "attempt_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "triggerType",
+            "columnName": "trigger_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reconciliationRequired",
+            "columnName": "reconciliation_required",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capturedDeletionGeneration",
+            "columnName": "captured_deletion_generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmedAtEpochMillis",
+            "columnName": "confirmed_at_epoch_millis",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "command_token"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_capture_attempts_session_id_attempt_number",
+            "unique": true,
+            "columnNames": [
+              "session_id",
+              "attempt_number"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_capture_attempts_session_id_attempt_number` ON `${TABLE_NAME}` (`session_id`, `attempt_number`)"
+          },
+          {
+            "name": "index_capture_attempts_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_capture_attempts_lifecycle_state` ON `${TABLE_NAME}` (`lifecycle_state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "shoot_sessions",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "session_id"
+            ],
+            "referencedColumns": [
+              "session_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "private_capture_outputs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`command_token` TEXT NOT NULL, `burst_ordinal` INTEGER NOT NULL, `relative_path` TEXT NOT NULL, `byte_count` INTEGER NOT NULL, `durability_state` TEXT NOT NULL, `captured_at_epoch_millis` INTEGER NOT NULL, `integrity_metadata` TEXT, PRIMARY KEY(`command_token`, `burst_ordinal`), FOREIGN KEY(`command_token`) REFERENCES `capture_attempts`(`command_token`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "commandToken",
+            "columnName": "command_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "burstOrdinal",
+            "columnName": "burst_ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativePath",
+            "columnName": "relative_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "byteCount",
+            "columnName": "byte_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durabilityState",
+            "columnName": "durability_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capturedAtEpochMillis",
+            "columnName": "captured_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "integrityMetadata",
+            "columnName": "integrity_metadata",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "command_token",
+            "burst_ordinal"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_private_capture_outputs_durability_state",
+            "unique": false,
+            "columnNames": [
+              "durability_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_private_capture_outputs_durability_state` ON `${TABLE_NAME}` (`durability_state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "capture_attempts",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "command_token"
+            ],
+            "referencedColumns": [
+              "command_token"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "capture_confirmation_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`command_token` TEXT NOT NULL, `from_pose_index` INTEGER NOT NULL, `to_pose_index` INTEGER, `applied_deletion_generation` INTEGER NOT NULL, `applied_at_epoch_millis` INTEGER NOT NULL, PRIMARY KEY(`command_token`), FOREIGN KEY(`command_token`) REFERENCES `capture_attempts`(`command_token`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "commandToken",
+            "columnName": "command_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromPoseIndex",
+            "columnName": "from_pose_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toPoseIndex",
+            "columnName": "to_pose_index",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "appliedDeletionGeneration",
+            "columnName": "applied_deletion_generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appliedAtEpochMillis",
+            "columnName": "applied_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "command_token"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "capture_attempts",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "command_token"
+            ],
+            "referencedColumns": [
+              "command_token"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "capture_export_outboxes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`command_token` TEXT NOT NULL, `lifecycle_state` TEXT NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, `retry_metadata` TEXT, PRIMARY KEY(`command_token`), FOREIGN KEY(`command_token`) REFERENCES `capture_confirmation_receipts`(`command_token`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "commandToken",
+            "columnName": "command_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retryMetadata",
+            "columnName": "retry_metadata",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "command_token"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_capture_export_outboxes_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_capture_export_outboxes_lifecycle_state` ON `${TABLE_NAME}` (`lifecycle_state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "capture_confirmation_receipts",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "command_token"
+            ],
+            "referencedColumns": [
+              "command_token"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "capture_export_outputs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`command_token` TEXT NOT NULL, `burst_ordinal` INTEGER NOT NULL, `target_collection_uri` TEXT NOT NULL, `target_volume` TEXT NOT NULL, `intended_display_name` TEXT NOT NULL, `intended_relative_path` TEXT NOT NULL, `intended_mime_type` TEXT NOT NULL, `lifecycle_state` TEXT NOT NULL, `claim_token` TEXT, `media_uri_string` TEXT, `ambiguity_state` TEXT NOT NULL, `deletion_generation` INTEGER NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, PRIMARY KEY(`command_token`, `burst_ordinal`), FOREIGN KEY(`command_token`) REFERENCES `capture_export_outboxes`(`command_token`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "commandToken",
+            "columnName": "command_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "burstOrdinal",
+            "columnName": "burst_ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetCollectionUri",
+            "columnName": "target_collection_uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetVolume",
+            "columnName": "target_volume",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intendedDisplayName",
+            "columnName": "intended_display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intendedRelativePath",
+            "columnName": "intended_relative_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intendedMimeType",
+            "columnName": "intended_mime_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "claimToken",
+            "columnName": "claim_token",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mediaUriString",
+            "columnName": "media_uri_string",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ambiguityState",
+            "columnName": "ambiguity_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletionGeneration",
+            "columnName": "deletion_generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "command_token",
+            "burst_ordinal"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_capture_export_outputs_claim_token",
+            "unique": true,
+            "columnNames": [
+              "claim_token"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_capture_export_outputs_claim_token` ON `${TABLE_NAME}` (`claim_token`)"
+          },
+          {
+            "name": "index_capture_export_outputs_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_capture_export_outputs_lifecycle_state` ON `${TABLE_NAME}` (`lifecycle_state`)"
+          },
+          {
+            "name": "index_capture_export_outputs_deletion_generation",
+            "unique": false,
+            "columnNames": [
+              "deletion_generation"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_capture_export_outputs_deletion_generation` ON `${TABLE_NAME}` (`deletion_generation`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "capture_export_outboxes",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "command_token"
+            ],
+            "referencedColumns": [
+              "command_token"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "reference_import_intents",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`import_token` TEXT NOT NULL, `shoot_id` TEXT NOT NULL, `pose_id` TEXT NOT NULL, `pose_index` INTEGER NOT NULL, `relative_asset_path` TEXT NOT NULL, `lifecycle_state` TEXT NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, `asset_ready_at_epoch_millis` INTEGER, `terminal_at_epoch_millis` INTEGER, PRIMARY KEY(`import_token`), FOREIGN KEY(`shoot_id`) REFERENCES `shoots`(`shoot_id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "importToken",
+            "columnName": "import_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "shootId",
+            "columnName": "shoot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseId",
+            "columnName": "pose_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "poseIndex",
+            "columnName": "pose_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativeAssetPath",
+            "columnName": "relative_asset_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lifecycleState",
+            "columnName": "lifecycle_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "assetReadyAtEpochMillis",
+            "columnName": "asset_ready_at_epoch_millis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "terminalAtEpochMillis",
+            "columnName": "terminal_at_epoch_millis",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "import_token"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_reference_import_intents_shoot_id_pose_id",
+            "unique": true,
+            "columnNames": [
+              "shoot_id",
+              "pose_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_reference_import_intents_shoot_id_pose_id` ON `${TABLE_NAME}` (`shoot_id`, `pose_id`)"
+          },
+          {
+            "name": "index_reference_import_intents_shoot_id_pose_index",
+            "unique": true,
+            "columnNames": [
+              "shoot_id",
+              "pose_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_reference_import_intents_shoot_id_pose_index` ON `${TABLE_NAME}` (`shoot_id`, `pose_index`)"
+          },
+          {
+            "name": "index_reference_import_intents_lifecycle_state",
+            "unique": false,
+            "columnNames": [
+              "lifecycle_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_reference_import_intents_lifecycle_state` ON `${TABLE_NAME}` (`lifecycle_state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "shoots",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "shoot_id"
+            ],
+            "referencedColumns": [
+              "shoot_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "reference_import_file_operations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`import_token` TEXT NOT NULL, `relative_asset_path` TEXT NOT NULL, `relative_temp_path` TEXT NOT NULL, `relative_quarantine_path` TEXT NOT NULL, `stage` TEXT NOT NULL, `byte_count` INTEGER, `sha256` TEXT, `last_failure_code` TEXT, `reconciliation_required` INTEGER NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, PRIMARY KEY(`import_token`), FOREIGN KEY(`import_token`) REFERENCES `reference_import_intents`(`import_token`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "importToken",
+            "columnName": "import_token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativeAssetPath",
+            "columnName": "relative_asset_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativeTempPath",
+            "columnName": "relative_temp_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativeQuarantinePath",
+            "columnName": "relative_quarantine_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stage",
+            "columnName": "stage",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "byteCount",
+            "columnName": "byte_count",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sha256",
+            "columnName": "sha256",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFailureCode",
+            "columnName": "last_failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "reconciliationRequired",
+            "columnName": "reconciliation_required",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "import_token"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_reference_import_file_operations_stage",
+            "unique": false,
+            "columnNames": [
+              "stage"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_reference_import_file_operations_stage` ON `${TABLE_NAME}` (`stage`)"
+          },
+          {
+            "name": "index_reference_import_file_operations_reconciliation_required",
+            "unique": false,
+            "columnNames": [
+              "reconciliation_required"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_reference_import_file_operations_reconciliation_required` ON `${TABLE_NAME}` (`reconciliation_required`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "reference_import_intents",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "import_token"
+            ],
+            "referencedColumns": [
+              "import_token"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e2b49e72da25eee38c1a8ed8ef5ef8a8')"
+    ]
+  }
+}

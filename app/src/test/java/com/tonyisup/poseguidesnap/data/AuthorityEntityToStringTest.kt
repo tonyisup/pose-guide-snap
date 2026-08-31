@@ -5,6 +5,8 @@ import com.tonyisup.poseguidesnap.data.db.CaptureConfirmationReceiptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutboxEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutputEntity
 import com.tonyisup.poseguidesnap.data.db.PrivateCaptureOutputEntity
+import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
+import com.tonyisup.poseguidesnap.data.db.ReferenceImportIntentEntity
 import com.tonyisup.poseguidesnap.data.db.ShootEntity
 import com.tonyisup.poseguidesnap.data.db.ShootPoseEntity
 import com.tonyisup.poseguidesnap.data.db.ShootSessionEntity
@@ -14,10 +16,21 @@ import org.junit.Test
 
 class AuthorityEntityToStringTest {
     @Test
-    fun allV1RoomEntitiesRedactEverySensitiveStringField() {
+    fun allV2RoomEntitiesRedactEverySensitiveStringField() {
         val sensitiveMarkers = mutableListOf<String>()
         fun sensitive(field: String, prefix: String = ""): String =
             "$prefix<SENSITIVE:$field>".also(sensitiveMarkers::add)
+        val fileOperationToken = sensitive("reference-import-file-operation.import-token", "tokens/")
+        val fileOperationPaths = ReferenceImportFileOperationPaths.forToken(
+            ReferenceImportToken(fileOperationToken),
+        )
+        val fileOperationSha256 = "ab".repeat(32)
+        sensitiveMarkers += listOf(
+            fileOperationPaths.relativeAssetPath,
+            fileOperationPaths.relativeTempPath,
+            fileOperationPaths.relativeQuarantinePath,
+            fileOperationSha256,
+        )
 
         val entities = listOf(
             ShootEntity(
@@ -39,7 +52,37 @@ class AuthorityEntityToStringTest {
                 detectorMetadata = sensitive("shoot-pose.detector-metadata", "metadata/"),
                 modelMetadata = sensitive("shoot-pose.model-metadata", "metadata/"),
                 preprocessingMetadata = sensitive("shoot-pose.preprocessing-metadata", "metadata/"),
+                landmarkPayload = sensitive("shoot-pose.landmark-payload", "metadata/"),
+                coordinateMetadata = sensitive("shoot-pose.coordinate-metadata", "metadata/"),
             ) to "ShootPoseEntity(redacted)",
+            ReferenceImportIntentEntity(
+                importToken = sensitive("reference-import-intent.import-token", "tokens/"),
+                shootId = sensitive("reference-import-intent.shoot-id", "shoots/"),
+                poseId = sensitive("reference-import-intent.pose-id", "poses/"),
+                poseIndex = 205,
+                relativeAssetPath = sensitive(
+                    "reference-import-intent.relative-asset-path",
+                    "reference/private/",
+                ),
+                lifecycleState = sensitive("reference-import-intent.lifecycle-state", "metadata/"),
+                createdAtEpochMillis = 206L,
+                updatedAtEpochMillis = 207L,
+                assetReadyAtEpochMillis = 208L,
+                terminalAtEpochMillis = 209L,
+            ) to "ReferenceImportIntentEntity(redacted)",
+            ReferenceImportFileOperationEntity(
+                importToken = fileOperationToken,
+                relativeAssetPath = fileOperationPaths.relativeAssetPath,
+                relativeTempPath = fileOperationPaths.relativeTempPath,
+                relativeQuarantinePath = fileOperationPaths.relativeQuarantinePath,
+                stage = ReferenceImportFileOperationStage.TEMP_SYNCED,
+                byteCount = 210L,
+                sha256 = fileOperationSha256,
+                lastFailureCode = ReferenceImportFileFailureCode.FILE_SYNC_FAILED,
+                reconciliationRequired = true,
+                createdAtEpochMillis = 211L,
+                updatedAtEpochMillis = 212L,
+            ) to "ReferenceImportFileOperationEntity(redacted)",
             ShootSessionEntity(
                 sessionId = sensitive("shoot-session.session-id", "sessions/"),
                 shootId = sensitive("shoot-session.shoot-id", "shoots/"),
@@ -113,9 +156,9 @@ class AuthorityEntityToStringTest {
             ) to "CaptureExportOutputEntity(redacted)",
         )
 
-        assertEquals("all eight V1 Room entity types must be covered", 8, entities.size)
-        assertEquals("every String/String? constructor field needs its own marker", 37, sensitiveMarkers.size)
-        assertEquals("sensitive markers must be distinctive", 37, sensitiveMarkers.toSet().size)
+        assertEquals("all ten V2 Room entity types must be covered", 10, entities.size)
+        assertEquals("every String/String? constructor field needs its own marker", 49, sensitiveMarkers.size)
+        assertEquals("sensitive markers must be distinctive", 49, sensitiveMarkers.toSet().size)
 
         entities.forEach { (entity, expected) ->
             val rendered = entity.toString()
