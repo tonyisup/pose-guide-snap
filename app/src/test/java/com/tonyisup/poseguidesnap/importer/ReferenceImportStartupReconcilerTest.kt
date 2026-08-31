@@ -568,7 +568,6 @@ class ReferenceImportStartupReconcilerTest {
             importToken = token,
             shootId = "shoot-recovery",
             poseId = "pose-recovery",
-            poseIndex = 0,
             relativeAssetPath = ReferenceImportAssetPath.forToken(token),
             lifecycle = lifecycle,
             createdAtEpochMillis = 10L,

@@ -18,10 +18,8 @@ class ReferencePickerImportDraft(
     val importToken: ReferenceImportToken,
     val shootId: String,
     val poseId: String,
-    val poseIndex: Int,
     val label: String,
     val mirrorAllowed: Boolean,
-    val restartCleanedImport: Boolean,
     val timeline: ReferenceImportLedgerTimeline,
 ) {
     init {
@@ -100,10 +98,8 @@ class ReferencePickerResultHandler(
                             importToken = draft.importToken,
                             shootId = draft.shootId,
                             poseId = draft.poseId,
-                            poseIndex = draft.poseIndex,
                             label = draft.label,
                             mirrorAllowed = draft.mirrorAllowed,
-                            restartCleanedImport = draft.restartCleanedImport,
                             timeline = draft.timeline,
                             source = source,
                         ),

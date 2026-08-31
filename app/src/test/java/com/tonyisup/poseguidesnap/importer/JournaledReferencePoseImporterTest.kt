@@ -21,7 +21,6 @@ import com.tonyisup.poseguidesnap.data.ReferenceImportFileOperationStage
 import com.tonyisup.poseguidesnap.data.ReferenceImportFileReconciliationRequest
 import com.tonyisup.poseguidesnap.data.ReferenceImportReservation
 import com.tonyisup.poseguidesnap.data.ReferenceImportReserveResult
-import com.tonyisup.poseguidesnap.data.ReferenceImportRestartCleanedResult
 import com.tonyisup.poseguidesnap.data.ReferenceImportSettlementResult
 import com.tonyisup.poseguidesnap.data.ReferenceImportToken
 import com.tonyisup.poseguidesnap.data.RenameExactToQuarantineResult
@@ -217,29 +216,14 @@ class JournaledReferencePoseImporterTest {
             assertEquals(listOf("reserve@1"), events)
             assertEquals(0, source.openCount)
         }
-        Fixture(reserveResult = ReferenceImportReserveResult.AlreadyCommitted).apply {
-            assertTrue(importer.importReference(request) is ReferencePoseImportResult.Succeeded)
+        Fixture(reserveResult = ReferenceImportReserveResult.AlreadyCommitted(7)).apply {
+            val result = importer.importReference(request)
+            assertTrue(result is ReferencePoseImportResult.Succeeded)
+            result as ReferencePoseImportResult.Succeeded
+            assertEquals(7, result.poseIndex)
             assertEquals(listOf("reserve@1"), events)
             assertEquals(0, source.openCount)
         }
-    }
-
-    @Test
-    fun explicitCleanedRestartIsSeparateFromReserveReplayAndThenClaimsExactlyOnce() {
-        val fixture = Fixture(
-            reserveResult = ReferenceImportReserveResult.ExistingWorkRequiresReconciliation,
-            restartCleanedImport = true,
-        )
-
-        val result = fixture.importer.importReference(fixture.request)
-
-        assertTrue(result is ReferencePoseImportResult.Succeeded)
-        assertEquals(
-            listOf("reserve@1", "restart-cleaned@1", "snapshot", "claim"),
-            fixture.events.take(4),
-        )
-        assertEquals(1, fixture.events.count { event -> event == "claim" })
-        assertEquals(1, fixture.source.openCount)
     }
 
     private class Fixture(
@@ -247,7 +231,6 @@ class JournaledReferencePoseImporterTest {
         failRecoveryAt: String? = null,
         idempotentJournal: Boolean = false,
         reserveResult: ReferenceImportReserveResult = ReferenceImportReserveResult.Reserved,
-        restartCleanedImport: Boolean = false,
     ) {
         val events = mutableListOf<String>()
         val source = CountingSource()
@@ -256,7 +239,7 @@ class JournaledReferencePoseImporterTest {
         val assets = FakeAssets(events, failAt, failRecoveryAt)
         val analyzer = FakeAnalyzer(events, failAt)
         val importer = JournaledReferencePoseImporter(authority, journal, assets, analyzer)
-        val request = request(source, restartCleanedImport)
+        val request = request(source)
     }
 
     private class FakeAuthority(
@@ -275,13 +258,6 @@ class JournaledReferencePoseImporterTest {
             return reserveResult
         }
 
-        override fun restartCleaned(
-            reservation: ReferenceImportReservation,
-            reservedAtEpochMillis: Long,
-        ): ReferenceImportRestartCleanedResult {
-            events += "restart-cleaned@$reservedAtEpochMillis"
-            return ReferenceImportRestartCleanedResult.Restarted
-        }
 
         override fun markAssetReady(
             importToken: ReferenceImportToken,
@@ -308,7 +284,7 @@ class JournaledReferencePoseImporterTest {
                     com.tonyisup.poseguidesnap.data.ReferenceImportCommitRejectionReason.ACTIVE_SESSION,
                 )
             } else {
-                ReferenceImportCommitResult.Committed
+                ReferenceImportCommitResult.Committed(7)
             }
         }
 
@@ -533,17 +509,12 @@ class JournaledReferencePoseImporterTest {
             failureSettledAtEpochMillis = values[14],
         )
 
-        fun request(
-            source: ReferenceAssetByteSource,
-            restartCleanedImport: Boolean = false,
-        ) = ReferencePoseImportRequest(
+        fun request(source: ReferenceAssetByteSource) = ReferencePoseImportRequest(
             importToken = TOKEN,
             shootId = "shoot-secret",
             poseId = "pose-secret",
-            poseIndex = 7,
             label = "label-secret",
             mirrorAllowed = true,
-            restartCleanedImport = restartCleanedImport,
             timeline = timeline(),
             source = source,
         )

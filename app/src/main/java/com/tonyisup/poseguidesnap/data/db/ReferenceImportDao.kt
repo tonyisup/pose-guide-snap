@@ -17,14 +17,6 @@ internal interface ReferenceImportDao {
     )
     fun findIntentByPoseId(shootId: String, poseId: String): ReferenceImportIntentEntity?
 
-    @Query(
-        """
-        SELECT * FROM reference_import_intents
-        WHERE shoot_id = :shootId AND pose_index = :poseIndex
-        """,
-    )
-    fun findIntentByPoseIndex(shootId: String, poseIndex: Int): ReferenceImportIntentEntity?
-
     @Query("SELECT * FROM shoots WHERE shoot_id = :shootId")
     fun findShoot(shootId: String): ShootEntity?
 
@@ -46,6 +38,31 @@ internal interface ReferenceImportDao {
 
     @Query(
         """
+        SELECT * FROM shoot_poses
+        WHERE shoot_id = :shootId
+        ORDER BY pose_index ASC
+        """,
+    )
+    fun findPosesInOrder(shootId: String): List<ShootPoseEntity>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM shoot_poses
+        WHERE shoot_id = :shootId AND validation_state IN ('VALID', 'VALIDATED')
+        """,
+    )
+    fun countAcceptedPoses(shootId: String): Long
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM reference_import_intents
+        WHERE shoot_id = :shootId AND lifecycle_state IN ('PREPARING', 'ASSET_READY')
+        """,
+    )
+    fun countNonterminalIntents(shootId: String): Long
+
+    @Query(
+        """
         SELECT COUNT(*) FROM shoot_sessions
         WHERE shoot_id = :shootId AND lifecycle_state = 'ACTIVE'
         """,
@@ -57,36 +74,6 @@ internal interface ReferenceImportDao {
 
     @Insert
     fun insertPose(pose: ShootPoseEntity)
-
-    @Query(
-        """
-        UPDATE reference_import_intents
-        SET lifecycle_state = 'PREPARING',
-            created_at_epoch_millis = :reservedAtEpochMillis,
-            updated_at_epoch_millis = :reservedAtEpochMillis,
-            asset_ready_at_epoch_millis = NULL,
-            terminal_at_epoch_millis = NULL
-        WHERE import_token = :importToken
-          AND shoot_id = :shootId
-          AND pose_id = :poseId
-          AND pose_index = :poseIndex
-          AND relative_asset_path = :relativeAssetPath
-          AND lifecycle_state = 'REJECTED_CLEANED'
-          AND created_at_epoch_millis >= 0
-          AND updated_at_epoch_millis = :expectedUpdatedAtEpochMillis
-          AND terminal_at_epoch_millis = :expectedUpdatedAtEpochMillis
-          AND :reservedAtEpochMillis > updated_at_epoch_millis
-        """,
-    )
-    fun resetCleanedIntent(
-        importToken: String,
-        shootId: String,
-        poseId: String,
-        poseIndex: Int,
-        relativeAssetPath: String,
-        expectedUpdatedAtEpochMillis: Long,
-        reservedAtEpochMillis: Long,
-    ): Int
 
     @Query(
         """
@@ -121,7 +108,6 @@ internal interface ReferenceImportDao {
         WHERE import_token = :importToken
           AND shoot_id = :shootId
           AND pose_id = :poseId
-          AND pose_index = :poseIndex
           AND relative_asset_path = :relativeAssetPath
           AND lifecycle_state = 'ASSET_READY'
           AND created_at_epoch_millis >= 0
@@ -143,10 +129,7 @@ internal interface ReferenceImportDao {
           AND NOT EXISTS (
               SELECT 1 FROM shoot_poses AS conflicting_pose
               WHERE conflicting_pose.shoot_id = reference_import_intents.shoot_id
-                AND (
-                    conflicting_pose.pose_id = reference_import_intents.pose_id OR
-                    conflicting_pose.pose_index = reference_import_intents.pose_index
-                )
+                AND conflicting_pose.pose_id = reference_import_intents.pose_id
           )
         """,
     )
@@ -154,7 +137,6 @@ internal interface ReferenceImportDao {
         importToken: String,
         shootId: String,
         poseId: String,
-        poseIndex: Int,
         relativeAssetPath: String,
         expectedUpdatedAtEpochMillis: Long,
         committedAtEpochMillis: Long,
@@ -176,10 +158,7 @@ internal interface ReferenceImportDao {
           AND NOT EXISTS (
               SELECT 1 FROM shoot_poses AS active_pose
               WHERE active_pose.shoot_id = reference_import_intents.shoot_id
-                AND (
-                    active_pose.pose_id = reference_import_intents.pose_id OR
-                    active_pose.pose_index = reference_import_intents.pose_index
-                )
+                AND active_pose.pose_id = reference_import_intents.pose_id
           )
         """,
     )

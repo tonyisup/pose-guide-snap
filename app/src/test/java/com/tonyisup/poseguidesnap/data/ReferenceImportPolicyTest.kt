@@ -29,7 +29,6 @@ class ReferenceImportPolicyTest {
             ReferenceImportToken("import-token"),
             "shoot-1",
             "pose-5",
-            4,
             path,
         )
 
@@ -43,7 +42,6 @@ class ReferenceImportPolicyTest {
                 ReferenceImportToken("import-token"),
                 "shoot-1",
                 "pose-5",
-                4,
                 "reference-assets/assets/not-deterministic.asset",
             )
         }
@@ -53,7 +51,6 @@ class ReferenceImportPolicyTest {
                     ReferenceImportToken("import-token"),
                     unsafe,
                     "pose-5",
-                    4,
                     path,
                 )
             }
@@ -62,19 +59,9 @@ class ReferenceImportPolicyTest {
                     ReferenceImportToken("import-token"),
                     "shoot-1",
                     unsafe,
-                    4,
                     path,
                 )
             }
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            ReferenceImportReservation(
-                ReferenceImportToken("import-token"),
-                "shoot-1",
-                "pose-5",
-                -1,
-                path,
-            )
         }
     }
 
@@ -138,7 +125,6 @@ class ReferenceImportPolicyTest {
                 ReferenceImportToken("<SECRET:pending-token>"),
                 "secret-shoot",
                 "secret-pose",
-                4,
                 ReferenceImportAssetPath.forToken(ReferenceImportToken("<SECRET:pending-token>")),
                 ReferenceImportLifecycle.PREPARING,
                 1L,
@@ -151,18 +137,14 @@ class ReferenceImportPolicyTest {
 
         val results = listOf(
             ReferenceImportReserveResult.Reserved,
-            ReferenceImportReserveResult.AlreadyCommitted,
+            ReferenceImportReserveResult.AlreadyCommitted(4),
             ReferenceImportReserveResult.ExistingWorkRequiresReconciliation,
             ReferenceImportReserveResult.Rejected(ReferenceImportReserveRejectionReason.TOKEN_CONFLICT),
-            ReferenceImportRestartCleanedResult.Restarted,
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.WRONG_STATE,
-            ),
             ReferenceImportAssetReadyResult.MarkedAssetReady,
             ReferenceImportAssetReadyResult.AlreadyAssetReady,
             ReferenceImportAssetReadyResult.Rejected(ReferenceImportAssetReadyRejectionReason.WRONG_STATE),
-            ReferenceImportCommitResult.Committed,
-            ReferenceImportCommitResult.AlreadyCommitted,
+            ReferenceImportCommitResult.Committed(4),
+            ReferenceImportCommitResult.AlreadyCommitted(4),
             ReferenceImportCommitResult.BlockedByDeletion,
             ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.EVIDENCE_CONFLICT),
             ReferenceImportSettlementResult.Settled,
@@ -179,7 +161,6 @@ class ReferenceImportPolicyTest {
         ReferenceImportToken("<SECRET:token>"),
         "shoot-1",
         "pose-5",
-        4,
         ReferenceImportAssetPath.forToken(ReferenceImportToken("<SECRET:token>")),
     )
 
@@ -193,7 +174,6 @@ class ReferenceImportPolicyTest {
         importToken = ReferenceImportToken("import-token"),
         shootId = "shoot-1",
         poseId = "pose-5",
-        poseIndex = 4,
         label = "Reference pose",
         relativeAssetPath = relativeAssetPath,
         mirrorAllowed = true,

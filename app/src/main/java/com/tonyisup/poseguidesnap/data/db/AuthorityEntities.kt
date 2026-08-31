@@ -100,11 +100,6 @@ data class ShootPoseEntity(
             name = "index_reference_import_intents_shoot_id_pose_id",
         ),
         Index(
-            value = ["shoot_id", "pose_index"],
-            unique = true,
-            name = "index_reference_import_intents_shoot_id_pose_index",
-        ),
-        Index(
             value = ["lifecycle_state"],
             name = "index_reference_import_intents_lifecycle_state",
         ),
@@ -117,8 +112,6 @@ data class ReferenceImportIntentEntity(
     val shootId: String,
     @ColumnInfo(name = "pose_id")
     val poseId: String,
-    @ColumnInfo(name = "pose_index")
-    val poseIndex: Int,
     @ColumnInfo(name = "relative_asset_path")
     val relativeAssetPath: String,
     @ColumnInfo(name = "lifecycle_state")

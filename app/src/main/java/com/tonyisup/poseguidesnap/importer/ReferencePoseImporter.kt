@@ -21,7 +21,6 @@ import com.tonyisup.poseguidesnap.data.ReferenceImportFileReconciliationRequest
 import com.tonyisup.poseguidesnap.data.ReferenceImportReservation
 import com.tonyisup.poseguidesnap.data.ReferenceImportReserveRejectionReason
 import com.tonyisup.poseguidesnap.data.ReferenceImportReserveResult
-import com.tonyisup.poseguidesnap.data.ReferenceImportRestartCleanedResult
 import com.tonyisup.poseguidesnap.data.ReferenceImportSettlementResult
 import com.tonyisup.poseguidesnap.data.ReferenceImportToken
 import com.tonyisup.poseguidesnap.data.ReferenceLandmarkPayload
@@ -42,11 +41,6 @@ interface ReferenceImportAuthorityPort {
         reservation: ReferenceImportReservation,
         reservedAtEpochMillis: Long,
     ): ReferenceImportReserveResult
-
-    fun restartCleaned(
-        reservation: ReferenceImportReservation,
-        reservedAtEpochMillis: Long,
-    ): ReferenceImportRestartCleanedResult
 
     fun markAssetReady(
         importToken: ReferenceImportToken,
@@ -236,10 +230,8 @@ class ReferencePoseImportRequest(
     val importToken: ReferenceImportToken,
     val shootId: String,
     val poseId: String,
-    val poseIndex: Int,
     val label: String,
     val mirrorAllowed: Boolean,
-    val restartCleanedImport: Boolean,
     val timeline: ReferenceImportLedgerTimeline,
     val source: ReferenceAssetByteSource,
 ) {
@@ -356,7 +348,6 @@ class JournaledReferencePoseImporter(
             importToken = request.importToken,
             shootId = request.shootId,
             poseId = request.poseId,
-            poseIndex = request.poseIndex,
             relativeAssetPath = expectedPath,
         )
         val reserveResult = try {
@@ -366,21 +357,10 @@ class JournaledReferencePoseImporter(
         }
         when (reserveResult) {
             ReferenceImportReserveResult.Reserved -> Unit
-            ReferenceImportReserveResult.AlreadyCommitted ->
-                return ReferencePoseImportResult.Succeeded(request.poseId, request.poseIndex)
-            ReferenceImportReserveResult.ExistingWorkRequiresReconciliation -> {
-                if (!request.restartCleanedImport) {
-                    return ReferencePoseImportResult.ReconciliationRequired
-                }
-                val restart = try {
-                    authority.restartCleaned(reservation, timeline.reservedAtEpochMillis)
-                } catch (_: Exception) {
-                    null
-                }
-                if (restart !== ReferenceImportRestartCleanedResult.Restarted) {
-                    return ReferencePoseImportResult.ReconciliationRequired
-                }
-            }
+            is ReferenceImportReserveResult.AlreadyCommitted ->
+                return ReferencePoseImportResult.Succeeded(request.poseId, reserveResult.poseIndex)
+            ReferenceImportReserveResult.ExistingWorkRequiresReconciliation ->
+                return ReferencePoseImportResult.ReconciliationRequired
             is ReferenceImportReserveResult.Rejected ->
                 return ReferencePoseImportResult.ReserveRejected(reserveResult.reason)
         }
@@ -545,7 +525,6 @@ class JournaledReferencePoseImporter(
                 importToken = request.importToken,
                 shootId = request.shootId,
                 poseId = request.poseId,
-                poseIndex = request.poseIndex,
                 label = request.label,
                 relativeAssetPath = expectedPath,
                 mirrorAllowed = request.mirrorAllowed,
@@ -571,9 +550,10 @@ class JournaledReferencePoseImporter(
             null
         }
         return when (commit) {
-            ReferenceImportCommitResult.Committed,
-            ReferenceImportCommitResult.AlreadyCommitted,
-            -> ReferencePoseImportResult.Succeeded(request.poseId, request.poseIndex)
+            is ReferenceImportCommitResult.Committed ->
+                ReferencePoseImportResult.Succeeded(request.poseId, commit.poseIndex)
+            is ReferenceImportCommitResult.AlreadyCommitted ->
+                ReferencePoseImportResult.Succeeded(request.poseId, commit.poseIndex)
             ReferenceImportCommitResult.BlockedByDeletion -> quarantineAndSettle(
                 request,
                 identity,
@@ -838,12 +818,6 @@ internal class RoomReferenceImportAuthorityAdapter(
         reservation: ReferenceImportReservation,
         reservedAtEpochMillis: Long,
     ): ReferenceImportReserveResult = repository.reserveImport(reservation, reservedAtEpochMillis)
-
-    override fun restartCleaned(
-        reservation: ReferenceImportReservation,
-        reservedAtEpochMillis: Long,
-    ): ReferenceImportRestartCleanedResult =
-        repository.restartCleanedImport(reservation, reservedAtEpochMillis)
 
     override fun markAssetReady(
         importToken: ReferenceImportToken,

@@ -66,7 +66,7 @@ class ReferencePickerResultHandlerTest {
                 importer = JournaledReferencePickerImporterPort { request ->
                     importerThread.set(Thread.currentThread())
                     capturedRequest.set(request)
-                    ReferencePoseImportResult.Succeeded(request.poseId, request.poseIndex)
+                    ReferencePoseImportResult.Succeeded(request.poseId, 4)
                 },
                 sourceFactory = ReferencePickerByteSourceFactory { uri ->
                     factoryThread.set(Thread.currentThread())
@@ -88,10 +88,8 @@ class ReferencePickerResultHandlerTest {
             assertEquals(ReferenceImportToken(TOKEN), request.importToken)
             assertEquals("shoot-11b", request.shootId)
             assertEquals("pose-11b", request.poseId)
-            assertEquals(4, request.poseIndex)
             assertEquals(LABEL, request.label)
             assertTrue(request.mirrorAllowed)
-            assertTrue(request.restartCleanedImport)
             assertEquals(101L, request.timeline.reservedAtEpochMillis)
             assertEquals(106L, request.timeline.assetReadyAtEpochMillis)
             assertEquals(107L, request.timeline.committedAtEpochMillis)
@@ -203,7 +201,7 @@ class ReferencePickerResultHandlerTest {
         val selectedUri = Task11bTestUri.from(VALID_URI)
         val handler = ReferencePickerResultHandler(
             importer = JournaledReferencePickerImporterPort { request ->
-                ReferencePoseImportResult.Succeeded(request.poseId, request.poseIndex)
+                ReferencePoseImportResult.Succeeded(request.poseId, 4)
             },
             sourceFactory = ReferencePickerByteSourceFactory { byteSource() },
             dispatcher = StandardTestDispatcher(testScheduler),
@@ -268,10 +266,8 @@ class ReferencePickerResultHandlerTest {
         importToken = ReferenceImportToken(TOKEN),
         shootId = "shoot-11b",
         poseId = "pose-11b",
-        poseIndex = 4,
         label = LABEL,
         mirrorAllowed = true,
-        restartCleanedImport = true,
         timeline = ReferenceImportLedgerTimeline(
             reservedAtEpochMillis = 101L,
             writingTempAtEpochMillis = 102L,

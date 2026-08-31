@@ -313,7 +313,6 @@ class RoomReferenceImportFileJournalAndroidTest {
             importToken = importToken,
             shootId = shootId,
             poseId = poseId,
-            poseIndex = 0,
             relativeAssetPath = ReferenceImportAssetPath.forToken(importToken),
         )
         assertEquals(

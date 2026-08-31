@@ -5,6 +5,7 @@ import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportIntentEntity
 import com.tonyisup.poseguidesnap.data.db.ShootPoseEntity
+import com.tonyisup.poseguidesnap.domain.model.Shoot
 import java.util.concurrent.Callable
 
 class RoomReferenceImportRepository(
@@ -32,32 +33,6 @@ class RoomReferenceImportRepository(
         } catch (_: ReferenceImportAuthorityInconsistentException) {
             ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
-            )
-        }
-    }
-
-    fun restartCleanedImport(
-        reservation: ReferenceImportReservation,
-        reservedAtEpochMillis: Long,
-    ): ReferenceImportRestartCleanedResult {
-        if (!ReferenceImportPolicy.validateTimestamp(reservedAtEpochMillis)) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.INVALID_TIMESTAMP,
-            )
-        }
-        return try {
-            inTransaction { restartCleanedImportInTransaction(reservation, reservedAtEpochMillis) }
-        } catch (_: SQLiteConstraintException) {
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.TRANSACTION_CAS_FAILED,
-            )
-        } catch (_: ReferenceImportCasFailedException) {
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.TRANSACTION_CAS_FAILED,
-            )
-        } catch (_: ReferenceImportAuthorityInconsistentException) {
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.TRANSACTION_CAS_FAILED,
             )
         }
     }
@@ -162,11 +137,9 @@ class RoomReferenceImportRepository(
                         ) {
                             throw ReferenceImportAuthorityInconsistentException()
                         }
-                        val byId = dao.findPoseById(intent.shootId, intent.poseId)
+                        val pose = dao.findPoseById(intent.shootId, intent.poseId)
                             ?: throw ReferenceImportAuthorityInconsistentException()
-                        val byIndex = dao.findPoseByIndex(intent.shootId, intent.poseIndex)
-                            ?: throw ReferenceImportAuthorityInconsistentException()
-                        if (byId != byIndex || !byId.matchesCommittedIntent(intent)) {
+                        if (!pose.matchesCommittedIntent(intent)) {
                             throw ReferenceImportAuthorityInconsistentException()
                         }
                     }
@@ -174,7 +147,7 @@ class RoomReferenceImportRepository(
                     ASSET_READY,
                     REJECTED_CLEANED,
                     REJECTED_QUARANTINED,
-                    -> if (hasPoseConflict(intent.shootId, intent.poseId, intent.poseIndex)) {
+                    -> if (hasPoseIdConflict(intent.shootId, intent.poseId)) {
                         throw ReferenceImportAuthorityInconsistentException()
                     }
                     else -> throw ReferenceImportAuthorityInconsistentException()
@@ -209,11 +182,16 @@ class RoomReferenceImportRepository(
         classifyPoseReservationConflict(reservation)?.let { return it }
         classifyIntentReservationConflict(reservation)?.let { return it }
 
+        if (!hasReservationCapacity(reservation.shootId)) {
+            return ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+            )
+        }
+
         val expectedIntent = ReferenceImportIntentEntity(
             importToken = reservation.importToken.value,
             shootId = reservation.shootId,
             poseId = reservation.poseId,
-            poseIndex = reservation.poseIndex,
             relativeAssetPath = reservation.relativeAssetPath,
             lifecycleState = PREPARING,
             createdAtEpochMillis = reservedAtEpochMillis,
@@ -249,89 +227,6 @@ class RoomReferenceImportRepository(
             throw ReferenceImportAuthorityInconsistentException()
         }
         return ReferenceImportReserveResult.Reserved
-    }
-
-    private fun restartCleanedImportInTransaction(
-        reservation: ReferenceImportReservation,
-        reservedAtEpochMillis: Long,
-    ): ReferenceImportRestartCleanedResult {
-        val intent = dao.findIntent(reservation.importToken.value)
-            ?: return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.UNKNOWN_INTENT,
-            )
-        if (!intent.hasCoherentAuthority()) {
-            throw ReferenceImportAuthorityInconsistentException()
-        }
-        if (!intent.matches(reservation)) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.INTENT_CONFLICT,
-            )
-        }
-        if (reservedAtEpochMillis <= intent.updatedAtEpochMillis) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.INVALID_TIMESTAMP,
-            )
-        }
-        if (intent.lifecycleState != REJECTED_CLEANED) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.WRONG_STATE,
-            )
-        }
-        val fileOperation = requireCoherentFileOperation(intent)
-        if (!fileOperation.authorizesLogicalGate(
-                intent,
-                ReferenceImportFileOperationStage.CLEANED_DURABLE,
-            )
-        ) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.WRONG_STATE,
-            )
-        }
-        if (hasPoseConflict(intent.shootId, intent.poseId, intent.poseIndex)) {
-            return ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.ACTIVE_POSE_EXISTS,
-            )
-        }
-
-        if (
-            dao.resetCleanedIntent(
-                importToken = intent.importToken,
-                shootId = intent.shootId,
-                poseId = intent.poseId,
-                poseIndex = intent.poseIndex,
-                relativeAssetPath = intent.relativeAssetPath,
-                expectedUpdatedAtEpochMillis = intent.updatedAtEpochMillis,
-                reservedAtEpochMillis = reservedAtEpochMillis,
-            ) != 1 ||
-            fileOperationDao.resetCleanedOperation(
-                importToken = intent.importToken,
-                expectedUpdatedAtEpochMillis = fileOperation.updatedAtEpochMillis,
-                reservedAtEpochMillis = reservedAtEpochMillis,
-            ) != 1
-        ) {
-            throw ReferenceImportCasFailedException()
-        }
-
-        val resetIntent = dao.findIntent(intent.importToken)
-            ?: throw ReferenceImportAuthorityInconsistentException()
-        val resetOperation = requireCoherentFileOperation(resetIntent)
-        if (
-            resetIntent.lifecycleState != PREPARING ||
-            resetIntent.createdAtEpochMillis != reservedAtEpochMillis ||
-            resetIntent.updatedAtEpochMillis != reservedAtEpochMillis ||
-            resetIntent.assetReadyAtEpochMillis != null ||
-            resetIntent.terminalAtEpochMillis != null ||
-            resetOperation.stage != ReferenceImportFileOperationStage.EXPECTING_RESERVATION ||
-            resetOperation.byteCount != null ||
-            resetOperation.sha256 != null ||
-            resetOperation.lastFailureCode != null ||
-            resetOperation.reconciliationRequired ||
-            resetOperation.createdAtEpochMillis != reservedAtEpochMillis ||
-            resetOperation.updatedAtEpochMillis != reservedAtEpochMillis
-        ) {
-            throw ReferenceImportAuthorityInconsistentException()
-        }
-        return ReferenceImportRestartCleanedResult.Restarted
     }
 
     private fun classifyReservationConstraint(
@@ -403,14 +298,12 @@ class RoomReferenceImportRepository(
                 ) {
                     throw ReferenceImportAuthorityInconsistentException()
                 }
-                val byId = dao.findPoseById(existing.shootId, existing.poseId)
+                val pose = dao.findPoseById(existing.shootId, existing.poseId)
                     ?: throw ReferenceImportAuthorityInconsistentException()
-                val byIndex = dao.findPoseByIndex(existing.shootId, existing.poseIndex)
-                    ?: throw ReferenceImportAuthorityInconsistentException()
-                if (byId != byIndex || !byId.matchesCommittedIntent(existing)) {
+                if (!pose.matchesCommittedIntent(existing)) {
                     throw ReferenceImportAuthorityInconsistentException()
                 }
-                ReferenceImportReserveResult.AlreadyCommitted
+                ReferenceImportReserveResult.AlreadyCommitted(pose.poseIndex)
             }
             PREPARING,
             ASSET_READY,
@@ -426,7 +319,6 @@ class RoomReferenceImportRepository(
     ): Boolean =
         shootId == intent.shootId &&
             poseId == intent.poseId &&
-            poseIndex == intent.poseIndex &&
             referenceAssetPath == intent.relativeAssetPath &&
             validationState == VALIDATED &&
             !detectorMetadata.isNullOrBlank() &&
@@ -438,37 +330,25 @@ class RoomReferenceImportRepository(
     private fun classifyPoseReservationConflict(
         reservation: ReferenceImportReservation,
     ): ReferenceImportReserveResult? {
-        val byId = dao.findPoseById(reservation.shootId, reservation.poseId)
-        val byIndex = dao.findPoseByIndex(reservation.shootId, reservation.poseIndex)
-        return when {
-            byId != null && byIndex != null && byId == byIndex ->
-                ReferenceImportReserveResult.Rejected(
-                    ReferenceImportReserveRejectionReason.POSE_ALREADY_EXISTS,
-                )
-            byId != null -> ReferenceImportReserveResult.Rejected(
-                ReferenceImportReserveRejectionReason.POSE_ID_CONFLICT,
+        return if (dao.findPoseById(reservation.shootId, reservation.poseId) != null) {
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.POSE_ALREADY_EXISTS,
             )
-            byIndex != null -> ReferenceImportReserveResult.Rejected(
-                ReferenceImportReserveRejectionReason.POSE_INDEX_CONFLICT,
-            )
-            else -> null
+        } else {
+            null
         }
     }
 
     private fun classifyIntentReservationConflict(
         reservation: ReferenceImportReservation,
     ): ReferenceImportReserveResult? {
-        if (dao.findIntentByPoseId(reservation.shootId, reservation.poseId) != null) {
-            return ReferenceImportReserveResult.Rejected(
+        return if (dao.findIntentByPoseId(reservation.shootId, reservation.poseId) != null) {
+            ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.POSE_ID_CONFLICT,
             )
+        } else {
+            null
         }
-        if (dao.findIntentByPoseIndex(reservation.shootId, reservation.poseIndex) != null) {
-            return ReferenceImportReserveResult.Rejected(
-                ReferenceImportReserveRejectionReason.POSE_INDEX_CONFLICT,
-            )
-        }
-        return null
     }
 
     private fun markAssetReadyInTransaction(
@@ -587,13 +467,13 @@ class RoomReferenceImportRepository(
             )
         }
         classifyCommitPoseConflict(evidence)?.let { return it }
+        val assignedPoseIndex = requireContiguousValidatedAppendIndex(intent.shootId)
 
         if (
             dao.markCommitted(
                 importToken = evidence.importToken.value,
                 shootId = evidence.shootId,
                 poseId = evidence.poseId,
-                poseIndex = evidence.poseIndex,
                 relativeAssetPath = evidence.relativeAssetPath,
                 expectedUpdatedAtEpochMillis = intent.updatedAtEpochMillis,
                 committedAtEpochMillis = committedAtEpochMillis,
@@ -601,7 +481,7 @@ class RoomReferenceImportRepository(
         ) {
             throw ReferenceImportCasFailedException()
         }
-        val pose = evidence.toValidatedPose()
+        val pose = evidence.toValidatedPose(assignedPoseIndex)
         dao.insertPose(pose)
 
         val expectedIntent = intent.copy(
@@ -612,11 +492,11 @@ class RoomReferenceImportRepository(
         if (
             dao.findIntent(evidence.importToken.value) != expectedIntent ||
             dao.findPoseById(evidence.shootId, evidence.poseId) != pose ||
-            dao.findPoseByIndex(evidence.shootId, evidence.poseIndex) != pose
+            dao.findPoseByIndex(evidence.shootId, assignedPoseIndex) != pose
         ) {
             throw ReferenceImportAuthorityInconsistentException()
         }
-        return ReferenceImportCommitResult.Committed
+        return ReferenceImportCommitResult.Committed(assignedPoseIndex)
     }
 
     private fun classifyCommitConstraint(
@@ -673,12 +553,10 @@ class RoomReferenceImportRepository(
         if (intent.lifecycleState != COMMITTED || !intent.hasCoherentAuthority()) {
             throw ReferenceImportAuthorityInconsistentException()
         }
-        val byId = dao.findPoseById(evidence.shootId, evidence.poseId)
+        val pose = dao.findPoseById(evidence.shootId, evidence.poseId)
             ?: throw ReferenceImportAuthorityInconsistentException()
-        val byIndex = dao.findPoseByIndex(evidence.shootId, evidence.poseIndex)
-            ?: throw ReferenceImportAuthorityInconsistentException()
-        return if (byId == byIndex && byId.matches(evidence)) {
-            ReferenceImportCommitResult.AlreadyCommitted
+        return if (pose.matches(evidence)) {
+            ReferenceImportCommitResult.AlreadyCommitted(pose.poseIndex)
         } else {
             ReferenceImportCommitResult.Rejected(
                 ReferenceImportCommitRejectionReason.EVIDENCE_CONFLICT,
@@ -689,20 +567,12 @@ class RoomReferenceImportRepository(
     private fun classifyCommitPoseConflict(
         evidence: ReferenceImportEvidence,
     ): ReferenceImportCommitResult? {
-        val byId = dao.findPoseById(evidence.shootId, evidence.poseId)
-        val byIndex = dao.findPoseByIndex(evidence.shootId, evidence.poseIndex)
-        return when {
-            byId != null && byIndex != null && byId == byIndex ->
-                ReferenceImportCommitResult.Rejected(
-                    ReferenceImportCommitRejectionReason.EVIDENCE_CONFLICT,
-                )
-            byId != null -> ReferenceImportCommitResult.Rejected(
+        return if (dao.findPoseById(evidence.shootId, evidence.poseId) != null) {
+            ReferenceImportCommitResult.Rejected(
                 ReferenceImportCommitRejectionReason.POSE_ID_CONFLICT,
             )
-            byIndex != null -> ReferenceImportCommitResult.Rejected(
-                ReferenceImportCommitRejectionReason.POSE_INDEX_CONFLICT,
-            )
-            else -> null
+        } else {
+            null
         }
     }
 
@@ -762,7 +632,7 @@ class RoomReferenceImportRepository(
                 ReferenceImportSettlementRejectionReason.SETTLEMENT_CONFLICT,
             )
         }
-        if (hasPoseConflict(intent.shootId, intent.poseId, intent.poseIndex)) {
+        if (hasPoseIdConflict(intent.shootId, intent.poseId)) {
             return ReferenceImportSettlementResult.Rejected(
                 ReferenceImportSettlementRejectionReason.ACTIVE_POSE_EXISTS,
             )
@@ -790,8 +660,36 @@ class RoomReferenceImportRepository(
         return ReferenceImportSettlementResult.Settled
     }
 
-    private fun hasPoseConflict(shootId: String, poseId: String, poseIndex: Int): Boolean =
-        dao.findPoseById(shootId, poseId) != null || dao.findPoseByIndex(shootId, poseIndex) != null
+    private fun hasReservationCapacity(shootId: String): Boolean {
+        val validatedPoseCount = dao.countAcceptedPoses(shootId)
+        val nonterminalIntentCount = dao.countNonterminalIntents(shootId)
+        if (
+            validatedPoseCount !in 0L..MAX_REFERENCE_COUNT ||
+            nonterminalIntentCount !in 0L..MAX_REFERENCE_COUNT
+        ) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        val reservedReferenceCount = validatedPoseCount + nonterminalIntentCount
+        if (reservedReferenceCount !in 0L..MAX_REFERENCE_COUNT) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        return reservedReferenceCount < MAX_REFERENCE_COUNT
+    }
+
+    private fun requireContiguousValidatedAppendIndex(shootId: String): Int {
+        val poses = dao.findPosesInOrder(shootId)
+        if (
+            poses.size >= Shoot.MAX_REFERENCE_POSES ||
+            poses.any { pose -> pose.validationState !in ACCEPTED_VALIDATION_STATES } ||
+            poses.map(ShootPoseEntity::poseIndex) != poses.indices.toList()
+        ) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        return poses.size
+    }
+
+    private fun hasPoseIdConflict(shootId: String, poseId: String): Boolean =
+        dao.findPoseById(shootId, poseId) != null
 
     private fun ReferenceImportIntentEntity.matches(
         reservation: ReferenceImportReservation,
@@ -799,7 +697,6 @@ class RoomReferenceImportRepository(
         importToken == reservation.importToken.value &&
             shootId == reservation.shootId &&
             poseId == reservation.poseId &&
-            poseIndex == reservation.poseIndex &&
             relativeAssetPath == reservation.relativeAssetPath
 
     private fun requireCoherentFileOperation(
@@ -857,14 +754,12 @@ class RoomReferenceImportRepository(
         importToken == evidence.importToken.value &&
             shootId == evidence.shootId &&
             poseId == evidence.poseId &&
-            poseIndex == evidence.poseIndex &&
             relativeAssetPath == evidence.relativeAssetPath
 
     private fun ReferenceImportIntentEntity.hasCoherentAuthority(): Boolean {
         if (
             createdAtEpochMillis < 0L ||
-            updatedAtEpochMillis < createdAtEpochMillis ||
-            poseIndex < 0
+            updatedAtEpochMillis < createdAtEpochMillis
         ) {
             return false
         }
@@ -878,7 +773,6 @@ class RoomReferenceImportRepository(
                 importToken = token,
                 shootId = shootId,
                 poseId = poseId,
-                poseIndex = poseIndex,
                 relativeAssetPath = relativeAssetPath,
             )
         } catch (_: IllegalArgumentException) {
@@ -922,7 +816,6 @@ class RoomReferenceImportRepository(
             importToken = toToken(),
             shootId = shootId,
             poseId = poseId,
-            poseIndex = poseIndex,
             relativeAssetPath = relativeAssetPath,
             lifecycle = when (lifecycleState) {
                 PREPARING -> ReferenceImportLifecycle.PREPARING
@@ -936,7 +829,7 @@ class RoomReferenceImportRepository(
             updatedAtEpochMillis = updatedAtEpochMillis,
         )
 
-    private fun ReferenceImportEvidence.toValidatedPose(): ShootPoseEntity = ShootPoseEntity(
+    private fun ReferenceImportEvidence.toValidatedPose(poseIndex: Int): ShootPoseEntity = ShootPoseEntity(
         shootId = shootId,
         poseIndex = poseIndex,
         poseId = poseId,
@@ -952,7 +845,7 @@ class RoomReferenceImportRepository(
     )
 
     private fun ShootPoseEntity.matches(evidence: ReferenceImportEvidence): Boolean =
-        this == evidence.toValidatedPose()
+        this == evidence.toValidatedPose(poseIndex)
 
     private fun <T> inTransaction(block: () -> T): T =
         database.runInTransaction(Callable(block))
@@ -970,13 +863,16 @@ class RoomReferenceImportRepository(
         RuntimeException("reference import authority is inconsistent")
 
     private companion object {
+        val MAX_REFERENCE_COUNT = Shoot.MAX_REFERENCE_POSES.toLong()
         const val ACTIVE = "ACTIVE"
         const val PREPARING = "PREPARING"
         const val ASSET_READY = "ASSET_READY"
         const val COMMITTED = "COMMITTED"
         const val REJECTED_CLEANED = "REJECTED_CLEANED"
         const val REJECTED_QUARANTINED = "REJECTED_QUARANTINED"
+        const val LEGACY_VALID = "VALID"
         const val VALIDATED = "VALIDATED"
+        val ACCEPTED_VALIDATION_STATES = setOf(LEGACY_VALID, VALIDATED)
         val TERMINAL_REJECTION_STATES = setOf(
             REJECTED_CLEANED,
             REJECTED_QUARANTINED,

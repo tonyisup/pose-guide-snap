@@ -5,10 +5,12 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.tonyisup.poseguidesnap.data.db.ActiveSessionAuthorityTriggers
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -24,13 +26,16 @@ class AppDatabaseAndroidTest {
     fun setUp() {
         context = InstrumentationRegistry.getInstrumentation().targetContext
         databaseName = "pose_guide_snap_private_android_test_${UUID.randomUUID()}.db"
-        context.deleteDatabase(databaseName)
+        context.deleteRoomTestDatabase(databaseName)
+        assertNoTestDatabaseResidue()
     }
 
     @After
     fun tearDown() {
         appDatabase?.close()
-        context.deleteDatabase(databaseName)
+        appDatabase = null
+        context.deleteRoomTestDatabase(databaseName)
+        assertNoTestDatabaseResidue()
     }
 
     @Test
@@ -145,8 +150,163 @@ class AppDatabaseAndroidTest {
         }
     }
 
+    @Test
+    fun activeSessionInsertRejectsSecondActiveForSameShootButPermitsCompletedHistoryAndDifferentShoots() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-session-authority-1")
+        seedShoot(sqlite, "shoot-session-authority-2")
+
+        insertSession(
+            sqlite,
+            sessionId = "completed-history-1",
+            shootId = "shoot-session-authority-1",
+            lifecycleState = "COMPLETED",
+        )
+        insertSession(
+            sqlite,
+            sessionId = "active-session-1",
+            shootId = "shoot-session-authority-1",
+            lifecycleState = "ACTIVE",
+        )
+        assertActiveSessionRejected {
+            insertSession(
+                sqlite,
+                sessionId = "active-session-2",
+                shootId = "shoot-session-authority-1",
+                lifecycleState = "ACTIVE",
+            )
+        }
+
+        insertSession(
+            sqlite,
+            sessionId = "completed-history-2",
+            shootId = "shoot-session-authority-1",
+            lifecycleState = "COMPLETED",
+        )
+        insertSession(
+            sqlite,
+            sessionId = "active-session-other-shoot",
+            shootId = "shoot-session-authority-2",
+            lifecycleState = "ACTIVE",
+        )
+
+        assertEquals(1, sqlite.sessionCount("shoot-session-authority-1", "ACTIVE"))
+        assertEquals(2, sqlite.sessionCount("shoot-session-authority-1", "COMPLETED"))
+        assertEquals(1, sqlite.sessionCount("shoot-session-authority-2", "ACTIVE"))
+    }
+
+    @Test
+    fun completedSessionUpdateToActiveIsRejectedUntilExistingActiveSessionCompletes() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-session-update-authority")
+        insertSession(
+            sqlite,
+            sessionId = "first-active-session",
+            shootId = "shoot-session-update-authority",
+            lifecycleState = "ACTIVE",
+        )
+        insertSession(
+            sqlite,
+            sessionId = "second-completed-session",
+            shootId = "shoot-session-update-authority",
+            lifecycleState = "COMPLETED",
+        )
+
+        assertActiveSessionRejected {
+            sqlite.execSQL(
+                "UPDATE shoot_sessions SET lifecycle_state = 'ACTIVE', " +
+                    "updated_at_epoch_millis = 2 " +
+                    "WHERE session_id = 'second-completed-session'",
+            )
+        }
+        assertEquals("COMPLETED", sqlite.sessionState("second-completed-session"))
+
+        sqlite.execSQL(
+            "UPDATE shoot_sessions SET lifecycle_state = 'COMPLETED', " +
+                "updated_at_epoch_millis = 2 WHERE session_id = 'first-active-session'",
+        )
+        sqlite.execSQL(
+            "UPDATE shoot_sessions SET lifecycle_state = 'ACTIVE', " +
+                "updated_at_epoch_millis = 3 " +
+                "WHERE session_id = 'second-completed-session'",
+        )
+
+        assertEquals("COMPLETED", sqlite.sessionState("first-active-session"))
+        assertEquals("ACTIVE", sqlite.sessionState("second-completed-session"))
+        assertEquals(1, sqlite.sessionCount("shoot-session-update-authority", "ACTIVE"))
+    }
+
+    @Test
+    fun activeSessionAuthorityTriggersRemainExactBehavioralAndIdempotentAfterReopen() {
+        var sqlite = openDatabase().openHelper.writableDatabase
+        assertEquals(EXPECTED_ACTIVE_SESSION_TRIGGER_NAMES, sqlite.sessionAuthorityTriggerNames())
+        seedShoot(sqlite, "shoot-session-reopen-authority")
+        insertSession(
+            sqlite,
+            sessionId = "reopen-active-session",
+            shootId = "shoot-session-reopen-authority",
+            lifecycleState = "ACTIVE",
+        )
+        assertActiveSessionRejected {
+            insertSession(
+                sqlite,
+                sessionId = "reopen-rejected-session-before-close",
+                shootId = "shoot-session-reopen-authority",
+                lifecycleState = "ACTIVE",
+            )
+        }
+
+        appDatabase?.close()
+        appDatabase = null
+        sqlite = openDatabase().openHelper.writableDatabase
+
+        assertEquals(EXPECTED_ACTIVE_SESSION_TRIGGER_NAMES, sqlite.sessionAuthorityTriggerNames())
+        ActiveSessionAuthorityTriggers.install(sqlite)
+        ActiveSessionAuthorityTriggers.install(sqlite)
+        assertEquals(EXPECTED_ACTIVE_SESSION_TRIGGER_NAMES, sqlite.sessionAuthorityTriggerNames())
+        assertActiveSessionRejected {
+            insertSession(
+                sqlite,
+                sessionId = "reopen-rejected-session-after-open",
+                shootId = "shoot-session-reopen-authority",
+                lifecycleState = "ACTIVE",
+            )
+        }
+    }
+
     private fun openDatabase(): AppDatabase =
         AppDatabase.create(context, databaseName).also { appDatabase = it }
+
+    private fun assertNoTestDatabaseResidue() {
+        assertFalse(context.databaseList().contains(databaseName))
+        assertTrue(context.roomTestDatabaseResidue(databaseName).isEmpty())
+    }
+
+    private fun seedShoot(
+        sqlite: SupportSQLiteDatabase,
+        shootId: String,
+    ) {
+        sqlite.execSQL(
+            "INSERT INTO shoots " +
+                "(shoot_id, name, created_at_epoch_millis, updated_at_epoch_millis, " +
+                "lifecycle_state, deletion_generation) " +
+                "VALUES ('$shootId', 'Session authority test shoot', 1, 1, 'ACTIVE', 0)",
+        )
+    }
+
+    private fun insertSession(
+        sqlite: SupportSQLiteDatabase,
+        sessionId: String,
+        shootId: String,
+        lifecycleState: String,
+    ) {
+        sqlite.execSQL(
+            "INSERT INTO shoot_sessions " +
+                "(session_id, shoot_id, current_pose_index, next_attempt_number, " +
+                "lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis) " +
+                "VALUES ('$sessionId', '$shootId', 0, 1, '$lifecycleState', 1, 1)",
+        )
+    }
 
     private fun seedAttempt(sqlite: SupportSQLiteDatabase) {
         sqlite.execSQL(
@@ -202,6 +362,44 @@ class AppDatabaseAndroidTest {
             "VALUES ('command-1', $ordinal, 'content://media/external/images/media', " +
             "'external_primary', 'photo.jpg', 'Pictures/PoseGuideSnap', 'image/jpeg', " +
             "'pending', '$claimToken', NULL, 'none', 0, 2, 2)"
+
+    private fun assertActiveSessionRejected(block: () -> Unit) {
+        try {
+            block()
+            throw AssertionError("Expected SQLite to reject a second ACTIVE session for one shoot")
+        } catch (error: SQLiteConstraintException) {
+            assertEquals(
+                ActiveSessionAuthorityTriggers.ERROR_MESSAGE,
+                error.message.orEmpty().substringBefore(" (code "),
+            )
+        }
+    }
+
+    private fun SupportSQLiteDatabase.sessionCount(
+        shootId: String,
+        lifecycleState: String,
+    ): Int = query(
+        "SELECT COUNT(*) AS session_count FROM shoot_sessions " +
+            "WHERE shoot_id = '$shootId' AND lifecycle_state = '$lifecycleState'",
+    ).use { cursor ->
+        assertTrue(cursor.moveToFirst())
+        cursor.getInt(cursor.getColumnIndexOrThrow("session_count"))
+    }
+
+    private fun SupportSQLiteDatabase.sessionState(sessionId: String): String =
+        query(
+            "SELECT lifecycle_state FROM shoot_sessions WHERE session_id = '$sessionId'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getString(cursor.getColumnIndexOrThrow("lifecycle_state"))
+        }
+
+    private fun SupportSQLiteDatabase.sessionAuthorityTriggerNames(): Set<String> =
+        stringColumn(
+            "SELECT name FROM sqlite_master " +
+                "WHERE type = 'trigger' AND tbl_name = 'shoot_sessions'",
+            "name",
+        )
 
     private fun assertOrdinalRejected(block: () -> Unit) {
         try {
@@ -265,6 +463,11 @@ class AppDatabaseAndroidTest {
     )
 
     companion object {
+        private val EXPECTED_ACTIVE_SESSION_TRIGGER_NAMES = setOf(
+            "trigger_shoot_sessions_one_active_insert",
+            "trigger_shoot_sessions_one_active_update",
+        )
+
         private val REQUIRED_TABLES = setOf(
             "shoots",
             "shoot_poses",

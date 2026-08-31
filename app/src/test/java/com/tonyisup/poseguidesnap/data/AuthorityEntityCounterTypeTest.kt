@@ -15,7 +15,7 @@ import org.junit.Test
 
 class AuthorityEntityCounterTypeTest {
     @Test
-    fun persistedNumericFieldsExposeTheCompleteV2GetterWidths() {
+    fun persistedNumericFieldsExposeTheCompleteV3GetterWidths() {
         val actual = mapOf(
             "ShootEntity.createdAtEpochMillis" to
                 ShootEntity::class.java.getMethod("getCreatedAtEpochMillis").returnType,
@@ -25,8 +25,7 @@ class AuthorityEntityCounterTypeTest {
                 ShootEntity::class.java.getMethod("getDeletionGeneration").returnType,
             "ShootPoseEntity.poseIndex" to
                 ShootPoseEntity::class.java.getMethod("getPoseIndex").returnType,
-            "ReferenceImportIntentEntity.poseIndex" to
-                ReferenceImportIntentEntity::class.java.getMethod("getPoseIndex").returnType,
+
             "ReferenceImportIntentEntity.createdAtEpochMillis" to
                 ReferenceImportIntentEntity::class.java
                     .getMethod("getCreatedAtEpochMillis").returnType,
@@ -107,7 +106,7 @@ class AuthorityEntityCounterTypeTest {
             "ShootEntity.updatedAtEpochMillis" to primitiveLong,
             "ShootEntity.deletionGeneration" to primitiveLong,
             "ShootPoseEntity.poseIndex" to primitiveInt,
-            "ReferenceImportIntentEntity.poseIndex" to primitiveInt,
+
             "ReferenceImportIntentEntity.createdAtEpochMillis" to primitiveLong,
             "ReferenceImportIntentEntity.updatedAtEpochMillis" to primitiveLong,
             "ReferenceImportIntentEntity.assetReadyAtEpochMillis" to boxedLong,

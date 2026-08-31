@@ -225,7 +225,6 @@ class ReferenceImportStartupReconcilerAndroidTest {
             importToken = token,
             shootId = shootId,
             poseId = poseId,
-            poseIndex = 0,
             relativeAssetPath = ReferenceImportAssetPath.forToken(token),
         )
     }

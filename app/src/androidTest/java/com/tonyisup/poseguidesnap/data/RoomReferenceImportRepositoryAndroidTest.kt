@@ -91,6 +91,160 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
+    fun twentyFirstReferenceReservationIsRejectedWithoutCreatingImportRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        (0 until 20).forEach { poseIndex ->
+            seedValidatedPose(sqlite, SHOOT_ID, "existing-pose-$poseIndex", poseIndex)
+        }
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+            ),
+            repository().reserveImport(
+                reservation(
+                    poseId = "twenty-first-pose",
+                    token = "twenty-first-token",
+                ),
+                20L,
+            ),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun preparingReservationHoldsTwentiethCapacityWhileItsExactReplayKeepsReplayClassification() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        (0 until 19).forEach { poseIndex ->
+            seedValidatedPose(sqlite, SHOOT_ID, "existing-pose-$poseIndex", poseIndex)
+        }
+        val repository = repository()
+        val twentieth = reservation(
+            poseId = "twentieth-pose",
+            token = "twentieth-token",
+        )
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(twentieth, 20L),
+        )
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+            ),
+            repository.reserveImport(
+                reservation(
+                    poseId = "twenty-first-pose",
+                    token = "twenty-first-token",
+                ),
+                21L,
+            ),
+        )
+        assertEquals(
+            ReferenceImportReserveResult.ExistingWorkRequiresReconciliation,
+            repository.reserveImport(twentieth, 22L),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+        assertEquals(19, sqlite.poseCount(SHOOT_ID))
+    }
+
+    @Test
+    fun legacyValidPoseCountsTowardCapacityAndAllowsContiguousAppend() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        seedPose(sqlite, SHOOT_ID, "legacy-valid-pose", 0)
+        val repository = repository()
+
+        prepare(repository, SHOOT_ID, "appended-pose", "appended-token", 10L)
+
+        assertEquals(
+            ReferenceImportCommitResult.Committed(1),
+            repository.commitImport(
+                evidence(
+                    shootId = SHOOT_ID,
+                    poseId = "appended-pose",
+                    token = "appended-token",
+                ),
+                30L,
+            ),
+        )
+        assertEquals(
+            listOf(listOf(0L, "legacy-valid-pose"), listOf(1L, "appended-pose")),
+            sqlite.rows(
+                "SELECT pose_index, pose_id FROM shoot_poses " +
+                    "WHERE shoot_id = ? ORDER BY pose_index",
+                SHOOT_ID,
+            ),
+        )
+    }
+
+    @Test
+    fun twentyLegacyValidPosesRejectReservationBeforeImportRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        (0 until 20).forEach { poseIndex ->
+            seedPose(sqlite, SHOOT_ID, "legacy-valid-pose-$poseIndex", poseIndex)
+        }
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+            ),
+            repository().reserveImport(
+                reservation(poseId = "overflow-pose", token = "overflow-token"),
+                20L,
+            ),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun cleanedRejectionDoesNotConsumeReservationCapacity() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        (0 until 19).forEach { poseIndex ->
+            seedValidatedPose(sqlite, SHOOT_ID, "existing-pose-$poseIndex", poseIndex)
+        }
+        val repository = repository()
+        val rejected = reservation(
+            poseId = "rejected-pose",
+            token = "rejected-token",
+        )
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(rejected, 20L),
+        )
+        setFileStage(sqlite, rejected.importToken.value, "CLEANED_DURABLE")
+        assertEquals(
+            ReferenceImportSettlementResult.Settled,
+            repository.settleFailure(
+                rejected.importToken,
+                ReferenceImportFailureSettlement.CLEANED,
+                21L,
+            ),
+        )
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(
+                reservation(
+                    poseId = "replacement-pose",
+                    token = "replacement-token",
+                ),
+                22L,
+            ),
+        )
+        assertEquals(2, sqlite.intentCount())
+        assertEquals(2, sqlite.fileOperationCount())
+        assertEquals(19, sqlite.poseCount(SHOOT_ID))
+    }
+
+    @Test
     fun ledgerInsertFailureRollsBackTheIntentAndLeavesNoActivePose() {
         val sqlite = openDatabase().openHelper.writableDatabase
         seedShoot(sqlite, SHOOT_ID)
@@ -173,7 +327,7 @@ class RoomReferenceImportRepositoryAndroidTest {
         )
         assertEquals(0, sqlite.poseCount(SHOOT_ID))
 
-        assertEquals(ReferenceImportCommitResult.Committed, repository.commitImport(evidence, 30L))
+        assertEquals(ReferenceImportCommitResult.Committed(0), repository.commitImport(evidence, 30L))
         assertEquals(
             listOf(listOf("COMMITTED", 10L, 30L, 20L, 30L)),
             sqlite.rows(
@@ -186,7 +340,7 @@ class RoomReferenceImportRepositoryAndroidTest {
         assertEquals(
             listOf(
                 listOf(
-                    4L,
+                    0L,
                     POSE_ID,
                     "Reference pose",
                     evidence.relativeAssetPath,
@@ -209,11 +363,11 @@ class RoomReferenceImportRepositoryAndroidTest {
 
         closeDatabase()
         assertEquals(
-            ReferenceImportReserveResult.AlreadyCommitted,
+            ReferenceImportReserveResult.AlreadyCommitted(0),
             repository().reserveImport(reservation, 999L),
         )
         assertEquals(
-            ReferenceImportCommitResult.AlreadyCommitted,
+            ReferenceImportCommitResult.AlreadyCommitted(0),
             repository().commitImport(evidence, 999L),
         )
         assertEquals(
@@ -225,7 +379,7 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
-    fun exactPreparingReservationClosesWhileTokenPoseIdAndPoseIndexContradictionsFailClosed() {
+    fun exactPreparingReservationClosesWhileTokenAndPoseIdContradictionsFailClosed() {
         val sqlite = openDatabase().openHelper.writableDatabase
         seedShoot(sqlite, SHOOT_ID)
         val repository = repository()
@@ -239,21 +393,14 @@ class RoomReferenceImportRepositoryAndroidTest {
         assertEquals(
             ReferenceImportReserveResult.Rejected(ReferenceImportReserveRejectionReason.TOKEN_CONFLICT),
             repository.reserveImport(
-                reservation(shootId = SHOOT_ID, poseId = "pose-other", poseIndex = 5, token = TOKEN),
+                reservation(shootId = SHOOT_ID, poseId = "pose-other", token = TOKEN),
                 11L,
             ),
         )
         assertEquals(
             ReferenceImportReserveResult.Rejected(ReferenceImportReserveRejectionReason.POSE_ID_CONFLICT),
             repository.reserveImport(
-                reservation(poseId = POSE_ID, poseIndex = 5, token = "token-pose-id-conflict"),
-                11L,
-            ),
-        )
-        assertEquals(
-            ReferenceImportReserveResult.Rejected(ReferenceImportReserveRejectionReason.POSE_INDEX_CONFLICT),
-            repository.reserveImport(
-                reservation(poseId = "pose-other", poseIndex = 4, token = "token-index-conflict"),
+                reservation(poseId = POSE_ID, token = "token-pose-id-conflict"),
                 11L,
             ),
         )
@@ -262,13 +409,13 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
-    fun unresolvedExactStatesCloseAndCleanedExactRetryAtomicallyResetsTheSameRow() {
+    fun unresolvedAndTerminalRejectedExactStatesRequireReconciliation() {
         val sqlite = openDatabase().openHelper.writableDatabase
         val states = listOf("preparing", "asset-ready", "quarantined", "cleaned")
         states.forEach { suffix -> seedShoot(sqlite, "shoot-$suffix") }
         val repository = repository()
         val reservations = states.associateWith { suffix ->
-            reservation("shoot-$suffix", "pose-$suffix", 0, "token-$suffix")
+            reservation("shoot-$suffix", "pose-$suffix", "token-$suffix")
         }
         reservations.values.forEach { candidate ->
             assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(candidate, 10L))
@@ -298,118 +445,14 @@ class RoomReferenceImportRepositoryAndroidTest {
             )
         }
 
-        listOf("preparing", "asset-ready", "quarantined").forEach { suffix ->
+        states.forEach { suffix ->
             assertEquals(
                 ReferenceImportReserveResult.ExistingWorkRequiresReconciliation,
                 repository.reserveImport(requireNotNull(reservations[suffix]), 21L),
             )
         }
-        val cleaned = requireNotNull(reservations["cleaned"])
-        assertEquals(
-            ReferenceImportReserveResult.Rejected(
-                ReferenceImportReserveRejectionReason.INVALID_TIMESTAMP,
-            ),
-            repository.reserveImport(cleaned, 19L),
-        )
-        assertEquals("REJECTED_CLEANED", sqlite.intentState("token-cleaned"))
-        assertEquals(
-            ReferenceImportReserveResult.ExistingWorkRequiresReconciliation,
-            repository.reserveImport(cleaned, 20L),
-        )
-        assertEquals(
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.INVALID_TIMESTAMP,
-            ),
-            repository.restartCleanedImport(cleaned, 20L),
-        )
-        assertEquals(
-            ReferenceImportRestartCleanedResult.Restarted,
-            repository.restartCleanedImport(cleaned, 21L),
-        )
-        assertEquals(
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.WRONG_STATE,
-            ),
-            repository.restartCleanedImport(cleaned, 22L),
-        )
-        assertEquals(
-            listOf(listOf("PREPARING", 21L, 21L, null, null)),
-            sqlite.rows(
-                "SELECT lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis, " +
-                    "asset_ready_at_epoch_millis, terminal_at_epoch_millis " +
-                    "FROM reference_import_intents WHERE import_token = ?",
-                "token-cleaned",
-            ),
-        )
-        assertEquals(
-            listOf(listOf("EXPECTING_RESERVATION", null, null, null, 0L, 21L, 21L)),
-            sqlite.rows(
-                "SELECT stage, byte_count, sha256, last_failure_code, " +
-                    "reconciliation_required, created_at_epoch_millis, updated_at_epoch_millis " +
-                    "FROM reference_import_file_operations WHERE import_token = ?",
-                "token-cleaned",
-            ),
-        )
-        assertEquals(
-            ReferenceImportReserveResult.Rejected(
-                ReferenceImportReserveRejectionReason.POSE_ID_CONFLICT,
-            ),
-            repository.reserveImport(
-                reservation("shoot-cleaned", "pose-cleaned", 1, "different-token"),
-                21L,
-            ),
-        )
         assertEquals(4, sqlite.intentCount())
         assertEquals(0, states.sumOf { suffix -> sqlite.poseCount("shoot-$suffix") })
-    }
-
-    @Test
-    fun cleanedRestartRollsBackLogicalResetWhenFileLedgerResetFailsLate() {
-        val sqlite = openDatabase().openHelper.writableDatabase
-        seedShoot(sqlite, SHOOT_ID)
-        val repository = repository()
-        val cleaned = reservation(token = "restart-rollback-token")
-        assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(cleaned, 10L))
-        setFileStage(sqlite, cleaned.importToken.value, "CLEANED_DURABLE")
-        assertEquals(
-            ReferenceImportSettlementResult.Settled,
-            repository.settleFailure(cleaned.importToken, ReferenceImportFailureSettlement.CLEANED, 20L),
-        )
-        sqlite.execSQL(
-            """
-            CREATE TRIGGER test_fail_cleaned_file_reset
-            BEFORE UPDATE OF stage ON reference_import_file_operations
-            FOR EACH ROW
-            WHEN OLD.import_token = '${cleaned.importToken.value}'
-              AND OLD.stage = 'CLEANED_DURABLE'
-              AND NEW.stage = 'EXPECTING_RESERVATION'
-            BEGIN
-                SELECT RAISE(ABORT, 'generated reset failure');
-            END
-            """.trimIndent(),
-        )
-
-        assertEquals(
-            ReferenceImportRestartCleanedResult.Rejected(
-                ReferenceImportRestartCleanedRejectionReason.TRANSACTION_CAS_FAILED,
-            ),
-            repository.restartCleanedImport(cleaned, 21L),
-        )
-        assertEquals("REJECTED_CLEANED", sqlite.intentState(cleaned.importToken.value))
-        assertEquals(
-            listOf(listOf("CLEANED_DURABLE", 10L)),
-            sqlite.rows(
-                "SELECT stage, updated_at_epoch_millis " +
-                    "FROM reference_import_file_operations WHERE import_token = ?",
-                cleaned.importToken.value,
-            ),
-        )
-
-        sqlite.execSQL("DROP TRIGGER test_fail_cleaned_file_reset")
-        assertEquals(
-            ReferenceImportRestartCleanedResult.Restarted,
-            repository.restartCleanedImport(cleaned, 21L),
-        )
     }
 
     @Test
@@ -418,11 +461,11 @@ class RoomReferenceImportRepositoryAndroidTest {
         listOf("missing", "path", "validation").forEach { suffix ->
             seedShoot(sqlite, "shoot-$suffix")
             val token = "token-$suffix"
-            prepare(repository(), "shoot-$suffix", "pose-$suffix", 0, token, 10L)
+            prepare(repository(), "shoot-$suffix", "pose-$suffix", token, 10L)
             assertEquals(
-                ReferenceImportCommitResult.Committed,
+                ReferenceImportCommitResult.Committed(0),
                 repository().commitImport(
-                    evidence("shoot-$suffix", "pose-$suffix", 0, token),
+                    evidence("shoot-$suffix", "pose-$suffix", token),
                     30L,
                 ),
             )
@@ -442,7 +485,7 @@ class RoomReferenceImportRepositoryAndroidTest {
                     ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
                 ),
                 repository().reserveImport(
-                    reservation("shoot-$suffix", "pose-$suffix", 0, "token-$suffix"),
+                    reservation("shoot-$suffix", "pose-$suffix", "token-$suffix"),
                     31L,
                 ),
             )
@@ -452,40 +495,33 @@ class RoomReferenceImportRepositoryAndroidTest {
     @Test
     fun commitRequiresActiveNonDeletingShootNoActiveSessionAndVacantIdentity() {
         val sqlite = openDatabase().openHelper.writableDatabase
-        listOf("deleting", "session", "pose-id", "pose-index").forEach { suffix ->
+        listOf("deleting", "session", "pose-id").forEach { suffix ->
             seedShoot(sqlite, "shoot-$suffix")
         }
         val repository = repository()
 
-        prepare(repository, "shoot-deleting", "pose-deleting", 0, "token-deleting", 10L)
+        prepare(repository, "shoot-deleting", "pose-deleting", "token-deleting", 10L)
         sqlite.execSQL(
             "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
                 "WHERE shoot_id = 'shoot-deleting'",
         )
         assertEquals(
             ReferenceImportCommitResult.BlockedByDeletion,
-            repository.commitImport(evidence("shoot-deleting", "pose-deleting", 0, "token-deleting"), 30L),
+            repository.commitImport(evidence("shoot-deleting", "pose-deleting", "token-deleting"), 30L),
         )
 
-        prepare(repository, "shoot-session", "pose-session", 0, "token-session", 40L)
+        prepare(repository, "shoot-session", "pose-session", "token-session", 40L)
         seedSession(sqlite, "shoot-session")
         assertEquals(
             ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.ACTIVE_SESSION),
-            repository.commitImport(evidence("shoot-session", "pose-session", 0, "token-session"), 60L),
+            repository.commitImport(evidence("shoot-session", "pose-session", "token-session"), 60L),
         )
 
-        prepare(repository, "shoot-pose-id", "pose-owned", 1, "token-pose-id", 70L)
+        prepare(repository, "shoot-pose-id", "pose-owned", "token-pose-id", 70L)
         seedPose(sqlite, "shoot-pose-id", "pose-owned", 0)
         assertEquals(
             ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.POSE_ID_CONFLICT),
-            repository.commitImport(evidence("shoot-pose-id", "pose-owned", 1, "token-pose-id"), 90L),
-        )
-
-        prepare(repository, "shoot-pose-index", "pose-new", 1, "token-pose-index", 100L)
-        seedPose(sqlite, "shoot-pose-index", "pose-owned", 1)
-        assertEquals(
-            ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.POSE_INDEX_CONFLICT),
-            repository.commitImport(evidence("shoot-pose-index", "pose-new", 1, "token-pose-index"), 120L),
+            repository.commitImport(evidence("shoot-pose-id", "pose-owned", "token-pose-id"), 90L),
         )
 
         assertEquals(0, sqlite.poseCount("shoot-deleting"))
@@ -503,7 +539,6 @@ class RoomReferenceImportRepositoryAndroidTest {
             val reservation = reservation(
                 shootId,
                 "pose-$suffix",
-                0,
                 "token-$suffix",
             )
             assertEquals(
@@ -555,7 +590,7 @@ class RoomReferenceImportRepositoryAndroidTest {
         val sqlite = openDatabase().openHelper.writableDatabase
         seedShoot(sqlite, SHOOT_ID)
         val repository = repository()
-        prepare(repository, SHOOT_ID, POSE_ID, 4, TOKEN, 10L)
+        prepare(repository, SHOOT_ID, POSE_ID, TOKEN, 10L)
         sqlite.execSQL(
             """
             CREATE TRIGGER test_corrupt_reference_commit
@@ -581,7 +616,39 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
-    fun concurrentReservationsForSamePoseHaveExactlyOneUniqueIndexWinner() {
+    fun commitRejectsGapAndUnknownValidationStateWithoutMutatingOrder() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-gap")
+        seedShoot(sqlite, "shoot-invalid")
+        seedValidatedPose(sqlite, "shoot-gap", "gap-existing", 1)
+        seedPose(sqlite, "shoot-invalid", "invalid-existing", 0)
+        sqlite.execSQL(
+            "UPDATE shoot_poses SET validation_state = 'BROKEN' WHERE shoot_id = 'shoot-invalid'",
+        )
+        val repository = repository()
+        prepare(repository, "shoot-gap", "gap-new", "gap-token", 10L)
+        prepare(repository, "shoot-invalid", "invalid-new", "invalid-token", 20L)
+
+        assertEquals(
+            ReferenceImportCommitResult.Rejected(
+                ReferenceImportCommitRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.commitImport(evidence("shoot-gap", "gap-new", "gap-token"), 30L),
+        )
+        assertEquals(
+            ReferenceImportCommitResult.Rejected(
+                ReferenceImportCommitRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.commitImport(evidence("shoot-invalid", "invalid-new", "invalid-token"), 40L),
+        )
+        assertEquals(1, sqlite.poseCount("shoot-gap"))
+        assertEquals(1, sqlite.poseCount("shoot-invalid"))
+        assertEquals("ASSET_READY", sqlite.intentState("gap-token"))
+        assertEquals("ASSET_READY", sqlite.intentState("invalid-token"))
+    }
+
+    @Test
+    fun concurrentReservationsForSamePoseHaveExactlyOneUniqueIdentityWinner() {
         val first = openDatabase()
         val sqlite = first.openHelper.writableDatabase
         seedShoot(sqlite, SHOOT_ID)
@@ -610,12 +677,55 @@ class RoomReferenceImportRepositoryAndroidTest {
                 results.count { result ->
                     result == ReferenceImportReserveResult.Rejected(
                         ReferenceImportReserveRejectionReason.POSE_ID_CONFLICT,
-                    ) || result == ReferenceImportReserveResult.Rejected(
-                        ReferenceImportReserveRejectionReason.POSE_INDEX_CONFLICT,
                     )
                 },
             )
             assertEquals(1, sqlite.intentCount())
+        } finally {
+            executor.shutdownNow()
+            second.close()
+        }
+    }
+
+    @Test
+    fun concurrentDistinctReservationsAtNineteenHaveOneFinalCapacityWinner() {
+        val first = openDatabase()
+        val sqlite = first.openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        (0 until 19).forEach { poseIndex ->
+            seedValidatedPose(sqlite, SHOOT_ID, "existing-pose-$poseIndex", poseIndex)
+        }
+        val second = AppDatabase.create(context, databaseName)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val calls = listOf(
+                Callable {
+                    RoomReferenceImportRepository(first).reserveImport(
+                        reservation(poseId = "capacity-a", token = "capacity-token-a"),
+                        10L,
+                    )
+                },
+                Callable {
+                    RoomReferenceImportRepository(second).reserveImport(
+                        reservation(poseId = "capacity-b", token = "capacity-token-b"),
+                        10L,
+                    )
+                },
+            )
+            val results = executor.invokeAll(calls).map { future -> future.get() }
+
+            assertEquals(1, results.count { result -> result == ReferenceImportReserveResult.Reserved })
+            assertEquals(
+                1,
+                results.count { result ->
+                    result == ReferenceImportReserveResult.Rejected(
+                        ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+                    )
+                },
+            )
+            assertEquals(1, sqlite.intentCount())
+            assertEquals(1, sqlite.fileOperationCount())
+            assertEquals(19, sqlite.poseCount(SHOOT_ID))
         } finally {
             executor.shutdownNow()
             second.close()
@@ -637,11 +747,10 @@ class RoomReferenceImportRepositoryAndroidTest {
         repository: RoomReferenceImportRepository,
         shootId: String,
         poseId: String,
-        poseIndex: Int,
         token: String,
         startAt: Long,
     ) {
-        val reservation = reservation(shootId, poseId, poseIndex, token)
+        val reservation = reservation(shootId, poseId, token)
         assertEquals(
             ReferenceImportReserveResult.Reserved,
             repository.reserveImport(reservation, startAt),
@@ -683,27 +792,23 @@ class RoomReferenceImportRepositoryAndroidTest {
     private fun reservation(
         shootId: String = SHOOT_ID,
         poseId: String = POSE_ID,
-        poseIndex: Int = 4,
         token: String = TOKEN,
     ): ReferenceImportReservation = ReferenceImportReservation(
         importToken = ReferenceImportToken(token),
         shootId = shootId,
         poseId = poseId,
-        poseIndex = poseIndex,
         relativeAssetPath = ReferenceImportAssetPath.forToken(ReferenceImportToken(token)),
     )
 
     private fun evidence(
         shootId: String = SHOOT_ID,
         poseId: String = POSE_ID,
-        poseIndex: Int = 4,
         token: String = TOKEN,
         label: String = "Reference pose",
     ): ReferenceImportEvidence = ReferenceImportEvidence(
         importToken = ReferenceImportToken(token),
         shootId = shootId,
         poseId = poseId,
-        poseIndex = poseIndex,
         label = label,
         relativeAssetPath = ReferenceImportAssetPath.forToken(ReferenceImportToken(token)),
         mirrorAllowed = true,
@@ -749,6 +854,39 @@ class RoomReferenceImportRepositoryAndroidTest {
                 "model_metadata, preprocessing_metadata, landmark_payload, coordinate_metadata) " +
                 "VALUES (?, ?, ?, 'Existing', NULL, 0, 'VALID', NULL, NULL, NULL, NULL, NULL)",
             arrayOf<Any>(shootId, poseIndex, poseId),
+        )
+    }
+
+    private fun seedValidatedPose(
+        sqlite: SupportSQLiteDatabase,
+        shootId: String,
+        poseId: String,
+        poseIndex: Int,
+    ) {
+        val validated = evidence(
+            shootId = shootId,
+            poseId = poseId,
+            token = "existing-token-$poseIndex",
+            label = "Existing reference",
+        )
+        sqlite.execSQL(
+            "INSERT INTO shoot_poses (shoot_id, pose_index, pose_id, label, " +
+                "reference_asset_path, mirror_allowed, validation_state, detector_metadata, " +
+                "model_metadata, preprocessing_metadata, landmark_payload, coordinate_metadata) " +
+                "VALUES (?, ?, ?, ?, ?, ?, 'VALIDATED', ?, ?, ?, ?, ?)",
+            arrayOf<Any>(
+                validated.shootId,
+                poseIndex,
+                validated.poseId,
+                validated.label,
+                validated.relativeAssetPath,
+                1,
+                validated.detectorMetadata,
+                validated.modelMetadata,
+                validated.preprocessingMetadata,
+                validated.landmarkPayload.value,
+                validated.coordinateMetadata,
+            ),
         )
     }
 

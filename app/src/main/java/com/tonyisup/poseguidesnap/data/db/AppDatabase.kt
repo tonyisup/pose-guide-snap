@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReferenceImportIntentEntity::class,
         ReferenceImportFileOperationEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -33,6 +33,8 @@ abstract class AppDatabase : RoomDatabase() {
     internal abstract fun referenceImportDao(): ReferenceImportDao
 
     internal abstract fun referenceImportFileOperationDao(): ReferenceImportFileOperationDao
+
+    internal abstract fun shootPreparationDao(): ShootPreparationDao
 
     companion object {
         const val DATABASE_NAME = "pose_guide_snap_private.db"
@@ -106,13 +108,186 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE `reference_import_intents_v3_new` (
+                        `import_token` TEXT NOT NULL,
+                        `shoot_id` TEXT NOT NULL,
+                        `pose_id` TEXT NOT NULL,
+                        `relative_asset_path` TEXT NOT NULL,
+                        `lifecycle_state` TEXT NOT NULL,
+                        `created_at_epoch_millis` INTEGER NOT NULL,
+                        `updated_at_epoch_millis` INTEGER NOT NULL,
+                        `asset_ready_at_epoch_millis` INTEGER,
+                        `terminal_at_epoch_millis` INTEGER,
+                        PRIMARY KEY(`import_token`),
+                        FOREIGN KEY(`shoot_id`) REFERENCES `shoots`(`shoot_id`)
+                            ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE `reference_import_file_operations_v3_new` (
+                        `import_token` TEXT NOT NULL,
+                        `relative_asset_path` TEXT NOT NULL,
+                        `relative_temp_path` TEXT NOT NULL,
+                        `relative_quarantine_path` TEXT NOT NULL,
+                        `stage` TEXT NOT NULL,
+                        `byte_count` INTEGER,
+                        `sha256` TEXT,
+                        `last_failure_code` TEXT,
+                        `reconciliation_required` INTEGER NOT NULL,
+                        `created_at_epoch_millis` INTEGER NOT NULL,
+                        `updated_at_epoch_millis` INTEGER NOT NULL,
+                        PRIMARY KEY(`import_token`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `reference_import_intents_v3_new` (
+                        `import_token`,
+                        `shoot_id`,
+                        `pose_id`,
+                        `relative_asset_path`,
+                        `lifecycle_state`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`,
+                        `asset_ready_at_epoch_millis`,
+                        `terminal_at_epoch_millis`
+                    )
+                    SELECT
+                        `import_token`,
+                        `shoot_id`,
+                        `pose_id`,
+                        `relative_asset_path`,
+                        `lifecycle_state`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`,
+                        `asset_ready_at_epoch_millis`,
+                        `terminal_at_epoch_millis`
+                    FROM `reference_import_intents`
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `reference_import_file_operations_v3_new` (
+                        `import_token`,
+                        `relative_asset_path`,
+                        `relative_temp_path`,
+                        `relative_quarantine_path`,
+                        `stage`,
+                        `byte_count`,
+                        `sha256`,
+                        `last_failure_code`,
+                        `reconciliation_required`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`
+                    )
+                    SELECT
+                        `import_token`,
+                        `relative_asset_path`,
+                        `relative_temp_path`,
+                        `relative_quarantine_path`,
+                        `stage`,
+                        `byte_count`,
+                        `sha256`,
+                        `last_failure_code`,
+                        `reconciliation_required`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`
+                    FROM `reference_import_file_operations`
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE `reference_import_file_operations`")
+                db.execSQL("DROP TABLE `reference_import_intents`")
+                db.execSQL(
+                    "ALTER TABLE `reference_import_intents_v3_new` " +
+                        "RENAME TO `reference_import_intents`",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE `reference_import_file_operations` (
+                        `import_token` TEXT NOT NULL,
+                        `relative_asset_path` TEXT NOT NULL,
+                        `relative_temp_path` TEXT NOT NULL,
+                        `relative_quarantine_path` TEXT NOT NULL,
+                        `stage` TEXT NOT NULL,
+                        `byte_count` INTEGER,
+                        `sha256` TEXT,
+                        `last_failure_code` TEXT,
+                        `reconciliation_required` INTEGER NOT NULL,
+                        `created_at_epoch_millis` INTEGER NOT NULL,
+                        `updated_at_epoch_millis` INTEGER NOT NULL,
+                        PRIMARY KEY(`import_token`),
+                        FOREIGN KEY(`import_token`) REFERENCES `reference_import_intents`(`import_token`)
+                            ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `reference_import_file_operations` (
+                        `import_token`,
+                        `relative_asset_path`,
+                        `relative_temp_path`,
+                        `relative_quarantine_path`,
+                        `stage`,
+                        `byte_count`,
+                        `sha256`,
+                        `last_failure_code`,
+                        `reconciliation_required`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`
+                    )
+                    SELECT
+                        `import_token`,
+                        `relative_asset_path`,
+                        `relative_temp_path`,
+                        `relative_quarantine_path`,
+                        `stage`,
+                        `byte_count`,
+                        `sha256`,
+                        `last_failure_code`,
+                        `reconciliation_required`,
+                        `created_at_epoch_millis`,
+                        `updated_at_epoch_millis`
+                    FROM `reference_import_file_operations_v3_new`
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE `reference_import_file_operations_v3_new`")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX `index_reference_import_intents_shoot_id_pose_id` ON " +
+                        "`reference_import_intents` (`shoot_id`, `pose_id`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX `index_reference_import_intents_lifecycle_state` ON " +
+                        "`reference_import_intents` (`lifecycle_state`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX `index_reference_import_file_operations_stage` ON " +
+                        "`reference_import_file_operations` (`stage`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX " +
+                        "`index_reference_import_file_operations_reconciliation_required` ON " +
+                        "`reference_import_file_operations` (`reconciliation_required`)",
+                )
+            }
+        }
+
         private val AUTHORITY_SCHEMA_CALLBACK = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 AuthorityOrdinalTriggers.install(db)
+                ActiveSessionAuthorityTriggers.install(db)
             }
 
             override fun onOpen(db: SupportSQLiteDatabase) {
                 AuthorityOrdinalTriggers.install(db)
+                ActiveSessionAuthorityTriggers.install(db)
             }
         }
 
@@ -126,7 +301,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 databaseName,
-            ).addMigrations(MIGRATION_1_2)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(AUTHORITY_SCHEMA_CALLBACK)
                 .build()
     }

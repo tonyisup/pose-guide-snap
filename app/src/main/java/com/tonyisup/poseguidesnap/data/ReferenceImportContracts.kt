@@ -56,11 +56,10 @@ data class ReferenceImportReservation(
     val importToken: ReferenceImportToken,
     val shootId: String,
     val poseId: String,
-    val poseIndex: Int,
     val relativeAssetPath: String,
 ) {
     init {
-        requireOwnershipIdentity(shootId, poseId, poseIndex)
+        requireOwnershipIdentity(shootId, poseId)
         require(
             relativeAssetPath == ReferenceImportAssetPath.forToken(importToken),
         ) { "reference asset path must exactly match its deterministic identity" }
@@ -73,7 +72,6 @@ data class ReferenceImportEvidence(
     val importToken: ReferenceImportToken,
     val shootId: String,
     val poseId: String,
-    val poseIndex: Int,
     val label: String,
     val relativeAssetPath: String,
     val mirrorAllowed: Boolean,
@@ -84,7 +82,7 @@ data class ReferenceImportEvidence(
     val coordinateMetadata: String,
 ) {
     init {
-        requireOwnershipIdentity(shootId, poseId, poseIndex)
+        requireOwnershipIdentity(shootId, poseId)
         require(label.isNotBlank() && !label.containsProviderUri()) {
             "reference label must be nonblank and URI-free"
         }
@@ -123,14 +121,13 @@ data class PendingReferenceImport(
     val importToken: ReferenceImportToken,
     val shootId: String,
     val poseId: String,
-    val poseIndex: Int,
     val relativeAssetPath: String,
     val lifecycle: ReferenceImportLifecycle,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
 ) {
     init {
-        requireOwnershipIdentity(shootId, poseId, poseIndex)
+        requireOwnershipIdentity(shootId, poseId)
         require(createdAtEpochMillis >= 0L && updatedAtEpochMillis >= createdAtEpochMillis) {
             "pending reference import timestamps must be ordered and nonnegative"
         }
@@ -147,8 +144,12 @@ sealed interface ReferenceImportReserveResult {
         override fun toString(): String = "ReferenceImportReserveResult.Reserved"
     }
 
-    data object AlreadyCommitted : ReferenceImportReserveResult {
-        override fun toString(): String = "ReferenceImportReserveResult.AlreadyCommitted"
+    data class AlreadyCommitted(val poseIndex: Int) : ReferenceImportReserveResult {
+        init {
+            require(poseIndex >= 0) { "committed reference pose index must be nonnegative" }
+        }
+
+        override fun toString(): String = "ReferenceImportReserveResult.AlreadyCommitted(redacted)"
     }
 
     data object ExistingWorkRequiresReconciliation : ReferenceImportReserveResult {
@@ -163,35 +164,14 @@ sealed interface ReferenceImportReserveResult {
     }
 }
 
-sealed interface ReferenceImportRestartCleanedResult {
-    data object Restarted : ReferenceImportRestartCleanedResult {
-        override fun toString(): String = "ReferenceImportRestartCleanedResult.Restarted"
-    }
-
-    data class Rejected(val reason: ReferenceImportRestartCleanedRejectionReason) :
-        ReferenceImportRestartCleanedResult {
-        override fun toString(): String =
-            "ReferenceImportRestartCleanedResult.Rejected(reason=${reason.name})"
-    }
-}
-
-enum class ReferenceImportRestartCleanedRejectionReason {
-    INVALID_TIMESTAMP,
-    UNKNOWN_INTENT,
-    INTENT_CONFLICT,
-    WRONG_STATE,
-    ACTIVE_POSE_EXISTS,
-    TRANSACTION_CAS_FAILED,
-}
-
 enum class ReferenceImportReserveRejectionReason {
     INVALID_TIMESTAMP,
     UNKNOWN_SHOOT,
     SHOOT_NOT_ACTIVE,
     TOKEN_CONFLICT,
     POSE_ID_CONFLICT,
-    POSE_INDEX_CONFLICT,
     POSE_ALREADY_EXISTS,
+    PLAYLIST_FULL,
     AUTHORITY_INCONSISTENT,
 }
 
@@ -220,12 +200,20 @@ enum class ReferenceImportAssetReadyRejectionReason {
 }
 
 sealed interface ReferenceImportCommitResult {
-    data object Committed : ReferenceImportCommitResult {
-        override fun toString(): String = "ReferenceImportCommitResult.Committed"
+    data class Committed(val poseIndex: Int) : ReferenceImportCommitResult {
+        init {
+            require(poseIndex >= 0) { "committed reference pose index must be nonnegative" }
+        }
+
+        override fun toString(): String = "ReferenceImportCommitResult.Committed(redacted)"
     }
 
-    data object AlreadyCommitted : ReferenceImportCommitResult {
-        override fun toString(): String = "ReferenceImportCommitResult.AlreadyCommitted"
+    data class AlreadyCommitted(val poseIndex: Int) : ReferenceImportCommitResult {
+        init {
+            require(poseIndex >= 0) { "committed reference pose index must be nonnegative" }
+        }
+
+        override fun toString(): String = "ReferenceImportCommitResult.AlreadyCommitted(redacted)"
     }
 
     data object BlockedByDeletion : ReferenceImportCommitResult {
@@ -246,7 +234,6 @@ enum class ReferenceImportCommitRejectionReason {
     WRONG_STATE,
     ACTIVE_SESSION,
     POSE_ID_CONFLICT,
-    POSE_INDEX_CONFLICT,
     EVIDENCE_CONFLICT,
     TRANSACTION_CAS_FAILED,
     AUTHORITY_INCONSISTENT,
@@ -294,10 +281,9 @@ private fun isSafeIdentitySegment(value: String): Boolean =
                 character == '.'
         }
 
-private fun requireOwnershipIdentity(shootId: String, poseId: String, poseIndex: Int) {
+private fun requireOwnershipIdentity(shootId: String, poseId: String) {
     require(isSafeIdentitySegment(shootId)) { "reference shoot id must be a safe identity" }
     require(isSafeIdentitySegment(poseId)) { "reference pose id must be a safe identity" }
-    require(poseIndex >= 0) { "reference pose index must be nonnegative" }
 }
 
 private fun String.containsProviderUri(): Boolean = contains("content://", ignoreCase = true)

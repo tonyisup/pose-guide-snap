@@ -43,7 +43,7 @@ class ReferencePickerResultHandlerAndroidTest {
                     importerCalls.incrementAndGet()
                     importerThread.set(Thread.currentThread())
                     assertSame(source, request.source)
-                    ReferencePoseImportResult.Succeeded(request.poseId, request.poseIndex)
+                    ReferencePoseImportResult.Succeeded(request.poseId, 2)
                 },
                 sourceFactory = ReferencePickerByteSourceFactory { selected ->
                     factoryCalls.incrementAndGet()
@@ -87,10 +87,8 @@ class ReferencePickerResultHandlerAndroidTest {
         importToken = ReferenceImportToken("token-android-secret"),
         shootId = "shoot-android",
         poseId = "pose-android",
-        poseIndex = 2,
         label = "label-android-secret",
         mirrorAllowed = false,
-        restartCleanedImport = true,
         timeline = ReferenceImportLedgerTimeline(
             reservedAtEpochMillis = 1L,
             writingTempAtEpochMillis = 2L,
