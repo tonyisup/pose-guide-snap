@@ -11,7 +11,7 @@ Reference photos and live camera frames may contain sensitive personal images. T
 
 A monocular pose detector is still limited when run locally: it cannot perfectly reconstruct depth, occluded joints, hand shape, or viewpoint. Moving inference to a server would not justify stronger product claims.
 
-The repository now bundles an exact MoveNet MultiPose model and implements a direct LiteRT detector plus pure mapper. Authorized Pixel 6 instrumentation has exercised the fixed public reference, live rear-camera inference, and aligned live/reference skeleton rendering. This bounded evidence does not establish reference import, durable capture confirmation/advancement, calibration, or the complete guided workflow.
+The repository now bundles an exact MoveNet MultiPose model and implements a direct LiteRT detector plus pure mapper. Authorized Pixel 6 instrumentation has exercised the fixed public reference, live rear-camera inference, aligned live/reference skeleton rendering, and Task 11B app-private reference analysis. This bounded evidence establishes the transactional import backend but not shoot-editor/picker UI, durable capture confirmation/advancement integration, calibration, or the complete guided workflow.
 
 ## Decision
 

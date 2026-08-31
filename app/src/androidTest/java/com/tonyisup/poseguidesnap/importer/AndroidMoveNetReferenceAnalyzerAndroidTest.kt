@@ -20,10 +20,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Compile-only Task 11B acceptance contract for app-private static-reference analysis.
+ * Task 11B acceptance contract for app-private static-reference analysis.
  *
- * This class intentionally is not run by this task. It preserves the public instrumentation fixture,
- * copies it through the production store, dispatches blocking inference off-main, and removes the
+ * The authorized Pixel gate preserves the public instrumentation fixture, copies it through the
+ * production store, dispatches blocking inference off-main, and removes the
  * exact owned publication afterward without reading any provider URI or device-owned image.
  */
 @RunWith(AndroidJUnit4::class)
@@ -34,7 +34,7 @@ class AndroidMoveNetReferenceAnalyzerAndroidTest {
         val context = instrumentation.targetContext
         val fixtureAssets = instrumentation.context.assets
         val store = ReferenceAssetStore(context.noBackupFilesDir)
-        val token = ReferenceImportToken("compile-only-${UUID.randomUUID()}")
+        val token = ReferenceImportToken("task11b-acceptance-${UUID.randomUUID()}")
         var publication: PublishedReferenceAsset? = null
         var detector: MoveNetPoseDetector? = null
         val executor = Executors.newSingleThreadExecutor()

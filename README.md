@@ -1,8 +1,8 @@
 # Pose Guide Snap
 
-> **Project status: Task 11A's Room authority is committed, host-reviewed, and Pixel-exercised. Gate 2 remains incomplete.**
+> **Project status: Tasks 11A and 11B are committed, host-reviewed, and Pixel-exercised. Gate 2 remains incomplete.**
 >
-> Task 11A landed in `53354660c77e51b039e86c091d644faee209593d` after specification PASS and quality/security APPROVED on exact staged digest `bae48fff2ed2cd4f3cda1c69de46f9114f26e84c088c7cc155d1acadeef415d8`. It adds a backup-excluded Room V1 authority schema, deletion-aware attempt registration and capture-start authorization, atomic exactly-three-output confirmation/advancement/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim compare-and-set authority. It still has no product shutter, auto-capture coordinator, reference import, MediaStore I/O worker, physical deletion, TTS/audio, deletion UI, or end-to-end guided workflow.
+> Task 11A landed in `53354660c77e51b039e86c091d644faee209593d` with backup-excluded Room capture authority. Task 11B landed in `d368e96a0335b1281471faca706287c4980652f0` after specification and quality/security PASS on exact candidate digest `d0795a35e76b3dbf0ae89faaac7aa367500aac59ed12aa0bf01cc9bc17a44932`. It adds Room V2 transactional reference-import intent, a persisted filesystem-operation ledger, no-clobber app-private publication, local MoveNet validation, and restart-safe cleanup/quarantine recovery. There is still no shoot-editor UI, user-facing picker flow, product shutter, auto-capture coordinator, MediaStore I/O worker, physical deletion UI, TTS/audio, or end-to-end guided workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -10,9 +10,9 @@ Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP w
 
 The provisional application ID is `com.tonyisup.poseguidesnap`; the prototype version is `0.1.0` (`versionCode` 1), with `minSdk 29` and target SDK 37. It requests `android.permission.CAMERA` and AndroidX's app-signature `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network, cloud, or analytics library. The manifest disables Android backup and points to fail-closed legacy and API 31+ rules that exclude every supported app storage domain from cloud backup, device transfer, and the compile-SDK-37 iOS cross-platform transfer surface.
 
-Verified Task 10 and Task 11A evidence:
+Verified Task 10, Task 11A, and Task 11B evidence:
 
-- JVM suite: 266/266 GREEN; lint and debug main/instrumentation builds GREEN.
+- Task 10 JVM suite: 266/266 GREEN; lint and debug main/instrumentation builds GREEN.
 - Reproducible APK SHA-256 values: main `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad`; instrumentation `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`.
 - Authorized Pixel 6 relevant instrumentation: 15/15 GREEN. The fixed attributed bundled reference, aligned live/reference skeletons, real rear-camera candidate capture, no-clobber behavior, zero private capture residue, and 400–500 ms camera release all passed.
 - Final 60-second run: mean CPU 148.08%, peak 162%, thermal status 0, battery 31.0→30.8°C, no fatal/ANR, and bounded memory. It did **not** improve over the pre-cadence baseline; the 15-minute Gate 4 soak remains pending.
@@ -20,8 +20,10 @@ Verified Task 10 and Task 11A evidence:
 - Task 11A JVM suite: 307/307 GREEN; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 schema SHA-256: `e5eb94f4ff96944cc9de1aa5c2f6e8e326ba5caaa224c46f3247056cb1c33ab8`.
 - Across explicitly authorized checkpoint runs, all 93 current Room-authority instrumentation methods passed: schema/runtime 4, registration/start 22, confirmation/rollback 33, and deletion/claim/restart/concurrency 34. The final hardening APK ran the 34-method Task 11A.4 class plus three focused negative-generation regressions; production database entries and test-database residue were zero after both runs.
 - Only a fresh `PENDING → CLAIMED` compare-and-set grants external-create authority. Persisted claim replay is informational and reconciliation-required; Task 11A performs no MediaStore insertion or file deletion.
+- Task 11B JVM suite: 413/413 GREEN; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 remained byte-identical while V2 added the reference-import intent and file-operation ledger.
+- The exact Task 11B APK pair passed 25/25 targeted Pixel 6 instrumentation methods covering V1→V2 migration, ledger transitions, no-clobber generated-byte publication, transaction rollback, restart reconciliation, picker-result dispatch/redaction, and public-fixture MoveNet analysis. Test databases, Room lock files, reference assets, and the instrumentation package were removed and verified absent.
 
-The internal camera candidate-capture mechanics are not yet connected to the durable Room protocol. Task 11B adds transactional reference import; Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
+The internal camera candidate-capture mechanics are not yet connected to the durable Room protocol. Task 11B's import backend is implemented, but Task 12 still must expose shoot creation, picker import, ordering, rejection, and retry states. Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
@@ -30,7 +32,7 @@ From the repository root on the [verified development environment](docs/DEVELOPM
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 camera and Task 11A Room-authority slices, not their end-to-end integration.
+The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 camera, Task 11A Room-authority, and Task 11B reference-import slices, not their end-to-end integration.
 
 ## Approved MVP boundary
 
@@ -60,6 +62,7 @@ These are product and architecture commitments, not claims of implemented behavi
 | [Model and runtime](docs/MODELS.md) | Exact MoveNet/LiteRT pins, provenance, privacy decision, 2D limitations, and upgrade gates |
 | [ADR 0001: Android native first](docs/adr/0001-android-native-first.md) | Reversible platform decision and consequences |
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
+| [ADR 0003: Persisted reference-import file ledger](docs/adr/0003-persisted-reference-import-file-ledger.md) | Durable cross-storage import authority and restart-recovery contract |
 | [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates, amended by the approved telemetry-free MoveNet/LiteRT revision |
 
 Install and product-usage instructions will be added only after those workflows exist and have been verified on an authorized target.

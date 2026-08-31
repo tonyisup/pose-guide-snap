@@ -1,6 +1,6 @@
 # ADR 0003: Persisted Reference-Import File Ledger
 
-- **Status:** Accepted; implementation and Pixel 6 gate complete, pending commit
+- **Status:** Accepted and implemented in `d368e96a0335b1281471faca706287c4980652f0`; Pixel 6 gate complete
 - **Date:** 2026-08-30
 - **Decision owner:** Product/architecture owner approved redesign after the third rejected Task 11B candidate
 - **Scope:** Task 11B reference import only
@@ -24,7 +24,7 @@ The problem is not another missing conditional. The architecture lacks a durable
 
 ## Decision
 
-Task 11B will use a **persisted filesystem-operation ledger in Room**. The ledger is separate from the logical import lifecycle.
+Task 11B uses a **persisted filesystem-operation ledger in Room**. The ledger is separate from the logical import lifecycle.
 
 Room records a stage before and after each irreversible filesystem boundary. Restart reconciliation uses the persisted stage plus exact token-derived paths; it does not infer policy from arbitrary directory contents and does not scan for matching filenames.
 
@@ -161,8 +161,8 @@ The authorized Pixel 6 gate must run the exact staged APK and prove V1→V2 migr
 
 ## Consequences
 
-- Task 11B becomes larger, but the ownership model becomes executable and reviewable.
-- Room V2 is still uncommitted, so the schema may be corrected without a second migration.
+- Task 11B is larger than the original import slice, but the ownership model is executable and reviewable.
+- Room V2 is committed; future schema changes require an explicit migration from V2.
 - Filename inference is demoted to evidence checked against the ledger, not authority.
 - The existing rejected Task 11B candidates remain preserved in Git stashes for audit.
 - Task 12 UI remains deferred and must call the final import/startup reconciliation APIs rather than reimplement policy.

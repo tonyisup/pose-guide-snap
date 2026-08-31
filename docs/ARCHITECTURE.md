@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** Room now owns attempt registration/start authorization, atomic confirmation/advance/receipt/outbox persistence, deletion-generation barriers, and targeted export-claim authority. Transactional reference import remains Task 11B, and unified filesystem coordination plus MediaStore I/O remains Task 14. Gate 2 is not yet passed.
+> **Project status: Tasks 1–11B are committed; Tasks 11A and 11B are host-reviewed and Pixel-exercised.** Room owns capture attempt/confirmation/advance/outbox authority and transactional reference-import intent plus an exact filesystem-operation ledger. The import backend now performs no-clobber app-private publication, local validation, and restart-safe cleanup/quarantine recovery. Shoot-editor/picker UI remains Task 12, and unified capture-filesystem coordination plus MediaStore I/O remains Task 14. Gate 2 is not yet passed.
 
 ## Fixed MVP decisions
 
@@ -50,7 +50,7 @@ PoseDetector(blocking, off-UI) -> PoseObservation -> PoseMatcher
                               MediaStore export outbox worker
 ```
 
-CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. Task 11A implements the separate durable Room authority boundary, but the internal camera path has no user-facing shutter and is not yet connected to Room confirmation, session advancement, or export. Task 14 performs that integration and adds MediaStore I/O. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
+CameraX now provides rear preview, CPU image analysis, and internal still-capture mechanics through one shared viewport. The implemented pose boundary runs the exact bundled MoveNet MultiPose Lightning model through direct LiteRT `1.4.2`. Its detector is deliberately blocking and accepts only upright bitmaps; the camera adapter owns one bounded off-UI worker, keep-latest backpressure, a fixed pre-conversion cadence gate, rotation/crop conversion, per-frame failure containment, `ImageProxy` closure, and sequential exactly-three candidate capture. Task 11A implements the separate durable Room capture authority boundary. Task 11B implements transactional reference import through Room V2, exact journaled app-private file operations, off-main MoveNet analysis, and ledger-driven restart recovery. The camera path still has no user-facing shutter and is not connected to Room confirmation, session advancement, or export; Task 14 performs that integration and adds MediaStore I/O. DataStore is reserved for small preferences such as voice enablement, speech cadence, dwell duration, and match thresholds.
 
 ## State and policy ownership
 
@@ -144,6 +144,8 @@ Task 11A implements shoot, ordered-pose, session, and these capture authority re
 - `CaptureExportOutbox`: exactly one committed outbox per command token.
 - `CaptureExportOutput`: composite key `(commandToken, burstOrdinal)`, ordinal constraint 0–2, exact target collection/volume, intended metadata, pending/claimed/create-started/exported/reconciliation-required state, unique claim token, durably recorded exact URI when known, and retry/diagnostic metadata. Exactly three rows must exist before the owning confirmation transaction commits.
 
+Task 11B extends Room to V2 with one logical reference-import intent and one exact file-operation-ledger row per token. The ledger records deterministic relative paths, a closed pre/post-effect stage vocabulary, injected timestamps, synced byte-count/hash evidence, and a path-free reconciliation failure code. App-private publication uses exact token-derived paths and no-clobber reservation/temp/final semantics. Startup enumerates retryable ledger rows and resumes only from the persisted stage plus exact evidence; it never scans arbitrary filenames or rereads a provider to invent authority. A validated pose becomes active only after the durable asset and detector/provenance evidence satisfy the final Room transaction.
+
 Selected references and every confirmed capture are authoritative in app-private storage; live analysis frames are never persisted. Filesystem operations do not claim multi-file atomicity. After all three per-file no-clobber publications are durable, one Room transaction atomically owns logical confirmation, the three private-output records, exactly-once advancement, receipt application, and outbox creation.
 
 The export worker consumes only committed outbox work and uses a durable compare-and-set claim before any create. It stores the returned exact URI before publication and never uses display name or relative path as mutation authority. A claimed/create-started row with no durable URI is reconciliation-required forever unless explicitly resolved; timeout or restart cannot authorize a second create.
@@ -164,3 +166,4 @@ This direction is enforced with source-level dependency tests and remains a requ
 
 - [ADR 0001: Android native first](adr/0001-android-native-first.md)
 - [ADR 0002: On-device pose processing](adr/0002-on-device-pose-processing.md)
+- [ADR 0003: Persisted reference-import file ledger](adr/0003-persisted-reference-import-file-ledger.md)

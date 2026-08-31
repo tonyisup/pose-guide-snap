@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–11A are committed; Task 11A is host-reviewed and Pixel-exercised.** The app now has durable Room attempt, confirmation/advance/receipt/outbox, deletion-barrier, and targeted export-claim authority. Gate 2 remains incomplete: there is no user-facing shutter or auto-capture coordinator, reference import, private-file/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Room authority is Task 11A, transactional reference import is Task 11B, and the unified durable coordinator/export protocol remains Task 14.
+> **Project status: Tasks 1–11B are committed; Tasks 11A and 11B are host-reviewed and Pixel-exercised.** The app now has durable Room capture authority plus transactional app-private reference import with a persisted filesystem-operation ledger and restart recovery. Gate 2 remains incomplete: there is no shoot-editor/user-facing picker UI, user-facing shutter or auto-capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Preparation UI remains Task 12, and the unified durable capture coordinator/export protocol remains Task 14.
 
 ## Product goal
 
@@ -100,3 +100,4 @@ Deferral is not a promise that a feature will ship. Each item needs a new produc
 - [Privacy](PRIVACY.md)
 - [ADR 0001: Android native first](adr/0001-android-native-first.md)
 - [ADR 0002: On-device pose processing](adr/0002-on-device-pose-processing.md)
+- [ADR 0003: Persisted reference-import file ledger](adr/0003-persisted-reference-import-file-ledger.md)
