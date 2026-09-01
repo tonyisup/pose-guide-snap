@@ -2,6 +2,8 @@ package com.tonyisup.poseguidesnap.ui.editor
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import com.tonyisup.poseguidesnap.data.JournaledReferenceAssetStore
 import com.tonyisup.poseguidesnap.data.RoomReferenceImportFileJournal
 import com.tonyisup.poseguidesnap.data.RoomReferenceImportRepository
@@ -24,6 +26,7 @@ import com.tonyisup.poseguidesnap.domain.model.PoseObservation
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 internal class ShootEditorRuntimeParts<Workflow, PickerCoordinator>(
     val workflow: Workflow,
@@ -141,11 +144,19 @@ internal class LazyMoveNetReferenceDetectorOwner(
     override fun toString(): String = "LazyMoveNetReferenceDetectorOwner(redacted)"
 }
 
+private class RetainedPickerRequest(
+    val operationId: ShootEditorOperationId,
+    val launch: ShootEditorPickerLaunch,
+) {
+    override fun toString(): String = "RetainedPickerRequest(redacted)"
+}
+
 internal class ShootEditorProductionOwner(
     shootId: String,
     workflow: ShootEditorWorkflowPort,
     internal val pickerCoordinator: ShootEditorPickerCoordinator,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val callbackDispatcher: CoroutineDispatcher = dispatcher,
     closeAuthority: () -> Unit,
 ) : ShootEditorViewModel(
     shootId = shootId,
@@ -153,7 +164,56 @@ internal class ShootEditorProductionOwner(
     dispatcher = dispatcher,
     closeAuthority = closeAuthority,
 ) {
+    private val pickerLock = Any()
+    private var pendingPicker: RetainedPickerRequest? = null
+
+    internal fun retainPickerRequest(
+        operationId: ShootEditorOperationId,
+        launch: ShootEditorPickerLaunch,
+    ): Boolean = synchronized(pickerLock) {
+        val current = state.value
+        if (
+            pendingPicker != null ||
+            current !is ShootEditorUiState.Importing ||
+            current.operationId != operationId
+        ) {
+            false
+        } else {
+            pendingPicker = RetainedPickerRequest(operationId, launch)
+            true
+        }
+    }
+
+    internal fun onPhotoPickerCallback(uri: Uri?) {
+        val pending = consumePickerRequest() ?: return
+        viewModelScope.launch(callbackDispatcher) {
+            val result = pickerCoordinator.handle(uri, pending.launch)
+            onReferencePickerResult(pending.operationId, result)
+        }
+    }
+
+    internal fun onPhotoPickerLaunchFailed(operationId: ShootEditorOperationId) {
+        val pending = consumePickerRequest(operationId) ?: return
+        onReferencePickerResult(pending.operationId, com.tonyisup.poseguidesnap.importer.ReferencePickerResult.Cancelled)
+    }
+
+    override fun onCleared() {
+        synchronized(pickerLock) { pendingPicker = null }
+        super.onCleared()
+    }
+
     override fun toString(): String = "ShootEditorProductionOwner(redacted)"
+
+    private fun consumePickerRequest(
+        expectedOperationId: ShootEditorOperationId? = null,
+    ): RetainedPickerRequest? = synchronized(pickerLock) {
+        val current = pendingPicker ?: return@synchronized null
+        if (expectedOperationId != null && current.operationId != expectedOperationId) {
+            return@synchronized null
+        }
+        pendingPicker = null
+        current
+    }
 }
 
 /** Creates resources only when a retained editor ViewModel owner is first instantiated. */

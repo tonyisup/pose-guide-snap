@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.ui.editor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
+import com.tonyisup.poseguidesnap.data.ShootPreparationLifecycle
 import com.tonyisup.poseguidesnap.data.ShootReorderResult
 import com.tonyisup.poseguidesnap.importer.ReferenceImportAllocationBlockReason
 import com.tonyisup.poseguidesnap.importer.ReferenceImportOutcome
@@ -13,8 +14,11 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -92,18 +96,56 @@ class ShootEditorProductionFactoryTest {
         assertSame(first, recreated)
         assertSame(pickerCoordinator, first.pickerCoordinator)
         assertEquals(
-            setOf("pickerCoordinator"),
+            setOf("pickerCoordinator", "callbackDispatcher", "pickerLock", "pendingPicker"),
             ShootEditorProductionOwner::class.java.declaredFields
                 .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .map { it.name }
                 .toSet(),
         )
         assertEquals(1, creationCount.get())
+        assertTrue(
+            ShootEditorProductionOwner::class.java.declaredFields.none { field ->
+                android.net.Uri::class.java.isAssignableFrom(field.type)
+            },
+        )
         assertEquals(0, closeCount.get())
 
         store.clear()
         store.clear()
         assertEquals(1, closeCount.get())
+    }
+
+    @Test
+    fun retainedOwnerSettlesPickerCallbackAfterDestinationRecreation() = runTest {
+        val workflow = RetainedPickerWorkflow()
+        val pickerCoordinator = pickerCoordinator()
+        val owner = retainedOwner(
+            workflow,
+            pickerCoordinator,
+            close = {},
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+        )
+        owner.requestImport("Side")
+        val effect = owner.effects.first() as ShootEditorEffect.LaunchPhotoPicker
+        assertTrue(owner.state.value is ShootEditorUiState.Importing)
+        assertTrue(owner.retainPickerRequest(effect.operationId, effect.launch))
+
+        val store = ViewModelStore()
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = owner as T
+        }
+        val first = ViewModelProvider(store, factory)[ShootEditorProductionOwner::class.java]
+        val recreated = ViewModelProvider(store, factory)[ShootEditorProductionOwner::class.java]
+        assertSame(first, recreated)
+
+        recreated.onPhotoPickerCallback(null)
+        runCurrent()
+
+        val settled = recreated.state.value as ShootEditorUiState.Content
+        assertEquals(ShootEditorFeedbackCode.IMPORT_CANCELLED, settled.data.feedback?.code)
+        assertFalse(settled.startEligibility == ShootEditorStartEligibility.OPERATION_IN_PROGRESS)
+        store.clear()
     }
 
     @Test
@@ -226,6 +268,44 @@ class ShootEditorProductionFactoryTest {
         fun clear() { closeAction?.invoke(); closeAction = null }
     }
 
+    private class TestPickerLaunch : ShootEditorPickerLaunch()
+
+    private class RetainedPickerWorkflow : ShootEditorWorkflowPort {
+        private val launch = TestPickerLaunch()
+
+        override fun observeEditorSnapshot(shootId: String): Flow<ShootEditorDisplaySnapshot?> = flowOf(
+            ShootEditorDisplaySnapshot(
+                name = "Fixture",
+                lifecycle = ShootPreparationLifecycle.ACTIVE,
+                references = listOf(
+                    ShootEditorReferenceItem("pose-a", 0, "Front", true),
+                    ShootEditorReferenceItem("pose-b", 1, "Side", false),
+                    ShootEditorReferenceItem("pose-c", 2, "Back", true),
+                ),
+                importWorkStatuses = emptyList(),
+            ),
+        )
+
+        override suspend fun allocateImport(
+            shootId: String,
+            label: String,
+        ): ShootEditorImportAllocationOutcome = ShootEditorImportAllocationOutcome.Ready(launch)
+
+        override fun classifyPickerResult(result: ReferencePickerResult): ReferenceImportOutcome =
+            ReferenceImportOutcome(
+                ReferenceImportOutcomeStatus.CANCELLED,
+                ReferenceImportRetryAction.NONE,
+            )
+
+        override suspend fun reorder(
+            shootId: String,
+            orderedPoseIds: List<String>,
+        ): ShootReorderResult = ShootReorderResult.AlreadyOrdered
+
+        override suspend fun start(shootId: String): ShootEditorStartOutcome =
+            ShootEditorStartOutcome.Rejected(ShootEditorStartRejectionReason.AUTHORITY_UNAVAILABLE)
+    }
+
     private class FakeWorkflow : ShootEditorWorkflowPort {
         override fun observeEditorSnapshot(shootId: String): Flow<ShootEditorDisplaySnapshot?> = flowOf(null)
         override suspend fun allocateImport(shootId: String, label: String): ShootEditorImportAllocationOutcome =
@@ -242,14 +322,15 @@ class ShootEditorProductionFactoryTest {
     }
 
     private fun retainedOwner(
-        workflow: FakeWorkflow,
+        workflow: ShootEditorWorkflowPort,
         pickerCoordinator: ShootEditorPickerCoordinator,
         close: () -> Unit,
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher = UnconfinedTestDispatcher(),
     ): ShootEditorProductionOwner = ShootEditorProductionOwner(
         shootId = "shoot-safe",
         workflow = workflow,
         pickerCoordinator = pickerCoordinator,
-        dispatcher = UnconfinedTestDispatcher(),
+        dispatcher = dispatcher,
         closeAuthority = close,
     )
 

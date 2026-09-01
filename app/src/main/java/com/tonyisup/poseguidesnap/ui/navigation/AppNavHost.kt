@@ -1,24 +1,13 @@
 package com.tonyisup.poseguidesnap.ui.navigation
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -28,13 +17,19 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.tonyisup.poseguidesnap.ui.StartedSessionCameraDestination
+import com.tonyisup.poseguidesnap.ui.editor.ShootEditorDestination
+import com.tonyisup.poseguidesnap.ui.editor.ShootEditorProductionOwner
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
+import com.tonyisup.poseguidesnap.ui.editor.createShootEditorProductionOwner
 import com.tonyisup.poseguidesnap.ui.shoots.ShootListScreen
 import com.tonyisup.poseguidesnap.ui.shoots.ShootListViewModel
 
 private const val LIST_ROUTE = "shoot-list"
 private const val EDITOR_ROUTE = "playlist-editor"
 private const val STARTED_ROUTE = "started-session"
+private const val EDITOR_OWNER_KEY = "shoot-editor-owner"
+private const val EDITOR_TARGET_OWNER_KEY = "shoot-editor-target-owner"
+private const val STARTED_TARGET_OWNER_KEY = "started-session-target-owner"
 
 internal class EditorNavigationTarget internal constructor(internal val shootId: String) {
     override fun toString(): String = "EditorNavigationTarget(redacted)"
@@ -44,6 +39,18 @@ internal class StartedNavigationTarget internal constructor(
     internal val handle: StartedSessionHandle,
 ) {
     override fun toString(): String = "StartedNavigationTarget(redacted)"
+}
+
+internal class EditorNavigationTargetOwner(
+    internal val target: EditorNavigationTarget?,
+) : ViewModel() {
+    override fun toString(): String = "EditorNavigationTargetOwner(redacted)"
+}
+
+internal class StartedNavigationTargetOwner(
+    internal val target: StartedNavigationTarget?,
+) : ViewModel() {
+    override fun toString(): String = "StartedNavigationTargetOwner(redacted)"
 }
 
 internal class NavigationCapabilityRegistry {
@@ -110,44 +117,70 @@ internal fun AppNavHost(lifecycleOwner: LifecycleOwner) {
             )
         }
         composable(EDITOR_ROUTE) { backStackEntry ->
-            val target = remember(backStackEntry) { capabilities.consumeEditor() }
+            val targetFactory: ViewModelProvider.Factory = remember(backStackEntry, capabilities) {
+                viewModelFactory {
+                    initializer {
+                        EditorNavigationTargetOwner(capabilities.consumeEditor())
+                    }
+                }
+            }
+            val targetOwner = remember(backStackEntry, targetFactory) {
+                ViewModelProvider(backStackEntry, targetFactory)[
+                    EDITOR_TARGET_OWNER_KEY,
+                    EditorNavigationTargetOwner::class.java,
+                ]
+            }
+            val target = targetOwner.target
             if (target == null) {
                 FailClosedToList(navController::popBackStack)
             } else {
-                EditorUnavailableScreen(onBack = navController::popBackStack)
+                val editorFactory: ViewModelProvider.Factory = remember(applicationContext, target) {
+                    viewModelFactory {
+                        initializer {
+                            createShootEditorProductionOwner(applicationContext, target.shootId)
+                        }
+                    }
+                }
+                val owner = remember(backStackEntry, editorFactory) {
+                    ViewModelProvider(backStackEntry, editorFactory)[
+                        EDITOR_OWNER_KEY,
+                        ShootEditorProductionOwner::class.java,
+                    ]
+                }
+                ShootEditorDestination(
+                    owner = owner,
+                    onBack = navController::popBackStack,
+                    onNavigateToStartedSession = { handle ->
+                        if (capabilities.selectStartedSession(handle)) {
+                            navController.navigate(STARTED_ROUTE) {
+                                popUpTo(EDITOR_ROUTE) {
+                                    inclusive = true
+                                }
+                            }
+                        }
+                    },
+                )
             }
         }
         composable(STARTED_ROUTE) { backStackEntry ->
-            val target = remember(backStackEntry) { capabilities.consumeStartedSession() }
-            if (target == null) {
+            val targetFactory: ViewModelProvider.Factory = remember(backStackEntry, capabilities) {
+                viewModelFactory {
+                    initializer {
+                        StartedNavigationTargetOwner(capabilities.consumeStartedSession())
+                    }
+                }
+            }
+            val targetOwner = remember(backStackEntry, targetFactory) {
+                ViewModelProvider(backStackEntry, targetFactory)[
+                    STARTED_TARGET_OWNER_KEY,
+                    StartedNavigationTargetOwner::class.java,
+                ]
+            }
+            if (targetOwner.target == null) {
                 FailClosedToList(navController::popBackStack)
             } else {
                 StartedSessionCameraDestination(lifecycleOwner = lifecycleOwner)
             }
-        }
-    }
-}
-
-@Composable
-private fun EditorUnavailableScreen(onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            text = "Playlist editor",
-            modifier = Modifier.semantics { heading() },
-        )
-        Text("Playlist editor is unavailable in this bounded slice.")
-        Button(
-            onClick = onBack,
-            modifier = Modifier.heightIn(min = 48.dp),
-        ) {
-            Text("Back")
         }
     }
 }

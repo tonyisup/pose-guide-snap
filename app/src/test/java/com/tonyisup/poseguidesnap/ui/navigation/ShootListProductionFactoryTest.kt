@@ -81,12 +81,15 @@ class ShootListProductionFactoryTest {
     }
 
     @Test
-    fun appNavHostInitializerDelegatesToNarrowFactoryAndEditorPlaceholderUsesBothInsets() {
+    fun appNavHostInitializerDelegatesToNarrowFactoryAndRealEditorUsesBothInsets() {
         val navigation = source(
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/AppNavHost.kt",
         )
         val factory = source(
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/ShootListProductionFactory.kt",
+        )
+        val editorScreen = source(
+            "app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorScreen.kt",
         )
         val initializer = bounded(navigation, "initializer {", "val shootListViewModel")
         assertTrue("initializer must call the ownership helper", "createShootListViewModel(applicationContext)" in initializer)
@@ -102,9 +105,13 @@ class ShootListProductionFactoryTest {
             "closeAuthority = workflow::close",
         ).forEach { marker -> assertTrue("Missing production factory marker: $marker", marker in factory) }
 
-        val editor = bounded(navigation, "private fun EditorUnavailableScreen", "private fun FailClosedToList")
-        assertTrue("editor must pad below status bars", ".statusBarsPadding()" in editor)
-        assertTrue("editor must pad above navigation bars", ".navigationBarsPadding()" in editor)
+        assertTrue("real editor destination must be rendered", "ShootEditorDestination(" in navigation)
+        assertFalse(
+            "bounded-slice editor placeholder must be removed",
+            "Playlist editor is unavailable in this bounded slice." in navigation,
+        )
+        assertTrue("editor must pad below status bars", ".statusBarsPadding()" in editorScreen)
+        assertTrue("editor must pad above navigation bars", ".navigationBarsPadding()" in editorScreen)
     }
 
     private fun invokeOnCleared(viewModel: ShootListViewModel) {
