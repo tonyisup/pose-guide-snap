@@ -1,6 +1,7 @@
 package com.tonyisup.poseguidesnap.data
 
 import com.tonyisup.poseguidesnap.domain.model.Shoot
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
@@ -176,6 +177,287 @@ class ShootPreparationContractsTest {
             assertFalse(result.toString().contains("shoot-secret"))
             assertFalse(result.toString().contains("pose-secret"))
             assertFalse(result.toString().contains("content://", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun startVocabulariesAndResultsAreClosedStableAndValueFree() {
+        assertEquals(
+            listOf("INVALID_SHOOT_ID", "INVALID_SESSION_ID", "INVALID_TIMESTAMP"),
+            ShootStartInvalidReason.entries.map(Enum<*>::name),
+        )
+        assertEquals(
+            listOf("TOO_FEW_VALIDATED_REFERENCES"),
+            ShootStartIneligibleReason.entries.map(Enum<*>::name),
+        )
+        val results = listOf(
+            ShootStartResult.Started,
+            ShootStartResult.AlreadyStarted,
+            ShootStartResult.InvalidRequest(ShootStartInvalidReason.INVALID_SESSION_ID),
+            ShootStartResult.UnknownShoot,
+            ShootStartResult.ShootDeleting,
+            ShootStartResult.IneligiblePlaylist(
+                ShootStartIneligibleReason.TOO_FEW_VALIDATED_REFERENCES,
+            ),
+            ShootStartResult.UnresolvedImportWork,
+            ShootStartResult.ActiveSessionConflict,
+            ShootStartResult.SessionIdentityConflict,
+            ShootStartResult.StaleOrConflictingReplay,
+            ShootStartResult.AuthorityInconsistent,
+        )
+
+        assertEquals(11, results.map { it::class }.distinct().size)
+        assertEquals(
+            listOf(
+                "ShootStartResult.Started",
+                "ShootStartResult.AlreadyStarted",
+                "ShootStartResult.InvalidRequest(reason=INVALID_SESSION_ID)",
+                "ShootStartResult.UnknownShoot",
+                "ShootStartResult.ShootDeleting",
+                "ShootStartResult.IneligiblePlaylist(reason=TOO_FEW_VALIDATED_REFERENCES)",
+                "ShootStartResult.UnresolvedImportWork",
+                "ShootStartResult.ActiveSessionConflict",
+                "ShootStartResult.SessionIdentityConflict",
+                "ShootStartResult.StaleOrConflictingReplay",
+                "ShootStartResult.AuthorityInconsistent",
+            ),
+            results.map(Any::toString),
+        )
+        results.forEach { result ->
+            val rendered = result.toString()
+            listOf("shoot-secret", "session-secret", "content://", "/private/path").forEach { secret ->
+                assertFalse(rendered.contains(secret, ignoreCase = true))
+            }
+        }
+    }
+
+    @Test
+    fun startRequestValidationRejectsUnsafeIdentitiesAndNegativeTimeBeforeRoom() {
+        listOf("", ".", "..", " shoot", "shoot ", "content://private", "bad/id").forEach { invalid ->
+            assertStartRequestInvalid(
+                ShootStartInvalidReason.INVALID_SHOOT_ID,
+                shootId = invalid,
+                sessionId = "session-safe",
+                startedAtEpochMillis = 1L,
+            )
+            assertStartRequestInvalid(
+                ShootStartInvalidReason.INVALID_SESSION_ID,
+                shootId = "shoot-safe",
+                sessionId = invalid,
+                startedAtEpochMillis = 1L,
+            )
+        }
+        assertStartRequestInvalid(
+            ShootStartInvalidReason.INVALID_TIMESTAMP,
+            shootId = "shoot-safe",
+            sessionId = "session-safe",
+            startedAtEpochMillis = -1L,
+        )
+
+        val valid = ShootStartPolicy.validateRequest("shoot-safe", "session-safe", 0L)
+        assertTrue(valid is ShootStartRequestValidation.Valid)
+        assertEquals("ShootStartRequestValidation.Valid(redacted)", valid.toString())
+        val rendered = valid.toString()
+        assertFalse(rendered.contains("shoot-safe"))
+        assertFalse(rendered.contains("session-safe"))
+    }
+
+    @Test
+    fun startPlaylistCardinalityDistinguishesIneligibleEligibleAndCorruptAuthority() {
+        mapOf(
+            0L to ShootStartPlaylistDecision.INELIGIBLE_TOO_FEW,
+            2L to ShootStartPlaylistDecision.INELIGIBLE_TOO_FEW,
+            3L to ShootStartPlaylistDecision.ELIGIBLE,
+            20L to ShootStartPlaylistDecision.ELIGIBLE,
+            21L to ShootStartPlaylistDecision.AUTHORITY_INCONSISTENT,
+            -1L to ShootStartPlaylistDecision.AUTHORITY_INCONSISTENT,
+        ).forEach { (count, expected) ->
+            assertEquals(expected, ShootStartPolicy.classifyPlaylistCardinality(count))
+        }
+    }
+
+    @Test
+    fun startSessionIdentityPrecedenceIsClosedRedactedAndIndependentOfTargetState() {
+        val request = ShootStartRequestValidation.Valid("shoot-safe", "session-safe", 10L)
+        val exact = startSession()
+
+        assertEquals(
+            listOf("ABSENT", "OWNED", "SESSION_IDENTITY_CONFLICT", "AUTHORITY_INCONSISTENT"),
+            ShootStartIdentityDecision.entries.map(Enum<*>::name),
+        )
+        assertEquals(
+            ShootStartIdentityDecision.ABSENT,
+            ShootStartPolicy.classifySessionIdentity(request, exactSession = null),
+        )
+        assertEquals(
+            ShootStartIdentityDecision.OWNED,
+            ShootStartPolicy.classifySessionIdentity(request, exactSession = exact),
+        )
+        assertEquals(
+            ShootStartIdentityDecision.SESSION_IDENTITY_CONFLICT,
+            ShootStartPolicy.classifySessionIdentity(
+                request,
+                exactSession = exact.copy(shootId = "shoot-other"),
+            ),
+        )
+        listOf(
+            exact.copy(sessionId = "session-other"),
+            exact.copy(shootId = "bad/id"),
+            exact.copy(currentPoseIndex = -1),
+            exact.copy(nextAttemptNumber = -1L),
+            exact.copy(lifecycleState = "UNKNOWN"),
+            exact.copy(createdAtEpochMillis = -1L),
+            exact.copy(updatedAtEpochMillis = -1L),
+            exact.copy(createdAtEpochMillis = 11L, updatedAtEpochMillis = 10L),
+        ).forEach { malformed ->
+            assertEquals(
+                ShootStartIdentityDecision.AUTHORITY_INCONSISTENT,
+                ShootStartPolicy.classifySessionIdentity(request, malformed),
+            )
+        }
+        listOf(request, exact).forEach { value ->
+            assertFalse(value.toString().contains("shoot-safe"))
+            assertFalse(value.toString().contains("session-safe"))
+        }
+    }
+
+    @Test
+    fun startSessionClassificationRequiresAnExactReplayAcrossEveryPersistedField() {
+        val request = ShootStartRequestValidation.Valid("shoot-safe", "session-safe", 10L)
+        val exact = startSession()
+
+        assertEquals(
+            ShootStartSessionDecision.ELIGIBLE,
+            ShootStartPolicy.classifySession(request, exactSession = null, activeSessionCount = 0),
+        )
+        assertEquals(
+            ShootStartSessionDecision.ACTIVE_SESSION_CONFLICT,
+            ShootStartPolicy.classifySession(request, exactSession = null, activeSessionCount = 1),
+        )
+        listOf(-1, 2).forEach { invalidCount ->
+            assertEquals(
+                ShootStartSessionDecision.AUTHORITY_INCONSISTENT,
+                ShootStartPolicy.classifySession(request, exactSession = null, activeSessionCount = invalidCount),
+            )
+        }
+        assertEquals(
+            ShootStartSessionDecision.ALREADY_STARTED,
+            ShootStartPolicy.classifySession(request, exactSession = exact, activeSessionCount = 1),
+        )
+        assertEquals(
+            ShootStartSessionDecision.AUTHORITY_INCONSISTENT,
+            ShootStartPolicy.classifySession(request, exactSession = exact, activeSessionCount = 0),
+        )
+
+        listOf(
+            exact.copy(currentPoseIndex = 1),
+            exact.copy(nextAttemptNumber = 1L),
+            exact.copy(lifecycleState = "COMPLETED"),
+            exact.copy(createdAtEpochMillis = 9L),
+            exact.copy(updatedAtEpochMillis = 11L),
+        ).forEach { mismatch ->
+            assertEquals(
+                ShootStartSessionDecision.STALE_OR_CONFLICTING_REPLAY,
+                ShootStartPolicy.classifySession(request, mismatch, activeSessionCount = 1),
+            )
+        }
+        assertEquals(
+            ShootStartSessionDecision.SESSION_IDENTITY_CONFLICT,
+            ShootStartPolicy.classifySession(
+                request,
+                exact.copy(shootId = "shoot-other"),
+                activeSessionCount = 0,
+            ),
+        )
+        assertEquals(
+            ShootStartSessionDecision.AUTHORITY_INCONSISTENT,
+            ShootStartPolicy.classifySession(
+                request,
+                exact.copy(sessionId = "session-other"),
+                activeSessionCount = 1,
+            ),
+        )
+        assertEquals(
+            ShootStartSessionDecision.STALE_OR_CONFLICTING_REPLAY,
+            ShootStartPolicy.classifySession(
+                request.copy(startedAtEpochMillis = 11L),
+                exact,
+                activeSessionCount = 1,
+            ),
+        )
+    }
+
+    @Test
+    fun malformedPersistedSessionAuthorityNeverClassifiesAsReplay() {
+        val request = ShootStartRequestValidation.Valid("shoot-safe", "session-safe", 10L)
+        val exact = startSession()
+        listOf(
+            exact.copy(sessionId = "bad/id"),
+            exact.copy(shootId = "bad/id"),
+            exact.copy(currentPoseIndex = -1),
+            exact.copy(nextAttemptNumber = -1L),
+            exact.copy(lifecycleState = "UNKNOWN"),
+            exact.copy(createdAtEpochMillis = -1L),
+            exact.copy(updatedAtEpochMillis = -1L),
+            exact.copy(createdAtEpochMillis = 11L, updatedAtEpochMillis = 10L),
+        ).forEach { malformed ->
+            assertEquals(
+                ShootStartSessionDecision.AUTHORITY_INCONSISTENT,
+                ShootStartPolicy.classifySession(request, malformed, activeSessionCount = 1),
+            )
+        }
+        assertEquals("ShootStartSessionSnapshot(redacted)", exact.toString())
+        assertFalse(exact.toString().contains("shoot-safe"))
+        assertFalse(exact.toString().contains("session-safe"))
+    }
+
+    @Test
+    fun startPublicContractContainsNoAndroidOrRoomTypes() {
+        val publicTypes = listOf(
+            ShootStartResult::class.java,
+            ShootStartInvalidReason::class.java,
+            ShootStartIneligibleReason::class.java,
+        )
+        val typeNames = publicTypes.flatMap { type ->
+            buildList {
+                add(type.name)
+                type.declaredFields.forEach { field -> add(field.type.name) }
+                type.declaredMethods.forEach { method ->
+                    add(method.returnType.name)
+                    addAll(method.parameterTypes.map(Class<*>::getName))
+                }
+            }
+        }
+        assertTrue(typeNames.none { name ->
+            name.startsWith("android.") || name.startsWith("androidx.room.")
+        })
+    }
+
+    @Test
+    fun startRepositoryBoundaryPersistsOnlySessionAuthorityAndHasNoCameraOrMediaSideEffects() {
+        val source = productionSource(
+            "app/src/main/java/com/tonyisup/poseguidesnap/data/RoomShootPreparationRepository.kt",
+        )
+        val startBoundary = source
+            .substringAfter("    fun startShoot(")
+            .substringBefore("    private fun reorderValidatedReferencesInTransaction(")
+        listOf(
+            "ShootStartPolicy.validateRequest(",
+            "inTransaction { startShootInTransaction(validation) }",
+        ).forEach { marker ->
+            assertTrue("Missing durable start marker: $marker", marker in startBoundary)
+        }
+        listOf(
+            "CameraXController",
+            "Manifest.permission.CAMERA",
+            "requestPermission",
+            "MediaStore",
+            "TextToSpeech",
+            "CaptureAttemptEntity",
+            "insertShoot(",
+            "compareAndSetPoseIndex(",
+        ).forEach { forbidden ->
+            assertFalse("Forbidden shoot-start side effect: $forbidden", forbidden in startBoundary)
         }
     }
 
@@ -461,5 +743,40 @@ class ShootPreparationContractsTest {
         validation as ShootReorderRequestValidation.Invalid
         assertEquals(ShootReorderResult.InvalidRequest(expected), validation.result)
         assertEquals("ShootReorderRequestValidation.Invalid(redacted)", validation.toString())
+    }
+
+    private fun assertStartRequestInvalid(
+        expected: ShootStartInvalidReason,
+        shootId: String,
+        sessionId: String,
+        startedAtEpochMillis: Long,
+    ) {
+        val validation = ShootStartPolicy.validateRequest(
+            shootId = shootId,
+            sessionId = sessionId,
+            startedAtEpochMillis = startedAtEpochMillis,
+        )
+        assertTrue(validation is ShootStartRequestValidation.Invalid)
+        validation as ShootStartRequestValidation.Invalid
+        assertEquals(ShootStartResult.InvalidRequest(expected), validation.result)
+        assertEquals("ShootStartRequestValidation.Invalid(redacted)", validation.toString())
+    }
+
+    private fun startSession(): ShootStartSessionSnapshot = ShootStartSessionSnapshot(
+        sessionId = "session-safe",
+        shootId = "shoot-safe",
+        currentPoseIndex = 0,
+        nextAttemptNumber = 0L,
+        lifecycleState = "ACTIVE",
+        createdAtEpochMillis = 10L,
+        updatedAtEpochMillis = 10L,
+    )
+
+    private fun productionSource(relativePath: String): String {
+        val userDir = requireNotNull(System.getProperty("user.dir"))
+        val root = generateSequence(File(userDir).absoluteFile, File::getParentFile)
+            .firstOrNull { it.resolve("settings.gradle.kts").isFile }
+            ?: error("Could not resolve project root")
+        return root.resolve(relativePath).readText()
     }
 }

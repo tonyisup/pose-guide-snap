@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
@@ -1039,11 +1040,549 @@ class RoomShootPreparationRepositoryAndroidTest {
         }
     }
 
+    @Test
+    fun startEnforcesPlaylistCardinalityAndCompleteImmutablePoseAuthority() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf(0, 2, 3, 20, 21).forEach { count ->
+            val shootId = "shoot-start-count-$count"
+            seedShoot(sqlite, shootId, "Start count $count", createdAt = 1L, updatedAt = 10L)
+            (0 until count).forEach { index ->
+                seedPose(
+                    sqlite,
+                    shootId,
+                    index,
+                    "pose-start-$count-$index",
+                    if (index == 0) "VALID" else "VALIDATED",
+                    "Pose $index",
+                    false,
+                )
+            }
+        }
+        val repository = repository()
+
+        listOf(0, 2).forEach { count ->
+            assertEquals(
+                ShootStartResult.IneligiblePlaylist(
+                    ShootStartIneligibleReason.TOO_FEW_VALIDATED_REFERENCES,
+                ),
+                repository.startShoot("shoot-start-count-$count", "session-start-$count", 20L),
+            )
+        }
+        listOf(3, 20).forEach { count ->
+            assertEquals(
+                ShootStartResult.Started,
+                repository.startShoot("shoot-start-count-$count", "session-start-$count", 20L),
+            )
+            assertEquals(
+                PersistedSession(
+                    sessionId = "session-start-$count",
+                    shootId = "shoot-start-count-$count",
+                    currentPoseIndex = 0,
+                    nextAttemptNumber = 0L,
+                    lifecycleState = "ACTIVE",
+                    createdAtEpochMillis = 20L,
+                    updatedAtEpochMillis = 20L,
+                ),
+                sqlite.persistedSession("session-start-$count"),
+            )
+        }
+        assertEquals(
+            ShootStartResult.AuthorityInconsistent,
+            repository.startShoot("shoot-start-count-21", "session-start-21", 20L),
+        )
+
+        val corruptions = listOf(
+            "gap" to "UPDATE shoot_poses SET pose_index = 9 WHERE shoot_id = ? AND pose_index = 2",
+            "nonvalidated" to
+                "UPDATE shoot_poses SET validation_state = 'CORRUPT' WHERE shoot_id = ? AND pose_index = 2",
+            "legacy-evidence" to
+                "UPDATE shoot_poses SET detector_metadata = 'unexpected' WHERE shoot_id = ? AND pose_index = 0",
+            "validated-evidence" to
+                "UPDATE shoot_poses SET landmark_payload = 'malformed' WHERE shoot_id = ? AND pose_index = 1",
+        )
+        corruptions.forEach { (suffix, sql) ->
+            val shootId = "shoot-start-corrupt-$suffix"
+            seedShoot(sqlite, shootId, "Corrupt $suffix", createdAt = 1L, updatedAt = 10L)
+            (0 until 3).forEach { index ->
+                seedPose(
+                    sqlite,
+                    shootId,
+                    index,
+                    "pose-corrupt-$suffix-$index",
+                    if (index == 0) "VALID" else "VALIDATED",
+                    "Pose $index",
+                    false,
+                )
+            }
+            sqlite.execSQL(sql, arrayOf<Any>(shootId))
+            assertEquals(
+                ShootStartResult.AuthorityInconsistent,
+                repository.startShoot(shootId, "session-corrupt-$suffix", 20L),
+            )
+            assertEquals(null, sqlite.persistedSession("session-corrupt-$suffix"))
+        }
+    }
+
+    @Test
+    fun startDistinguishesShootLifecycleAndGlobalImportAuthorityOutcomes() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf("deleting", "unresolved", "missing-ledger", "mismatched-ledger").forEach { suffix ->
+            val shootId = "shoot-start-$suffix"
+            seedShoot(sqlite, shootId, "Start $suffix", createdAt = 1L, updatedAt = 10L)
+            (0 until 3).forEach { index ->
+                seedPose(
+                    sqlite,
+                    shootId,
+                    index,
+                    "pose-start-$suffix-$index",
+                    "VALIDATED",
+                    "Pose $index",
+                    false,
+                )
+            }
+        }
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
+                "WHERE shoot_id = 'shoot-start-deleting'",
+        )
+        seedImportWork(
+            sqlite,
+            "shoot-start-unresolved",
+            "start-unresolved-token",
+            "start-unresolved-pose",
+            "PREPARING",
+            1L,
+            1L,
+            "EXPECTING_RESERVATION",
+            1L,
+            false,
+        )
+        seedImportWork(
+            sqlite,
+            "shoot-start-missing-ledger",
+            "start-missing-ledger-token",
+            "start-missing-ledger-pose",
+            "REJECTED_QUARANTINED",
+            2L,
+            3L,
+            "QUARANTINE_DURABLE",
+            3L,
+            false,
+            terminalAt = 3L,
+        )
+        sqlite.execSQL(
+            "DELETE FROM reference_import_file_operations " +
+                "WHERE import_token = 'start-missing-ledger-token'",
+        )
+        seedImportWork(
+            sqlite,
+            "shoot-start-mismatched-ledger",
+            "start-mismatched-ledger-token",
+            "start-mismatched-ledger-pose",
+            "REJECTED_CLEANED",
+            4L,
+            5L,
+            "CLEANED_DURABLE",
+            5L,
+            false,
+            terminalAt = 5L,
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_file_operations SET relative_asset_path = 'wrong/path' " +
+                "WHERE import_token = 'start-mismatched-ledger-token'",
+        )
+        val repository = repository()
+
+        assertEquals(
+            ShootStartResult.UnknownShoot,
+            repository.startShoot("shoot-start-unknown", "session-start-unknown", 20L),
+        )
+        assertEquals(
+            ShootStartResult.ShootDeleting,
+            repository.startShoot("shoot-start-deleting", "session-start-deleting", 20L),
+        )
+        assertEquals(
+            ShootStartResult.UnresolvedImportWork,
+            repository.startShoot("shoot-start-unresolved", "session-start-unresolved", 20L),
+        )
+        listOf("missing-ledger", "mismatched-ledger").forEach { suffix ->
+            assertEquals(
+                ShootStartResult.AuthorityInconsistent,
+                repository.startShoot(
+                    "shoot-start-$suffix",
+                    "session-start-$suffix",
+                    20L,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun globallyOwnedSessionIdentityPrecedesEveryMutableTargetStateWithoutMutation() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val ownerShootId = "shoot-identity-owner"
+        val sessionId = "session-global-identity"
+        val deletingShootId = "shoot-identity-deleting"
+        val ineligibleShootId = "shoot-identity-ineligible"
+        val importBlockedShootId = "shoot-identity-import-blocked"
+        val targetShootIds = listOf(
+            "shoot-identity-unknown",
+            deletingShootId,
+            ineligibleShootId,
+            importBlockedShootId,
+        )
+        seedShootWithValidatedPlaylist(sqlite, ownerShootId, 3)
+        seedSession(sqlite, sessionId, ownerShootId, startedAt = 20L)
+        seedShootWithValidatedPlaylist(sqlite, deletingShootId, 3)
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 WHERE shoot_id = ?",
+            arrayOf<Any>(deletingShootId),
+        )
+        seedShootWithValidatedPlaylist(sqlite, ineligibleShootId, 2)
+        seedShootWithValidatedPlaylist(sqlite, importBlockedShootId, 3)
+        val repository = repository()
+
+        targetShootIds.take(3).forEach { targetShootId ->
+            val before = sqlite.startIdentityPrecedenceSnapshot(sessionId, targetShootIds)
+            assertEquals(
+                ShootStartResult.SessionIdentityConflict,
+                repository.startShoot(targetShootId, sessionId, 20L),
+            )
+            assertEquals(before, sqlite.startIdentityPrecedenceSnapshot(sessionId, targetShootIds))
+        }
+
+        seedImportWork(
+            sqlite = sqlite,
+            shootId = importBlockedShootId,
+            token = "identity-import-token",
+            poseId = "identity-import-pose",
+            lifecycleState = "PREPARING",
+            createdAt = 1L,
+            intentUpdatedAt = 1L,
+            fileStage = "EXPECTING_RESERVATION",
+            fileUpdatedAt = 1L,
+            reconciliationRequired = false,
+        )
+        val beforeImportBlocked = sqlite.startIdentityPrecedenceSnapshot(sessionId, targetShootIds)
+        assertEquals(
+            ShootStartResult.SessionIdentityConflict,
+            repository.startShoot(importBlockedShootId, sessionId, 20L),
+        )
+        assertEquals(
+            beforeImportBlocked,
+            sqlite.startIdentityPrecedenceSnapshot(sessionId, targetShootIds),
+        )
+    }
+
+    @Test
+    fun exactStartReplayIsIdempotentButEveryIdentityTimestampAndFieldMismatchIsClosed() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootId = "shoot-start-replay"
+        seedShootWithValidatedPlaylist(sqlite, shootId, 3)
+        val repository = repository()
+        assertEquals(ShootStartResult.Started, repository.startShoot(shootId, "session-replay", 20L))
+        val exact = requireNotNull(sqlite.persistedSession("session-replay"))
+
+        assertEquals(
+            ShootStartResult.AlreadyStarted,
+            repository.startShoot(shootId, "session-replay", 20L),
+        )
+        assertEquals(exact, sqlite.persistedSession("session-replay"))
+        assertEquals(
+            ShootStartResult.StaleOrConflictingReplay,
+            repository.startShoot(shootId, "session-replay", 21L),
+        )
+        assertEquals(
+            ShootStartResult.ActiveSessionConflict,
+            repository.startShoot(shootId, "session-competing", 20L),
+        )
+
+        listOf(
+            "current_pose_index = 1",
+            "next_attempt_number = 1",
+            "updated_at_epoch_millis = 21",
+        ).forEachIndexed { index, mutation ->
+            val mismatchShootId = "shoot-start-field-$index"
+            val mismatchSessionId = "session-field-$index"
+            seedShootWithValidatedPlaylist(sqlite, mismatchShootId, 3)
+            seedSession(sqlite, mismatchSessionId, mismatchShootId, startedAt = 20L)
+            sqlite.execSQL(
+                "UPDATE shoot_sessions SET $mutation WHERE session_id = ?",
+                arrayOf<Any>(mismatchSessionId),
+            )
+            assertEquals(
+                ShootStartResult.StaleOrConflictingReplay,
+                repository.startShoot(mismatchShootId, mismatchSessionId, 20L),
+            )
+        }
+
+        val ownerShootId = "shoot-start-owner"
+        seedShootWithValidatedPlaylist(sqlite, ownerShootId, 3)
+        seedSession(sqlite, "session-owner-conflict", ownerShootId, startedAt = 20L)
+        val otherShootId = "shoot-start-other-owner"
+        seedShootWithValidatedPlaylist(sqlite, otherShootId, 3)
+        assertEquals(
+            ShootStartResult.SessionIdentityConflict,
+            repository.startShoot(otherShootId, "session-owner-conflict", 20L),
+        )
+    }
+
+    @Test
+    fun completedHistoryDoesNotBlockFreshStartAndStartSurvivesReopenExactly() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootId = "shoot-start-history"
+        seedShootWithValidatedPlaylist(sqlite, shootId, 3)
+        (0 until 5).forEach { index ->
+            seedSession(
+                sqlite,
+                "session-completed-$index",
+                shootId,
+                startedAt = index.toLong() + 1L,
+                lifecycleState = "COMPLETED",
+                currentPoseIndex = 2,
+                nextAttemptNumber = index.toLong() + 1L,
+            )
+        }
+
+        assertEquals(
+            ShootStartResult.Started,
+            repository().startShoot(shootId, "session-fresh", 20L),
+        )
+        val expected = requireNotNull(sqlite.persistedSession("session-fresh"))
+        database?.close()
+        database = null
+
+        val reopened = openDatabase().openHelper.writableDatabase
+        assertEquals(expected, reopened.persistedSession("session-fresh"))
+        assertEquals(
+            ShootStartResult.AlreadyStarted,
+            repository().startShoot(shootId, "session-fresh", 20L),
+        )
+        assertEquals(expected, reopened.persistedSession("session-fresh"))
+    }
+
+    @Test
+    fun concurrentStartsAreClassifiedFromFreshPersistedAuthority() {
+        val firstDatabase = openDatabase()
+        val sqlite = firstDatabase.openHelper.writableDatabase
+        seedShootWithValidatedPlaylist(sqlite, "shoot-start-race-same", 3)
+        seedShootWithValidatedPlaylist(sqlite, "shoot-start-race-different", 3)
+        val secondDatabase = AppDatabase.create(context, databaseName)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val sameResults = raceStarts(
+                executor,
+                listOf(
+                    RoomShootPreparationRepository(firstDatabase) to Triple(
+                        "shoot-start-race-same",
+                        "session-race-same",
+                        20L,
+                    ),
+                    RoomShootPreparationRepository(secondDatabase) to Triple(
+                        "shoot-start-race-same",
+                        "session-race-same",
+                        20L,
+                    ),
+                ),
+            )
+            assertEquals(1, sameResults.count { it == ShootStartResult.Started })
+            assertEquals(1, sameResults.count { it == ShootStartResult.AlreadyStarted })
+
+            val differentResults = raceStarts(
+                executor,
+                listOf(
+                    RoomShootPreparationRepository(firstDatabase) to Triple(
+                        "shoot-start-race-different",
+                        "session-race-first",
+                        30L,
+                    ),
+                    RoomShootPreparationRepository(secondDatabase) to Triple(
+                        "shoot-start-race-different",
+                        "session-race-second",
+                        30L,
+                    ),
+                ),
+            )
+            assertEquals(1, differentResults.count { it == ShootStartResult.Started })
+            assertEquals(1, differentResults.count { it == ShootStartResult.ActiveSessionConflict })
+            assertEquals(1, sqlite.activeSessionCount("shoot-start-race-different"))
+        } finally {
+            executor.shutdownNow()
+            secondDatabase.close()
+        }
+    }
+
+    @Test
+    fun activeSessionTriggerProtectsDirectSqlAndRemainsInstalledAfterReopen() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootId = "shoot-start-trigger"
+        seedShootWithValidatedPlaylist(sqlite, shootId, 3)
+        seedSession(sqlite, "session-trigger-first", shootId, startedAt = 20L)
+
+        assertThrows(android.database.sqlite.SQLiteConstraintException::class.java) {
+            seedSession(sqlite, "session-trigger-second", shootId, startedAt = 20L)
+        }
+        database?.close()
+        database = null
+
+        val reopened = openDatabase().openHelper.writableDatabase
+        assertEquals(
+            setOf(
+                "trigger_shoot_sessions_one_active_insert",
+                "trigger_shoot_sessions_one_active_update",
+            ),
+            reopened.activeSessionAuthorityTriggerNames(),
+        )
+        assertThrows(android.database.sqlite.SQLiteConstraintException::class.java) {
+            seedSession(reopened, "session-trigger-after-reopen", shootId, startedAt = 20L)
+        }
+    }
+
+    @Test
+    fun lateInsertAndPostconditionFaultsRollBackWithoutChangingPreparationAuthority() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf("insert-fault", "postcondition-fault", "history").forEach { suffix ->
+            seedShootWithValidatedPlaylist(sqlite, "shoot-start-$suffix", 3)
+        }
+        seedImportWork(
+            sqlite,
+            "shoot-start-history",
+            "start-history-token",
+            "pose-start-history-0",
+            "COMMITTED",
+            1L,
+            5L,
+            "FINAL_DURABLE",
+            5L,
+            false,
+            terminalAt = 5L,
+        )
+        sqlite.execSQL(
+            """
+            CREATE TRIGGER test_fail_shoot_start_insert
+            BEFORE INSERT ON shoot_sessions
+            FOR EACH ROW
+            WHEN NEW.shoot_id = 'shoot-start-insert-fault'
+            BEGIN
+                SELECT RAISE(ABORT, 'test start insert failure');
+            END
+            """.trimIndent(),
+        )
+        sqlite.execSQL(
+            """
+            CREATE TRIGGER test_mutate_shoot_start_postcondition
+            AFTER INSERT ON shoot_sessions
+            FOR EACH ROW
+            WHEN NEW.shoot_id = 'shoot-start-postcondition-fault'
+            BEGIN
+                UPDATE shoot_sessions SET next_attempt_number = 1
+                WHERE session_id = NEW.session_id;
+            END
+            """.trimIndent(),
+        )
+        val beforeShoots = sqlite.persistedShoots()
+        val beforePoseIndexes = listOf("insert-fault", "postcondition-fault", "history").associateWith { suffix ->
+            sqlite.poseIndexRows("shoot-start-$suffix")
+        }
+        val beforePoseAuthority = listOf("insert-fault", "postcondition-fault", "history").associateWith { suffix ->
+            sqlite.poseAuthorityRows("shoot-start-$suffix")
+        }
+        val beforeImports = sqlite.importHistoryRows()
+        val repository = repository()
+
+        listOf("insert-fault", "postcondition-fault").forEach { suffix ->
+            assertEquals(
+                ShootStartResult.AuthorityInconsistent,
+                repository.startShoot(
+                    "shoot-start-$suffix",
+                    "session-start-$suffix",
+                    20L,
+                ),
+            )
+            assertEquals(null, sqlite.persistedSession("session-start-$suffix"))
+        }
+        assertEquals(
+            ShootStartResult.Started,
+            repository.startShoot("shoot-start-history", "session-start-history", 20L),
+        )
+        assertEquals(beforeShoots, sqlite.persistedShoots())
+        beforePoseIndexes.forEach { (suffix, rows) ->
+            assertEquals(rows, sqlite.poseIndexRows("shoot-start-$suffix"))
+        }
+        beforePoseAuthority.forEach { (suffix, rows) ->
+            assertEquals(rows, sqlite.poseAuthorityRows("shoot-start-$suffix"))
+        }
+        assertEquals(beforeImports, sqlite.importHistoryRows())
+        assertEquals(0, sqlite.captureAttemptCount())
+    }
+
     private fun openDatabase(): AppDatabase =
         AppDatabase.create(context, databaseName).also { database = it }
 
     private fun repository(): RoomShootPreparationRepository =
         RoomShootPreparationRepository(database ?: openDatabase())
+
+    private fun seedShootWithValidatedPlaylist(
+        sqlite: SupportSQLiteDatabase,
+        shootId: String,
+        count: Int,
+    ) {
+        seedShoot(sqlite, shootId, "Start playlist", createdAt = 1L, updatedAt = 10L)
+        (0 until count).forEach { index ->
+            seedPose(
+                sqlite,
+                shootId,
+                index,
+                "pose-$shootId-$index",
+                "VALIDATED",
+                "Pose $index",
+                false,
+            )
+        }
+    }
+
+    private fun seedSession(
+        sqlite: SupportSQLiteDatabase,
+        sessionId: String,
+        shootId: String,
+        startedAt: Long,
+        lifecycleState: String = "ACTIVE",
+        currentPoseIndex: Int = 0,
+        nextAttemptNumber: Long = 0L,
+    ) {
+        sqlite.execSQL(
+            "INSERT INTO shoot_sessions (session_id, shoot_id, current_pose_index, " +
+                "next_attempt_number, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            arrayOf<Any>(
+                sessionId,
+                shootId,
+                currentPoseIndex,
+                nextAttemptNumber,
+                lifecycleState,
+                startedAt,
+                startedAt,
+            ),
+        )
+    }
+
+    private fun raceStarts(
+        executor: ExecutorService,
+        requests: List<Pair<RoomShootPreparationRepository, Triple<String, String, Long>>>,
+    ): List<ShootStartResult> {
+        val ready = CountDownLatch(requests.size)
+        val start = CountDownLatch(1)
+        val futures = requests.map { (repository, request) ->
+            executor.submit<ShootStartResult> {
+                ready.countDown()
+                assertTrue(start.await(5, TimeUnit.SECONDS))
+                repository.startShoot(request.first, request.second, request.third)
+            }
+        }
+        assertTrue(ready.await(5, TimeUnit.SECONDS))
+        start.countDown()
+        return futures.map { future -> future.get(10, TimeUnit.SECONDS) }
+    }
 
     private fun seedShoot(
         sqlite: SupportSQLiteDatabase,
@@ -1253,6 +1792,66 @@ class RoomShootPreparationRepositoryAndroidTest {
             }
         }
 
+    private fun SupportSQLiteDatabase.startIdentityPrecedenceSnapshot(
+        sessionId: String,
+        targetShootIds: List<String>,
+    ): StartIdentityPrecedenceSnapshot =
+        StartIdentityPrecedenceSnapshot(
+            exactSession = persistedSession(sessionId),
+            shoots = persistedShoots(),
+            targetPoseIndexes = targetShootIds.associateWith { targetShootId ->
+                poseIndexRows(targetShootId)
+            },
+            targetPoseAuthority = targetShootIds.associateWith { targetShootId ->
+                poseAuthorityRows(targetShootId)
+            },
+            importRows = importHistoryRows(),
+        )
+
+    private fun SupportSQLiteDatabase.persistedSession(sessionId: String): PersistedSession? =
+        query(
+            "SELECT session_id, shoot_id, current_pose_index, next_attempt_number, " +
+                "lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis " +
+                "FROM shoot_sessions WHERE session_id = ?",
+            arrayOf(sessionId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            PersistedSession(
+                sessionId = cursor.getString(0),
+                shootId = cursor.getString(1),
+                currentPoseIndex = cursor.getInt(2),
+                nextAttemptNumber = cursor.getLong(3),
+                lifecycleState = cursor.getString(4),
+                createdAtEpochMillis = cursor.getLong(5),
+                updatedAtEpochMillis = cursor.getLong(6),
+            )
+        }
+
+    private fun SupportSQLiteDatabase.activeSessionCount(shootId: String): Int =
+        query(
+            "SELECT COUNT(*) FROM shoot_sessions WHERE shoot_id = ? AND lifecycle_state = 'ACTIVE'",
+            arrayOf(shootId),
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getInt(0)
+        }
+
+    private fun SupportSQLiteDatabase.activeSessionAuthorityTriggerNames(): Set<String> =
+        query(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' " +
+                "AND name LIKE 'trigger_shoot_sessions_one_active_%' ORDER BY name",
+        ).use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+
+    private fun SupportSQLiteDatabase.captureAttemptCount(): Int =
+        query("SELECT COUNT(*) FROM capture_attempts").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getInt(0)
+        }
+
     private fun SupportSQLiteDatabase.persistedShoots(): List<PersistedShoot> =
         query(
             "SELECT shoot_id, name, created_at_epoch_millis, updated_at_epoch_millis, " +
@@ -1288,6 +1887,24 @@ class RoomShootPreparationRepositoryAndroidTest {
         assertEquals(lifecycle, actual.lifecycle)
         assertEquals(updatedAtEpochMillis, actual.updatedAtEpochMillis)
     }
+
+    private data class StartIdentityPrecedenceSnapshot(
+        val exactSession: PersistedSession?,
+        val shoots: List<PersistedShoot>,
+        val targetPoseIndexes: Map<String, List<Pair<Long, String>>>,
+        val targetPoseAuthority: Map<String, List<PoseAuthorityRow>>,
+        val importRows: List<List<String?>>,
+    )
+
+    private data class PersistedSession(
+        val sessionId: String,
+        val shootId: String,
+        val currentPoseIndex: Int,
+        val nextAttemptNumber: Long,
+        val lifecycleState: String,
+        val createdAtEpochMillis: Long,
+        val updatedAtEpochMillis: Long,
+    )
 
     private data class PersistedShoot(
         val shootId: String,

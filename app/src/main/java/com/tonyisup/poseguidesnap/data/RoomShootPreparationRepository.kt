@@ -9,6 +9,7 @@ import com.tonyisup.poseguidesnap.data.db.ShootPreparationImportWorkRow
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationPoseRow
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationShootRow
 import com.tonyisup.poseguidesnap.data.db.ShootPoseEntity
+import com.tonyisup.poseguidesnap.data.db.ShootSessionEntity
 import com.tonyisup.poseguidesnap.domain.model.Shoot
 import java.util.ArrayList
 import java.util.Collections
@@ -91,6 +92,144 @@ class RoomShootPreparationRepository(
             }
         }
     }
+
+    fun startShoot(
+        shootId: String,
+        sessionId: String,
+        startedAtEpochMillis: Long,
+    ): ShootStartResult {
+        val validation = try {
+            ShootStartPolicy.validateRequest(shootId, sessionId, startedAtEpochMillis)
+        } catch (_: RuntimeException) {
+            return ShootStartResult.AuthorityInconsistent
+        }
+        return when (validation) {
+            is ShootStartRequestValidation.Invalid -> validation.result
+            is ShootStartRequestValidation.Valid -> try {
+                inTransaction { startShootInTransaction(validation) }
+            } catch (_: SQLiteConstraintException) {
+                classifyStartRace(validation)
+            } catch (_: SQLiteException) {
+                classifyStartRace(validation)
+            } catch (_: ShootStartWriteException) {
+                classifyStartRace(validation)
+            } catch (_: Exception) {
+                ShootStartResult.AuthorityInconsistent
+            }
+        }
+    }
+
+    private fun startShootInTransaction(
+        request: ShootStartRequestValidation.Valid,
+    ): ShootStartResult {
+        val preparation = prepareStartInCurrentTransaction(request)
+        if (preparation is ShootStartPreparation.Closed) return preparation.result
+        preparation as ShootStartPreparation.Ready
+
+        dao.insertSession(preparation.expectedSession)
+        val inserted = dao.findSession(request.sessionId)
+        if (
+            inserted != preparation.expectedSession ||
+            dao.countActiveSessions(request.shootId) != 1
+        ) {
+            throw ShootStartWriteException()
+        }
+        return ShootStartResult.Started
+    }
+
+    private fun prepareStartInCurrentTransaction(
+        request: ShootStartRequestValidation.Valid,
+    ): ShootStartPreparation {
+        val exactSession = dao.findSession(request.sessionId)?.toStartSnapshot()
+        when (ShootStartPolicy.classifySessionIdentity(request, exactSession)) {
+            ShootStartIdentityDecision.ABSENT,
+            ShootStartIdentityDecision.OWNED,
+            -> Unit
+            ShootStartIdentityDecision.SESSION_IDENTITY_CONFLICT ->
+                return ShootStartPreparation.Closed(ShootStartResult.SessionIdentityConflict)
+            ShootStartIdentityDecision.AUTHORITY_INCONSISTENT ->
+                throw ShootPreparationProjectionException()
+        }
+
+        val shoot = dao.findShoot(request.shootId)
+            ?: return ShootStartPreparation.Closed(ShootStartResult.UnknownShoot)
+        if (shoot.shootId != request.shootId) throw ShootPreparationProjectionException()
+        when (shoot.requireCoherentProjection()) {
+            ShootPreparationLifecycle.DELETING ->
+                return ShootStartPreparation.Closed(ShootStartResult.ShootDeleting)
+            ShootPreparationLifecycle.ACTIVE -> Unit
+        }
+
+        when (RoomReferenceImportRepository(database).inspectGlobalImportWorkInCurrentTransaction()) {
+            GlobalReferenceImportWorkState.CLEAR -> Unit
+            GlobalReferenceImportWorkState.IN_PROGRESS,
+            GlobalReferenceImportWorkState.RECONCILIATION_REQUIRED,
+            -> return ShootStartPreparation.Closed(ShootStartResult.UnresolvedImportWork)
+        }
+
+        val poses = dao.findAllPoseEntitiesInOrder(request.shootId)
+        if (
+            poses.size.toLong() != shoot.acceptedReferenceCount ||
+            poses.size.toLong() != shoot.totalReferenceCount ||
+            poses.map(ShootPoseEntity::poseId).distinct().size != poses.size ||
+            poses.anyIndexed { index, pose ->
+                !pose.hasCoherentValidatedPoseAuthority(request.shootId, index)
+            }
+        ) {
+            throw ShootPreparationProjectionException()
+        }
+        when (ShootStartPolicy.classifyPlaylistCardinality(poses.size.toLong())) {
+            ShootStartPlaylistDecision.ELIGIBLE -> Unit
+            ShootStartPlaylistDecision.INELIGIBLE_TOO_FEW -> return ShootStartPreparation.Closed(
+                ShootStartResult.IneligiblePlaylist(
+                    ShootStartIneligibleReason.TOO_FEW_VALIDATED_REFERENCES,
+                ),
+            )
+            ShootStartPlaylistDecision.AUTHORITY_INCONSISTENT ->
+                throw ShootPreparationProjectionException()
+        }
+
+        val activeSessionCount = dao.countActiveSessions(request.shootId)
+        return when (
+            ShootStartPolicy.classifySession(request, exactSession, activeSessionCount)
+        ) {
+            ShootStartSessionDecision.ELIGIBLE -> ShootStartPreparation.Ready(
+                ShootSessionEntity(
+                    sessionId = request.sessionId,
+                    shootId = request.shootId,
+                    currentPoseIndex = 0,
+                    nextAttemptNumber = 0L,
+                    lifecycleState = ACTIVE,
+                    createdAtEpochMillis = request.startedAtEpochMillis,
+                    updatedAtEpochMillis = request.startedAtEpochMillis,
+                ),
+            )
+            ShootStartSessionDecision.ALREADY_STARTED ->
+                ShootStartPreparation.Closed(ShootStartResult.AlreadyStarted)
+            ShootStartSessionDecision.ACTIVE_SESSION_CONFLICT ->
+                ShootStartPreparation.Closed(ShootStartResult.ActiveSessionConflict)
+            ShootStartSessionDecision.SESSION_IDENTITY_CONFLICT ->
+                ShootStartPreparation.Closed(ShootStartResult.SessionIdentityConflict)
+            ShootStartSessionDecision.STALE_OR_CONFLICTING_REPLAY ->
+                ShootStartPreparation.Closed(ShootStartResult.StaleOrConflictingReplay)
+            ShootStartSessionDecision.AUTHORITY_INCONSISTENT ->
+                throw ShootPreparationProjectionException()
+        }
+    }
+
+    private fun classifyStartRace(
+        request: ShootStartRequestValidation.Valid,
+    ): ShootStartResult =
+        try {
+            inTransaction {
+                when (val preparation = prepareStartInCurrentTransaction(request)) {
+                    is ShootStartPreparation.Closed -> preparation.result
+                    is ShootStartPreparation.Ready -> ShootStartResult.AuthorityInconsistent
+                }
+            }
+        } catch (_: Exception) {
+            ShootStartResult.AuthorityInconsistent
+        }
 
     private fun reorderValidatedReferencesInTransaction(
         request: ShootReorderRequestValidation.Valid,
@@ -185,7 +324,7 @@ class RoomShootPreparationRepository(
             poses.size.toLong() != shoot.totalReferenceCount ||
             poses.map(ShootPoseEntity::poseId).distinct().size != poses.size ||
             poses.anyIndexed { index, pose ->
-                !pose.hasCoherentReorderAuthority(request.shootId, index)
+                !pose.hasCoherentValidatedPoseAuthority(request.shootId, index)
             }
         ) {
             throw ShootPreparationProjectionException()
@@ -509,7 +648,7 @@ class RoomShootPreparationRepository(
         }
     }
 
-    private fun ShootPoseEntity.hasCoherentReorderAuthority(
+    private fun ShootPoseEntity.hasCoherentValidatedPoseAuthority(
         expectedShootId: String,
         expectedIndex: Int,
     ): Boolean {
@@ -548,6 +687,17 @@ class RoomShootPreparationRepository(
     private fun String?.isSafeLandmarkAuthorityEvidence(): Boolean =
         isSafeAuthorityEvidence() && requireNotNull(this).startsWith(LANDMARK_PAYLOAD_PREFIX) &&
             length > LANDMARK_PAYLOAD_PREFIX.length
+
+    private fun ShootSessionEntity.toStartSnapshot(): ShootStartSessionSnapshot =
+        ShootStartSessionSnapshot(
+            sessionId = sessionId,
+            shootId = shootId,
+            currentPoseIndex = currentPoseIndex,
+            nextAttemptNumber = nextAttemptNumber,
+            lifecycleState = lifecycleState,
+            createdAtEpochMillis = createdAtEpochMillis,
+            updatedAtEpochMillis = updatedAtEpochMillis,
+        )
 
     private fun ShootPreparationImportWorkRow.toValidatedImportWork(): ImportWorkSummary {
         val token = try {
@@ -682,6 +832,16 @@ class RoomShootPreparationRepository(
 
     private class ShootReorderCasException : RuntimeException() {
         override fun toString(): String = "ShootReorderCasException"
+    }
+
+    private class ShootStartWriteException : RuntimeException() {
+        override fun toString(): String = "ShootStartWriteException"
+    }
+
+    private sealed interface ShootStartPreparation {
+        data class Ready(val expectedSession: ShootSessionEntity) : ShootStartPreparation
+
+        data class Closed(val result: ShootStartResult) : ShootStartPreparation
     }
 
     private sealed interface ShootReorderPreparation {

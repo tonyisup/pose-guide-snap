@@ -169,6 +169,220 @@ sealed interface ShootReorderResult {
     }
 }
 
+enum class ShootStartInvalidReason {
+    INVALID_SHOOT_ID,
+    INVALID_SESSION_ID,
+    INVALID_TIMESTAMP,
+}
+
+enum class ShootStartIneligibleReason {
+    TOO_FEW_VALIDATED_REFERENCES,
+}
+
+sealed interface ShootStartResult {
+    data object Started : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.Started"
+    }
+
+    data object AlreadyStarted : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.AlreadyStarted"
+    }
+
+    data class InvalidRequest(val reason: ShootStartInvalidReason) : ShootStartResult {
+        override fun toString(): String =
+            "ShootStartResult.InvalidRequest(reason=${reason.name})"
+    }
+
+    data object UnknownShoot : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.UnknownShoot"
+    }
+
+    data object ShootDeleting : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.ShootDeleting"
+    }
+
+    data class IneligiblePlaylist(val reason: ShootStartIneligibleReason) : ShootStartResult {
+        override fun toString(): String =
+            "ShootStartResult.IneligiblePlaylist(reason=${reason.name})"
+    }
+
+    data object UnresolvedImportWork : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.UnresolvedImportWork"
+    }
+
+    data object ActiveSessionConflict : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.ActiveSessionConflict"
+    }
+
+    data object SessionIdentityConflict : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.SessionIdentityConflict"
+    }
+
+    data object StaleOrConflictingReplay : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.StaleOrConflictingReplay"
+    }
+
+    data object AuthorityInconsistent : ShootStartResult {
+        override fun toString(): String = "ShootStartResult.AuthorityInconsistent"
+    }
+}
+
+internal sealed interface ShootStartRequestValidation {
+    data class Valid(
+        val shootId: String,
+        val sessionId: String,
+        val startedAtEpochMillis: Long,
+    ) : ShootStartRequestValidation {
+        override fun toString(): String = "ShootStartRequestValidation.Valid(redacted)"
+    }
+
+    data class Invalid(val result: ShootStartResult) : ShootStartRequestValidation {
+        override fun toString(): String = "ShootStartRequestValidation.Invalid(redacted)"
+    }
+}
+
+internal enum class ShootStartPlaylistDecision {
+    ELIGIBLE,
+    INELIGIBLE_TOO_FEW,
+    AUTHORITY_INCONSISTENT,
+}
+
+internal enum class ShootStartIdentityDecision {
+    ABSENT,
+    OWNED,
+    SESSION_IDENTITY_CONFLICT,
+    AUTHORITY_INCONSISTENT,
+}
+
+internal enum class ShootStartSessionDecision {
+    ELIGIBLE,
+    ALREADY_STARTED,
+    ACTIVE_SESSION_CONFLICT,
+    SESSION_IDENTITY_CONFLICT,
+    STALE_OR_CONFLICTING_REPLAY,
+    AUTHORITY_INCONSISTENT,
+}
+
+internal data class ShootStartSessionSnapshot(
+    val sessionId: String,
+    val shootId: String,
+    val currentPoseIndex: Int,
+    val nextAttemptNumber: Long,
+    val lifecycleState: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+) {
+    override fun toString(): String = "ShootStartSessionSnapshot(redacted)"
+}
+
+internal object ShootStartPolicy {
+    fun validateRequest(
+        shootId: String,
+        sessionId: String,
+        startedAtEpochMillis: Long,
+    ): ShootStartRequestValidation {
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
+            return invalid(ShootStartInvalidReason.INVALID_SHOOT_ID)
+        }
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(sessionId)) {
+            return invalid(ShootStartInvalidReason.INVALID_SESSION_ID)
+        }
+        if (startedAtEpochMillis < 0L) {
+            return invalid(ShootStartInvalidReason.INVALID_TIMESTAMP)
+        }
+        return ShootStartRequestValidation.Valid(shootId, sessionId, startedAtEpochMillis)
+    }
+
+    fun classifyPlaylistCardinality(referenceCount: Long): ShootStartPlaylistDecision =
+        when {
+            referenceCount < 0L || referenceCount > Shoot.MAX_REFERENCE_POSES.toLong() ->
+                ShootStartPlaylistDecision.AUTHORITY_INCONSISTENT
+            referenceCount < Shoot.MIN_REFERENCE_POSES.toLong() ->
+                ShootStartPlaylistDecision.INELIGIBLE_TOO_FEW
+            else -> ShootStartPlaylistDecision.ELIGIBLE
+        }
+
+    fun classifySessionIdentity(
+        request: ShootStartRequestValidation.Valid,
+        exactSession: ShootStartSessionSnapshot?,
+    ): ShootStartIdentityDecision {
+        if (
+            !ReferenceImportPolicy.validateOwnershipIdentity(request.shootId) ||
+            !ReferenceImportPolicy.validateOwnershipIdentity(request.sessionId) ||
+            request.startedAtEpochMillis < 0L
+        ) {
+            return ShootStartIdentityDecision.AUTHORITY_INCONSISTENT
+        }
+        if (exactSession == null) return ShootStartIdentityDecision.ABSENT
+        if (!exactSession.hasCoherentAuthority()) {
+            return ShootStartIdentityDecision.AUTHORITY_INCONSISTENT
+        }
+        if (exactSession.sessionId != request.sessionId) {
+            return ShootStartIdentityDecision.AUTHORITY_INCONSISTENT
+        }
+        return if (exactSession.shootId == request.shootId) {
+            ShootStartIdentityDecision.OWNED
+        } else {
+            ShootStartIdentityDecision.SESSION_IDENTITY_CONFLICT
+        }
+    }
+
+    fun classifySession(
+        request: ShootStartRequestValidation.Valid,
+        exactSession: ShootStartSessionSnapshot?,
+        activeSessionCount: Int,
+    ): ShootStartSessionDecision {
+        when (classifySessionIdentity(request, exactSession)) {
+            ShootStartIdentityDecision.AUTHORITY_INCONSISTENT ->
+                return ShootStartSessionDecision.AUTHORITY_INCONSISTENT
+            ShootStartIdentityDecision.SESSION_IDENTITY_CONFLICT ->
+                return ShootStartSessionDecision.SESSION_IDENTITY_CONFLICT
+            ShootStartIdentityDecision.ABSENT,
+            ShootStartIdentityDecision.OWNED,
+            -> Unit
+        }
+        if (activeSessionCount !in 0..1) {
+            return ShootStartSessionDecision.AUTHORITY_INCONSISTENT
+        }
+        if (exactSession == null) {
+            return if (activeSessionCount == 0) {
+                ShootStartSessionDecision.ELIGIBLE
+            } else {
+                ShootStartSessionDecision.ACTIVE_SESSION_CONFLICT
+            }
+        }
+        if (exactSession.lifecycleState == ACTIVE_SESSION && activeSessionCount == 0) {
+            return ShootStartSessionDecision.AUTHORITY_INCONSISTENT
+        }
+        return if (
+            exactSession.currentPoseIndex == 0 &&
+            exactSession.nextAttemptNumber == 0L &&
+            exactSession.lifecycleState == ACTIVE_SESSION &&
+            exactSession.createdAtEpochMillis == request.startedAtEpochMillis &&
+            exactSession.updatedAtEpochMillis == request.startedAtEpochMillis
+        ) {
+            ShootStartSessionDecision.ALREADY_STARTED
+        } else {
+            ShootStartSessionDecision.STALE_OR_CONFLICTING_REPLAY
+        }
+    }
+
+    private fun ShootStartSessionSnapshot.hasCoherentAuthority(): Boolean =
+        ReferenceImportPolicy.validateOwnershipIdentity(sessionId) &&
+            ReferenceImportPolicy.validateOwnershipIdentity(shootId) &&
+            currentPoseIndex >= 0 &&
+            nextAttemptNumber >= 0L &&
+            lifecycleState in SESSION_LIFECYCLES &&
+            createdAtEpochMillis >= 0L &&
+            updatedAtEpochMillis >= createdAtEpochMillis
+
+    private fun invalid(reason: ShootStartInvalidReason): ShootStartRequestValidation =
+        ShootStartRequestValidation.Invalid(ShootStartResult.InvalidRequest(reason))
+
+    private const val ACTIVE_SESSION = "ACTIVE"
+    private val SESSION_LIFECYCLES = setOf(ACTIVE_SESSION, "COMPLETED")
+}
+
 internal sealed interface ShootReorderRequestValidation {
     class Valid(
         val shootId: String,

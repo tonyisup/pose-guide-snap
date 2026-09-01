@@ -197,6 +197,12 @@ internal interface ShootPreparationDao {
     )
     fun countActiveSessions(shootId: String): Int
 
+    @Query("SELECT * FROM shoot_sessions WHERE session_id = :sessionId")
+    fun findSession(sessionId: String): ShootSessionEntity?
+
+    @Insert
+    fun insertSession(session: ShootSessionEntity)
+
     @Query(
         """
         UPDATE shoot_poses
