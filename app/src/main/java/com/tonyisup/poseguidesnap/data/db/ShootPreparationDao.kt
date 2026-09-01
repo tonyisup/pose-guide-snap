@@ -182,6 +182,59 @@ internal interface ShootPreparationDao {
 
     @Query(
         """
+        SELECT * FROM shoot_poses
+        WHERE shoot_id = :shootId
+        ORDER BY pose_index ASC
+        """,
+    )
+    fun findAllPoseEntitiesInOrder(shootId: String): List<ShootPoseEntity>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM shoot_sessions
+        WHERE shoot_id = :shootId AND lifecycle_state = 'ACTIVE'
+        """,
+    )
+    fun countActiveSessions(shootId: String): Int
+
+    @Query(
+        """
+        UPDATE shoot_poses
+        SET pose_index = :targetPoseIndex
+        WHERE shoot_id = :shootId
+          AND pose_id = :poseId
+          AND pose_index = :expectedPoseIndex
+          AND validation_state IN ('VALID', 'VALIDATED')
+        """,
+    )
+    fun compareAndSetPoseIndex(
+        shootId: String,
+        poseId: String,
+        expectedPoseIndex: Int,
+        targetPoseIndex: Int,
+    ): Int
+
+    @Query(
+        """
+        UPDATE shoots
+        SET updated_at_epoch_millis = :reorderedAtEpochMillis
+        WHERE shoot_id = :shootId
+          AND lifecycle_state = 'ACTIVE'
+          AND deletion_generation = :expectedDeletionGeneration
+          AND deletion_generation >= 0
+          AND updated_at_epoch_millis = :expectedUpdatedAtEpochMillis
+          AND :reorderedAtEpochMillis > updated_at_epoch_millis
+        """,
+    )
+    fun compareAndSetShootUpdatedAt(
+        shootId: String,
+        expectedDeletionGeneration: Long,
+        expectedUpdatedAtEpochMillis: Long,
+        reorderedAtEpochMillis: Long,
+    ): Int
+
+    @Query(
+        """
         WITH relevant_intent AS (
             SELECT *
             FROM reference_import_intents

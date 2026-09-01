@@ -14,6 +14,48 @@ class RoomReferenceImportRepository(
     private val dao = database.referenceImportDao()
     private val fileOperationDao = database.referenceImportFileOperationDao()
 
+    internal fun inspectGlobalImportWorkInCurrentTransaction(): GlobalReferenceImportWorkState {
+        requireGlobalFileAuthorityCoherent()
+
+        val reconciliationRequired =
+            fileOperationDao.findReconciliationRequiredOperations(limit = 1).singleOrNull()
+        if (reconciliationRequired != null) {
+            val intent = dao.findIntent(reconciliationRequired.importToken)
+                ?: throw ReferenceImportAuthorityInconsistentException()
+            if (!intent.hasCoherentAuthority() || !reconciliationRequired.matches(intent)) {
+                throw ReferenceImportAuthorityInconsistentException()
+            }
+            return GlobalReferenceImportWorkState.RECONCILIATION_REQUIRED
+        }
+
+        val retryable = fileOperationDao.findRetryableOperations(
+            afterCreatedAtEpochMillis = null,
+            afterImportToken = null,
+            limit = 1,
+        ).singleOrNull()
+        if (retryable != null) {
+            val intent = dao.findIntent(retryable.importToken)
+                ?: throw ReferenceImportAuthorityInconsistentException()
+            if (!intent.hasCoherentAuthority() || !retryable.matches(intent)) {
+                throw ReferenceImportAuthorityInconsistentException()
+            }
+            return when (intent.lifecycleState) {
+                PREPARING,
+                ASSET_READY,
+                -> GlobalReferenceImportWorkState.IN_PROGRESS
+                REJECTED_CLEANED,
+                REJECTED_QUARANTINED,
+                -> GlobalReferenceImportWorkState.RECONCILIATION_REQUIRED
+                COMMITTED -> throw ReferenceImportAuthorityInconsistentException()
+                else -> throw ReferenceImportAuthorityInconsistentException()
+            }
+        }
+        if (dao.hasAnyNonterminalIntents()) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        return GlobalReferenceImportWorkState.CLEAR
+    }
+
     fun checkImportAdmission(shootId: String): ReferenceImportAdmissionCheckResult {
         if (!ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
             return ReferenceImportAdmissionCheckResult.Blocked(
@@ -204,52 +246,19 @@ class RoomReferenceImportRepository(
         if (activeSessionCount == 1) {
             return admissionBlocked(ReferenceImportAdmissionCheckBlockReason.ACTIVE_SESSION)
         }
-        requireGlobalFileAuthorityCoherent()
-
+        val globalWork = inspectGlobalImportWorkInCurrentTransaction()
         if (!hasReservationCapacity(shootId)) {
             return admissionBlocked(ReferenceImportAdmissionCheckBlockReason.PLAYLIST_FULL)
         }
 
-        val reconciliationRequired =
-            fileOperationDao.findReconciliationRequiredOperations(limit = 1).singleOrNull()
-        if (reconciliationRequired != null) {
-            val intent = dao.findIntent(reconciliationRequired.importToken)
-                ?: throw ReferenceImportAuthorityInconsistentException()
-            if (!intent.hasCoherentAuthority() || !reconciliationRequired.matches(intent)) {
-                throw ReferenceImportAuthorityInconsistentException()
-            }
-            return admissionBlocked(
+        when (globalWork) {
+            GlobalReferenceImportWorkState.CLEAR -> Unit
+            GlobalReferenceImportWorkState.IN_PROGRESS -> return admissionBlocked(
+                ReferenceImportAdmissionCheckBlockReason.IMPORT_IN_PROGRESS,
+            )
+            GlobalReferenceImportWorkState.RECONCILIATION_REQUIRED -> return admissionBlocked(
                 ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
             )
-        }
-
-        val retryable = fileOperationDao.findRetryableOperations(
-            afterCreatedAtEpochMillis = null,
-            afterImportToken = null,
-            limit = 1,
-        ).singleOrNull()
-        if (retryable != null) {
-            val intent = dao.findIntent(retryable.importToken)
-                ?: throw ReferenceImportAuthorityInconsistentException()
-            if (!intent.hasCoherentAuthority() || !retryable.matches(intent)) {
-                throw ReferenceImportAuthorityInconsistentException()
-            }
-            if (retryable.reconciliationRequired) {
-                return admissionBlocked(
-                    ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
-                )
-            }
-            return when (intent.lifecycleState) {
-                PREPARING,
-                ASSET_READY,
-                -> admissionBlocked(ReferenceImportAdmissionCheckBlockReason.IMPORT_IN_PROGRESS)
-                else -> admissionBlocked(
-                    ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
-                )
-            }
-        }
-        if (dao.hasAnyNonterminalIntents()) {
-            throw ReferenceImportAuthorityInconsistentException()
         }
 
         return ReferenceImportAdmissionCheckResult.Allowed
@@ -833,7 +842,11 @@ class RoomReferenceImportRepository(
             page.forEach { operation ->
                 val intent = dao.findIntent(operation.importToken)
                     ?: throw ReferenceImportAuthorityInconsistentException()
-                if (!intent.hasCoherentAuthority() || !operation.matches(intent)) {
+                if (
+                    !intent.hasCoherentAuthority() ||
+                    !operation.matches(intent) ||
+                    operation.toValidatedSnapshotOrNull() == null
+                ) {
                     throw ReferenceImportAuthorityInconsistentException()
                 }
             }
@@ -879,6 +892,34 @@ class RoomReferenceImportRepository(
         importToken == intent.importToken &&
             relativeAssetPath == intent.relativeAssetPath &&
             createdAtEpochMillis == intent.createdAtEpochMillis
+
+    private fun ReferenceImportFileOperationEntity.toValidatedSnapshotOrNull():
+        ReferenceImportFileOperationSnapshot? =
+        try {
+            val token = ReferenceImportToken(importToken)
+            val expectedPaths = ReferenceImportFileOperationPaths.forToken(token)
+            if (
+                relativeAssetPath != expectedPaths.relativeAssetPath ||
+                relativeTempPath != expectedPaths.relativeTempPath ||
+                relativeQuarantinePath != expectedPaths.relativeQuarantinePath
+            ) {
+                null
+            } else {
+                ReferenceImportFileOperationSnapshot(
+                    importToken = token,
+                    paths = expectedPaths,
+                    stage = stage,
+                    byteCount = byteCount,
+                    sha256 = sha256,
+                    lastFailureCode = lastFailureCode,
+                    reconciliationRequired = reconciliationRequired,
+                    createdAtEpochMillis = createdAtEpochMillis,
+                    updatedAtEpochMillis = updatedAtEpochMillis,
+                )
+            }
+        } catch (_: IllegalArgumentException) {
+            null
+        }
 
     private fun ReferenceImportFileOperationEntity.authorizesLogicalGate(
         intent: ReferenceImportIntentEntity,
@@ -1047,4 +1088,10 @@ class RoomReferenceImportRepository(
             REJECTED_QUARANTINED,
         )
     }
+}
+
+internal enum class GlobalReferenceImportWorkState {
+    CLEAR,
+    IN_PROGRESS,
+    RECONCILIATION_REQUIRED,
 }

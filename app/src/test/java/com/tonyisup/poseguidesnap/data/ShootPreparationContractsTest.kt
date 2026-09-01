@@ -19,6 +19,164 @@ class ShootPreparationContractsTest {
             listOf("IN_PROGRESS", "RECONCILIATION_REQUIRED", "REJECTED_QUARANTINED"),
             ImportWorkStatus.entries.map(Enum<*>::name),
         )
+        assertEquals(
+            listOf(
+                "INVALID_SHOOT_ID",
+                "INVALID_POSE_ID",
+                "INVALID_TIMESTAMP",
+                "INVALID_CARDINALITY",
+                "DUPLICATE_POSE_ID",
+                "ORDER_MISMATCH",
+            ),
+            ShootReorderInvalidReason.entries.map(Enum<*>::name),
+        )
+    }
+
+    @Test
+    fun reorderRequestValidationRejectsUnsafeIdentityCardinalityDuplicatesAndNegativeTime() {
+        listOf("", ".", "..", " shoot", "content://provider/private", "bad/id").forEach { invalid ->
+            assertReorderRequestInvalid(
+                expected = ShootReorderInvalidReason.INVALID_SHOOT_ID,
+                shootId = invalid,
+                orderedPoseIds = listOf("pose-a", "pose-b"),
+                reorderedAtEpochMillis = 1L,
+            )
+            assertReorderRequestInvalid(
+                expected = ShootReorderInvalidReason.INVALID_POSE_ID,
+                shootId = "shoot-safe",
+                orderedPoseIds = listOf("pose-a", invalid),
+                reorderedAtEpochMillis = 1L,
+            )
+        }
+        listOf(0, 1, Shoot.MAX_REFERENCE_POSES + 1).forEach { count ->
+            assertReorderRequestInvalid(
+                expected = ShootReorderInvalidReason.INVALID_CARDINALITY,
+                shootId = "shoot-safe",
+                orderedPoseIds = (0 until count).map { index -> "pose-$index" },
+                reorderedAtEpochMillis = 1L,
+            )
+        }
+        assertReorderRequestInvalid(
+            expected = ShootReorderInvalidReason.DUPLICATE_POSE_ID,
+            shootId = "shoot-safe",
+            orderedPoseIds = listOf("pose-a", "pose-a"),
+            reorderedAtEpochMillis = 1L,
+        )
+        assertReorderRequestInvalid(
+            expected = ShootReorderInvalidReason.INVALID_TIMESTAMP,
+            shootId = "shoot-safe",
+            orderedPoseIds = listOf("pose-a", "pose-b"),
+            reorderedAtEpochMillis = -1L,
+        )
+    }
+
+    @Test
+    fun validReorderRequestSnapshotsCallerListAndRedactsItsRepresentation() {
+        val callerOwned = mutableListOf("pose-a", "pose-b", "pose-c")
+
+        val validation = ShootReorderPolicy.validateRequest(
+            shootId = "shoot-secret",
+            orderedPoseIds = callerOwned,
+            reorderedAtEpochMillis = 11L,
+        )
+
+        assertTrue(validation is ShootReorderRequestValidation.Valid)
+        validation as ShootReorderRequestValidation.Valid
+        callerOwned.clear()
+        assertEquals(listOf("pose-a", "pose-b", "pose-c"), validation.orderedPoseIds)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (validation.orderedPoseIds as MutableList<String>).clear()
+        }
+        val rendered = validation.toString()
+        assertEquals("ShootReorderRequestValidation.Valid(redacted)", rendered)
+        listOf("shoot-secret", "pose-a", "pose-b", "pose-c").forEach { secret ->
+            assertFalse(rendered.contains(secret))
+        }
+    }
+
+    @Test
+    fun reorderOrderDecisionRequiresExactSetAndExplicitTimestampPolicy() {
+        val current = listOf("pose-a", "pose-b", "pose-c")
+
+        assertEquals(
+            ShootReorderOrderDecision.MUTATE,
+            ShootReorderPolicy.classifyValidatedOrder(current, listOf("pose-c", "pose-a", "pose-b"), 10L, 11L),
+        )
+        assertEquals(
+            ShootReorderOrderDecision.ALREADY_ORDERED,
+            ShootReorderPolicy.classifyValidatedOrder(current, current, 10L, 10L),
+        )
+        assertEquals(
+            ShootReorderOrderDecision.ALREADY_ORDERED,
+            ShootReorderPolicy.classifyValidatedOrder(current, current, 10L, 99L),
+        )
+        assertEquals(
+            ShootReorderOrderDecision.STALE_TIMESTAMP,
+            ShootReorderPolicy.classifyValidatedOrder(current, current, 10L, 9L),
+        )
+        assertEquals(
+            ShootReorderOrderDecision.STALE_TIMESTAMP,
+            ShootReorderPolicy.classifyValidatedOrder(current, listOf("pose-b", "pose-a", "pose-c"), 10L, 10L),
+        )
+        listOf(
+            listOf("pose-a", "pose-b"),
+            listOf("pose-a", "pose-b", "pose-c", "pose-foreign"),
+            listOf("pose-a", "pose-b", "pose-foreign"),
+            listOf("pose-a", "pose-a", "pose-c"),
+        ).forEach { invalid ->
+            assertEquals(
+                ShootReorderOrderDecision.INVALID_ORDER,
+                ShootReorderPolicy.classifyValidatedOrder(current, invalid, 10L, 11L),
+            )
+        }
+        assertEquals(
+            ShootReorderOrderDecision.AUTHORITY_INCONSISTENT,
+            ShootReorderPolicy.classifyValidatedOrder(
+                listOf("pose-a", "pose-a", "pose-c"),
+                current,
+                10L,
+                11L,
+            ),
+        )
+        assertEquals(
+            ShootReorderOrderDecision.AUTHORITY_INCONSISTENT,
+            ShootReorderPolicy.classifyValidatedOrder(current, current, -1L, 11L),
+        )
+    }
+
+    @Test
+    fun reorderResultsAreClosedStableAndValueFree() {
+        val results = listOf(
+            ShootReorderResult.Reordered,
+            ShootReorderResult.AlreadyOrdered,
+            ShootReorderResult.InvalidRequest(ShootReorderInvalidReason.ORDER_MISMATCH),
+            ShootReorderResult.UnknownShoot,
+            ShootReorderResult.ShootDeleting,
+            ShootReorderResult.ActiveSession,
+            ShootReorderResult.UnresolvedImportWork,
+            ShootReorderResult.StaleTimestamp,
+            ShootReorderResult.AuthorityInconsistent,
+        )
+        assertEquals(9, results.map { it::class }.distinct().size)
+        assertEquals(
+            listOf(
+                "ShootReorderResult.Reordered",
+                "ShootReorderResult.AlreadyOrdered",
+                "ShootReorderResult.InvalidRequest(reason=ORDER_MISMATCH)",
+                "ShootReorderResult.UnknownShoot",
+                "ShootReorderResult.ShootDeleting",
+                "ShootReorderResult.ActiveSession",
+                "ShootReorderResult.UnresolvedImportWork",
+                "ShootReorderResult.StaleTimestamp",
+                "ShootReorderResult.AuthorityInconsistent",
+            ),
+            results.map(Any::toString),
+        )
+        results.forEach { result ->
+            assertFalse(result.toString().contains("shoot-secret"))
+            assertFalse(result.toString().contains("pose-secret"))
+            assertFalse(result.toString().contains("content://", ignoreCase = true))
+        }
     }
 
     @Test
@@ -287,4 +445,21 @@ class ShootPreparationContractsTest {
         label = "Pose $index",
         mirrorAllowed = true,
     )
+
+    private fun assertReorderRequestInvalid(
+        expected: ShootReorderInvalidReason,
+        shootId: String,
+        orderedPoseIds: List<String>,
+        reorderedAtEpochMillis: Long,
+    ) {
+        val validation = ShootReorderPolicy.validateRequest(
+            shootId = shootId,
+            orderedPoseIds = orderedPoseIds,
+            reorderedAtEpochMillis = reorderedAtEpochMillis,
+        )
+        assertTrue(validation is ShootReorderRequestValidation.Invalid)
+        validation as ShootReorderRequestValidation.Invalid
+        assertEquals(ShootReorderResult.InvalidRequest(expected), validation.result)
+        assertEquals("ShootReorderRequestValidation.Invalid(redacted)", validation.toString())
+    }
 }

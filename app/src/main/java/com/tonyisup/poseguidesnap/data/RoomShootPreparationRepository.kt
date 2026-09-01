@@ -1,12 +1,14 @@
 package com.tonyisup.poseguidesnap.data
 
 import android.database.sqlite.SQLiteConstraintException
+import android.database.sqlite.SQLiteException
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.data.db.ShootEntity
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationEditorRow
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationImportWorkRow
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationPoseRow
 import com.tonyisup.poseguidesnap.data.db.ShootPreparationShootRow
+import com.tonyisup.poseguidesnap.data.db.ShootPoseEntity
 import com.tonyisup.poseguidesnap.domain.model.Shoot
 import java.util.ArrayList
 import java.util.Collections
@@ -59,6 +61,179 @@ class RoomShootPreparationRepository(
         dao.observeEditorRows(shootId).map { rows ->
             toEditorSnapshot(rows)
         }
+
+    fun reorderValidatedReferences(
+        shootId: String,
+        orderedPoseIds: List<String>,
+        reorderedAtEpochMillis: Long,
+    ): ShootReorderResult {
+        val validation = try {
+            ShootReorderPolicy.validateRequest(
+                shootId = shootId,
+                orderedPoseIds = orderedPoseIds,
+                reorderedAtEpochMillis = reorderedAtEpochMillis,
+            )
+        } catch (_: RuntimeException) {
+            return ShootReorderResult.AuthorityInconsistent
+        }
+        return when (validation) {
+            is ShootReorderRequestValidation.Invalid -> validation.result
+            is ShootReorderRequestValidation.Valid -> try {
+                inTransaction { reorderValidatedReferencesInTransaction(validation) }
+            } catch (_: SQLiteConstraintException) {
+                classifyReorderRace(validation)
+            } catch (_: SQLiteException) {
+                classifyReorderRace(validation)
+            } catch (_: ShootReorderCasException) {
+                classifyReorderRace(validation)
+            } catch (_: Exception) {
+                ShootReorderResult.AuthorityInconsistent
+            }
+        }
+    }
+
+    private fun reorderValidatedReferencesInTransaction(
+        request: ShootReorderRequestValidation.Valid,
+    ): ShootReorderResult {
+        val preparation = prepareReorderInCurrentTransaction(request)
+        if (preparation is ShootReorderPreparation.Closed) return preparation.result
+        preparation as ShootReorderPreparation.Ready
+
+        preparation.poses.forEach { pose ->
+            requireReorderCas(
+                dao.compareAndSetPoseIndex(
+                    shootId = request.shootId,
+                    poseId = pose.poseId,
+                    expectedPoseIndex = pose.poseIndex,
+                    targetPoseIndex = -(pose.poseIndex + 1),
+                ),
+            )
+        }
+        val originalIndices = preparation.poses
+            .associate { pose -> pose.poseId to pose.poseIndex }
+        request.orderedPoseIds.forEachIndexed { targetIndex, poseId ->
+            val originalIndex = originalIndices[poseId] ?: throw ShootReorderCasException()
+            requireReorderCas(
+                dao.compareAndSetPoseIndex(
+                    shootId = request.shootId,
+                    poseId = poseId,
+                    expectedPoseIndex = -(originalIndex + 1),
+                    targetPoseIndex = targetIndex,
+                ),
+            )
+        }
+        requireReorderCas(
+            dao.compareAndSetShootUpdatedAt(
+                shootId = request.shootId,
+                expectedDeletionGeneration = preparation.shoot.deletionGeneration,
+                expectedUpdatedAtEpochMillis = preparation.shoot.updatedAtEpochMillis,
+                reorderedAtEpochMillis = request.reorderedAtEpochMillis,
+            ),
+        )
+
+        val expectedById = preparation.poses.associateBy(ShootPoseEntity::poseId)
+        val finalPoses = dao.findAllPoseEntitiesInOrder(request.shootId)
+        if (
+            finalPoses.size != preparation.poses.size ||
+            finalPoses.map(ShootPoseEntity::poseId) != request.orderedPoseIds ||
+            finalPoses.anyIndexed { index, pose ->
+                pose.poseIndex != index || pose != expectedById[pose.poseId]?.copy(poseIndex = index)
+            }
+        ) {
+            throw ShootReorderCasException()
+        }
+        val finalShoot = dao.findShoot(request.shootId) ?: throw ShootReorderCasException()
+        finalShoot.requireCoherentProjection()
+        if (
+            finalShoot != preparation.shoot.copy(
+                updatedAtEpochMillis = request.reorderedAtEpochMillis,
+            )
+        ) {
+            throw ShootReorderCasException()
+        }
+        return ShootReorderResult.Reordered
+    }
+
+    private fun prepareReorderInCurrentTransaction(
+        request: ShootReorderRequestValidation.Valid,
+    ): ShootReorderPreparation {
+        val shoot = dao.findShoot(request.shootId)
+            ?: return ShootReorderPreparation.Closed(ShootReorderResult.UnknownShoot)
+        if (shoot.shootId != request.shootId) throw ShootPreparationProjectionException()
+        when (shoot.requireCoherentProjection()) {
+            ShootPreparationLifecycle.DELETING ->
+                return ShootReorderPreparation.Closed(ShootReorderResult.ShootDeleting)
+            ShootPreparationLifecycle.ACTIVE -> Unit
+        }
+
+        val activeSessionCount = dao.countActiveSessions(request.shootId)
+        if (activeSessionCount !in 0..1) throw ShootPreparationProjectionException()
+        if (activeSessionCount == 1) {
+            return ShootReorderPreparation.Closed(ShootReorderResult.ActiveSession)
+        }
+        if (
+            RoomReferenceImportRepository(database).inspectGlobalImportWorkInCurrentTransaction() !=
+            GlobalReferenceImportWorkState.CLEAR
+        ) {
+            return ShootReorderPreparation.Closed(ShootReorderResult.UnresolvedImportWork)
+        }
+
+        val poses = dao.findAllPoseEntitiesInOrder(request.shootId)
+        if (
+            poses.size !in 2..Shoot.MAX_REFERENCE_POSES ||
+            poses.size.toLong() != shoot.acceptedReferenceCount ||
+            poses.size.toLong() != shoot.totalReferenceCount ||
+            poses.map(ShootPoseEntity::poseId).distinct().size != poses.size ||
+            poses.anyIndexed { index, pose ->
+                !pose.hasCoherentReorderAuthority(request.shootId, index)
+            }
+        ) {
+            throw ShootPreparationProjectionException()
+        }
+
+        return when (
+            ShootReorderPolicy.classifyValidatedOrder(
+                currentPoseIds = poses.map(ShootPoseEntity::poseId),
+                orderedPoseIds = request.orderedPoseIds,
+                persistedUpdatedAtEpochMillis = shoot.updatedAtEpochMillis,
+                reorderedAtEpochMillis = request.reorderedAtEpochMillis,
+            )
+        ) {
+            ShootReorderOrderDecision.MUTATE -> ShootReorderPreparation.Ready(shoot, poses)
+            ShootReorderOrderDecision.ALREADY_ORDERED ->
+                ShootReorderPreparation.Closed(ShootReorderResult.AlreadyOrdered)
+            ShootReorderOrderDecision.INVALID_ORDER -> ShootReorderPreparation.Closed(
+                ShootReorderResult.InvalidRequest(ShootReorderInvalidReason.ORDER_MISMATCH),
+            )
+            ShootReorderOrderDecision.STALE_TIMESTAMP ->
+                ShootReorderPreparation.Closed(ShootReorderResult.StaleTimestamp)
+            ShootReorderOrderDecision.AUTHORITY_INCONSISTENT ->
+                throw ShootPreparationProjectionException()
+        }
+    }
+
+    private fun classifyReorderRace(
+        request: ShootReorderRequestValidation.Valid,
+    ): ShootReorderResult =
+        try {
+            inTransaction {
+                when (val preparation = prepareReorderInCurrentTransaction(request)) {
+                    is ShootReorderPreparation.Closed -> preparation.result
+                    is ShootReorderPreparation.Ready -> ShootReorderResult.AuthorityInconsistent
+                }
+            }
+        } catch (_: Exception) {
+            ShootReorderResult.AuthorityInconsistent
+        }
+
+    private fun requireReorderCas(updatedRowCount: Int) {
+        if (updatedRowCount != 1) throw ShootReorderCasException()
+    }
+
+    private inline fun <T> List<T>.anyIndexed(predicate: (Int, T) -> Boolean): Boolean {
+        forEachIndexed { index, value -> if (predicate(index, value)) return true }
+        return false
+    }
 
     override fun toString(): String = "RoomShootPreparationRepository(redacted)"
 
@@ -334,6 +509,46 @@ class RoomShootPreparationRepository(
         }
     }
 
+    private fun ShootPoseEntity.hasCoherentReorderAuthority(
+        expectedShootId: String,
+        expectedIndex: Int,
+    ): Boolean {
+        if (
+            shootId != expectedShootId ||
+            poseIndex != expectedIndex ||
+            !ReferenceImportPolicy.validateOwnershipIdentity(poseId) ||
+            !label.isSafeProjectionText()
+        ) {
+            return false
+        }
+        return when (validationState) {
+            VALID ->
+                referenceAssetPath == null &&
+                    detectorMetadata == null &&
+                    modelMetadata == null &&
+                    preprocessingMetadata == null &&
+                    landmarkPayload == null &&
+                    coordinateMetadata == null
+            VALIDATED ->
+                referenceAssetPath != null &&
+                    VALIDATED_REFERENCE_ASSET_PATH.matches(referenceAssetPath) &&
+                    detectorMetadata.isSafeAuthorityEvidence() &&
+                    modelMetadata.isSafeAuthorityEvidence() &&
+                    preprocessingMetadata.isSafeAuthorityEvidence() &&
+                    landmarkPayload.isSafeLandmarkAuthorityEvidence() &&
+                    coordinateMetadata.isSafeAuthorityEvidence()
+            else -> false
+        }
+    }
+
+    private fun String?.isSafeAuthorityEvidence(): Boolean =
+        this != null && isNotBlank() && '\u0000' !in this &&
+            !URI_SCHEME.containsMatchIn(this)
+
+    private fun String?.isSafeLandmarkAuthorityEvidence(): Boolean =
+        isSafeAuthorityEvidence() && requireNotNull(this).startsWith(LANDMARK_PAYLOAD_PREFIX) &&
+            length > LANDMARK_PAYLOAD_PREFIX.length
+
     private fun ShootPreparationImportWorkRow.toValidatedImportWork(): ImportWorkSummary {
         val token = try {
             ReferenceImportToken(importToken)
@@ -465,14 +680,33 @@ class RoomShootPreparationRepository(
         override fun toString(): String = "ShootPreparationProjectionException"
     }
 
+    private class ShootReorderCasException : RuntimeException() {
+        override fun toString(): String = "ShootReorderCasException"
+    }
+
+    private sealed interface ShootReorderPreparation {
+        data class Ready(
+            val shoot: ShootPreparationShootRow,
+            val poses: List<ShootPoseEntity>,
+        ) : ShootReorderPreparation
+
+        data class Closed(val result: ShootReorderResult) : ShootReorderPreparation
+    }
+
     private companion object {
         const val ACTIVE = "ACTIVE"
         const val DELETING = "DELETING"
         const val PREPARING = "PREPARING"
         const val ASSET_READY = "ASSET_READY"
+        const val VALID = "VALID"
+        const val VALIDATED = "VALIDATED"
         const val REJECTED_QUARANTINED = "REJECTED_QUARANTINED"
         const val PROVIDER_URI_PREFIX = "content://"
+        const val LANDMARK_PAYLOAD_PREFIX = "v1|"
         val MAX_REFERENCE_COUNT = Shoot.MAX_REFERENCE_POSES.toLong()
-        val ACCEPTED_VALIDATION_STATES = setOf("VALID", "VALIDATED")
+        val ACCEPTED_VALIDATION_STATES = setOf(VALID, VALIDATED)
+        val VALIDATED_REFERENCE_ASSET_PATH =
+            Regex("reference-assets/assets/[0-9a-f]{64}\\.asset")
+        val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*://")
     }
 }

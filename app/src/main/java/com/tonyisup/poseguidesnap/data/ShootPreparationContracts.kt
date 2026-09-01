@@ -121,6 +121,152 @@ class ShootEditorSnapshot(
     override fun toString(): String = "ShootEditorSnapshot(redacted)"
 }
 
+enum class ShootReorderInvalidReason {
+    INVALID_SHOOT_ID,
+    INVALID_POSE_ID,
+    INVALID_TIMESTAMP,
+    INVALID_CARDINALITY,
+    DUPLICATE_POSE_ID,
+    ORDER_MISMATCH,
+}
+
+sealed interface ShootReorderResult {
+    data object Reordered : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.Reordered"
+    }
+
+    data object AlreadyOrdered : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.AlreadyOrdered"
+    }
+
+    data class InvalidRequest(val reason: ShootReorderInvalidReason) : ShootReorderResult {
+        override fun toString(): String =
+            "ShootReorderResult.InvalidRequest(reason=${reason.name})"
+    }
+
+    data object UnknownShoot : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.UnknownShoot"
+    }
+
+    data object ShootDeleting : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.ShootDeleting"
+    }
+
+    data object ActiveSession : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.ActiveSession"
+    }
+
+    data object UnresolvedImportWork : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.UnresolvedImportWork"
+    }
+
+    data object StaleTimestamp : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.StaleTimestamp"
+    }
+
+    data object AuthorityInconsistent : ShootReorderResult {
+        override fun toString(): String = "ShootReorderResult.AuthorityInconsistent"
+    }
+}
+
+internal sealed interface ShootReorderRequestValidation {
+    class Valid(
+        val shootId: String,
+        orderedPoseIds: Iterable<String>,
+        val reorderedAtEpochMillis: Long,
+    ) : ShootReorderRequestValidation {
+        val orderedPoseIds: List<String> = immutableProjectionList(orderedPoseIds)
+
+        override fun toString(): String = "ShootReorderRequestValidation.Valid(redacted)"
+    }
+
+    data class Invalid(val result: ShootReorderResult) : ShootReorderRequestValidation {
+        override fun toString(): String = "ShootReorderRequestValidation.Invalid(redacted)"
+    }
+}
+
+internal enum class ShootReorderOrderDecision {
+    MUTATE,
+    ALREADY_ORDERED,
+    INVALID_ORDER,
+    STALE_TIMESTAMP,
+    AUTHORITY_INCONSISTENT,
+}
+
+internal object ShootReorderPolicy {
+    fun validateRequest(
+        shootId: String,
+        orderedPoseIds: List<String>,
+        reorderedAtEpochMillis: Long,
+    ): ShootReorderRequestValidation {
+        val poseIdSnapshot = ArrayList(orderedPoseIds)
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
+            return invalid(ShootReorderInvalidReason.INVALID_SHOOT_ID)
+        }
+        if (reorderedAtEpochMillis < 0L) {
+            return invalid(ShootReorderInvalidReason.INVALID_TIMESTAMP)
+        }
+        if (poseIdSnapshot.size !in 2..Shoot.MAX_REFERENCE_POSES) {
+            return invalid(ShootReorderInvalidReason.INVALID_CARDINALITY)
+        }
+        if (poseIdSnapshot.any { poseId ->
+                !ReferenceImportPolicy.validateOwnershipIdentity(poseId)
+            }
+        ) {
+            return invalid(ShootReorderInvalidReason.INVALID_POSE_ID)
+        }
+        if (poseIdSnapshot.distinct().size != poseIdSnapshot.size) {
+            return invalid(ShootReorderInvalidReason.DUPLICATE_POSE_ID)
+        }
+        return ShootReorderRequestValidation.Valid(
+            shootId = shootId,
+            orderedPoseIds = poseIdSnapshot,
+            reorderedAtEpochMillis = reorderedAtEpochMillis,
+        )
+    }
+
+    fun classifyValidatedOrder(
+        currentPoseIds: List<String>,
+        orderedPoseIds: List<String>,
+        persistedUpdatedAtEpochMillis: Long,
+        reorderedAtEpochMillis: Long,
+    ): ShootReorderOrderDecision {
+        if (
+            persistedUpdatedAtEpochMillis < 0L ||
+            reorderedAtEpochMillis < 0L ||
+            currentPoseIds.size !in 2..Shoot.MAX_REFERENCE_POSES ||
+            currentPoseIds.any { poseId ->
+                !ReferenceImportPolicy.validateOwnershipIdentity(poseId)
+            } ||
+            currentPoseIds.distinct().size != currentPoseIds.size
+        ) {
+            return ShootReorderOrderDecision.AUTHORITY_INCONSISTENT
+        }
+        if (
+            orderedPoseIds.size != currentPoseIds.size ||
+            orderedPoseIds.distinct().size != orderedPoseIds.size ||
+            orderedPoseIds.toSet() != currentPoseIds.toSet()
+        ) {
+            return ShootReorderOrderDecision.INVALID_ORDER
+        }
+        if (orderedPoseIds == currentPoseIds) {
+            return if (reorderedAtEpochMillis < persistedUpdatedAtEpochMillis) {
+                ShootReorderOrderDecision.STALE_TIMESTAMP
+            } else {
+                ShootReorderOrderDecision.ALREADY_ORDERED
+            }
+        }
+        return if (reorderedAtEpochMillis <= persistedUpdatedAtEpochMillis) {
+            ShootReorderOrderDecision.STALE_TIMESTAMP
+        } else {
+            ShootReorderOrderDecision.MUTATE
+        }
+    }
+
+    private fun invalid(reason: ShootReorderInvalidReason): ShootReorderRequestValidation =
+        ShootReorderRequestValidation.Invalid(ShootReorderResult.InvalidRequest(reason))
+}
+
 private fun requireProjectionText(value: String, field: String) {
     require(
         value.isNotBlank() &&

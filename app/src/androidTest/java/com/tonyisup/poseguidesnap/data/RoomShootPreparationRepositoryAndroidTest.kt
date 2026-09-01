@@ -6,6 +6,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -586,6 +589,456 @@ class RoomShootPreparationRepositoryAndroidTest {
         }
     }
 
+    @Test
+    fun reorderThreeReferencesPersistsAcrossReopenAndChangesOnlyOrderAndShootTimestamp() = runBlocking {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-reorder-three", "Reorder three", createdAt = 1L, updatedAt = 10L)
+        (0 until 3).forEach { index ->
+            seedPose(
+                sqlite,
+                "shoot-reorder-three",
+                index,
+                "pose-$index",
+                if (index == 0) "VALID" else "VALIDATED",
+                "Pose $index",
+                index % 2 == 0,
+            )
+        }
+        val beforeRows = sqlite.poseAuthorityRows("shoot-reorder-three")
+
+        assertEquals(
+            ShootReorderResult.Reordered,
+            repository().reorderValidatedReferences(
+                "shoot-reorder-three",
+                listOf("pose-2", "pose-0", "pose-1"),
+                20L,
+            ),
+        )
+        assertEquals(listOf("pose-2", "pose-0", "pose-1"), sqlite.poseOrder("shoot-reorder-three"))
+        assertEquals(20L, sqlite.shootUpdatedAt("shoot-reorder-three"))
+        assertEquals(beforeRows, sqlite.poseAuthorityRows("shoot-reorder-three"))
+
+        database?.close()
+        database = null
+        val reopened = requireNotNull(repository().observeShootEditor("shoot-reorder-three").first())
+        assertEquals(listOf("pose-2", "pose-0", "pose-1"), reopened.validatedReferences.map { it.poseId })
+        assertEquals(listOf(0, 1, 2), reopened.validatedReferences.map { it.poseIndex })
+        assertEquals(20L, reopened.updatedAtEpochMillis)
+    }
+
+    @Test
+    fun reorderRejectsCorruptOrIncompleteValidatedPoseAuthorityWithoutWrites() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val corruptions = listOf(
+            "missing-path" to "reference_asset_path = NULL",
+            "provider-path" to "reference_asset_path = 'content://provider/private'",
+            "absolute-path" to "reference_asset_path = '/data/user/0/private.asset'",
+            "wrong-private-path" to "reference_asset_path = 'reference-assets/private/pose.asset'",
+            "traversal-path" to "reference_asset_path = 'reference-assets/assets/../pose.asset'",
+            "missing-detector" to "detector_metadata = NULL",
+            "provider-detector" to "detector_metadata = 'content://provider/private'",
+            "missing-model" to "model_metadata = NULL",
+            "missing-preprocessing" to "preprocessing_metadata = NULL",
+            "missing-landmarks" to "landmark_payload = NULL",
+            "wrong-landmark-format" to "landmark_payload = 'NOSE,0.5,0.5,0.0,1.0,1.0'",
+            "missing-coordinates" to "coordinate_metadata = NULL",
+        )
+        corruptions.forEach { (suffix, corruptionSql) ->
+            val shootId = "shoot-authority-$suffix"
+            seedShoot(sqlite, shootId, "Authority $suffix", createdAt = 1L, updatedAt = 10L)
+            seedPose(sqlite, shootId, 0, "pose-$suffix-a", "VALIDATED", "A", false)
+            seedPose(sqlite, shootId, 1, "pose-$suffix-b", "VALIDATED", "B", false)
+            sqlite.execSQL(
+                "UPDATE shoot_poses SET $corruptionSql WHERE shoot_id = ? AND pose_index = 0",
+                arrayOf<Any>(shootId),
+            )
+        }
+        val legacyMixedShootId = "shoot-authority-legacy-mixed"
+        seedShoot(
+            sqlite,
+            legacyMixedShootId,
+            "Authority legacy mixed",
+            createdAt = 1L,
+            updatedAt = 10L,
+        )
+        seedPose(sqlite, legacyMixedShootId, 0, "pose-legacy-mixed-a", "VALID", "A", false)
+        seedPose(sqlite, legacyMixedShootId, 1, "pose-legacy-mixed-b", "VALID", "B", false)
+        sqlite.execSQL(
+            "UPDATE shoot_poses SET detector_metadata = 'mixed-evidence' " +
+                "WHERE shoot_id = ? AND pose_index = 0",
+            arrayOf<Any>(legacyMixedShootId),
+        )
+        val repository = repository()
+
+        (corruptions.map { (suffix, _) -> suffix } + "legacy-mixed").forEach { suffix ->
+            val shootId = "shoot-authority-$suffix"
+            val beforeOrder = sqlite.poseIndexRows(shootId)
+            assertEquals(
+                ShootReorderResult.AuthorityInconsistent,
+                repository.reorderValidatedReferences(
+                    shootId,
+                    listOf("pose-$suffix-b", "pose-$suffix-a"),
+                    20L,
+                ),
+            )
+            assertEquals(beforeOrder, sqlite.poseIndexRows(shootId))
+            assertEquals(10L, sqlite.shootUpdatedAt(shootId))
+        }
+    }
+
+    @Test
+    fun immutableAuthorityMutationDuringPoseIndexUpdateFailsFinalVerificationAndRollsBack() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootId = "shoot-authority-trigger"
+        seedShoot(sqlite, shootId, "Authority trigger", createdAt = 1L, updatedAt = 10L)
+        (0 until 3).forEach { index ->
+            seedPose(
+                sqlite,
+                shootId,
+                index,
+                "pose-trigger-$index",
+                "VALIDATED",
+                "Pose $index",
+                false,
+            )
+        }
+        val beforeOrder = sqlite.poseIndexRows(shootId)
+        val beforeAuthority = sqlite.poseAuthorityRows(shootId)
+        sqlite.execSQL(
+            """
+            CREATE TRIGGER test_mutate_pose_authority_during_reorder
+            AFTER UPDATE OF pose_index ON shoot_poses
+            FOR EACH ROW
+            WHEN NEW.shoot_id = 'shoot-authority-trigger' AND NEW.pose_id = 'pose-trigger-0'
+            BEGIN
+                UPDATE shoot_poses
+                SET detector_metadata = 'trigger-mutated-detector'
+                WHERE shoot_id = NEW.shoot_id AND pose_id = NEW.pose_id;
+            END
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            ShootReorderResult.AuthorityInconsistent,
+            repository().reorderValidatedReferences(
+                shootId,
+                listOf("pose-trigger-2", "pose-trigger-0", "pose-trigger-1"),
+                20L,
+            ),
+        )
+        assertEquals(beforeOrder, sqlite.poseIndexRows(shootId))
+        assertEquals(beforeAuthority, sqlite.poseAuthorityRows(shootId))
+        assertEquals(10L, sqlite.shootUpdatedAt(shootId))
+    }
+
+    @Test
+    fun reorderTwentyReferencesAndExactReplayDoesNotWrite() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-reorder-twenty", "Reorder twenty", createdAt = 1L, updatedAt = 10L)
+        val original = (0 until 20).map { index -> "pose-$index" }
+        original.forEachIndexed { index, poseId ->
+            seedPose(sqlite, "shoot-reorder-twenty", index, poseId, "VALIDATED", "Pose $index", false)
+        }
+        val requested = original.reversed()
+        val repository = repository()
+
+        assertEquals(
+            ShootReorderResult.Reordered,
+            repository.reorderValidatedReferences("shoot-reorder-twenty", requested, 20L),
+        )
+        val afterReorder = sqlite.poseIndexRows("shoot-reorder-twenty")
+        assertEquals(requested, sqlite.poseOrder("shoot-reorder-twenty"))
+        assertEquals(
+            ShootReorderResult.AlreadyOrdered,
+            repository.reorderValidatedReferences("shoot-reorder-twenty", requested, 20L),
+        )
+        assertEquals(afterReorder, sqlite.poseIndexRows("shoot-reorder-twenty"))
+        assertEquals(20L, sqlite.shootUpdatedAt("shoot-reorder-twenty"))
+    }
+
+    @Test
+    fun reorderRejectsDuplicateMissingForeignPartialAndSupersetOrdersWithoutWrites() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-invalid-order", "Invalid order", createdAt = 1L, updatedAt = 10L)
+        (0 until 3).forEach { index ->
+            seedPose(sqlite, "shoot-invalid-order", index, "pose-$index", "VALIDATED", "Pose $index", false)
+        }
+        val before = sqlite.poseIndexRows("shoot-invalid-order")
+        val repository = repository()
+        listOf(
+            listOf("pose-0", "pose-0", "pose-2") to ShootReorderInvalidReason.DUPLICATE_POSE_ID,
+            listOf("pose-0", "pose-1") to ShootReorderInvalidReason.ORDER_MISMATCH,
+            listOf("pose-0", "pose-1", "pose-foreign") to ShootReorderInvalidReason.ORDER_MISMATCH,
+            listOf("pose-0", "pose-1", "pose-2", "pose-foreign") to ShootReorderInvalidReason.ORDER_MISMATCH,
+        ).forEach { (order, reason) ->
+            assertEquals(
+                ShootReorderResult.InvalidRequest(reason),
+                repository.reorderValidatedReferences("shoot-invalid-order", order, 20L),
+            )
+            assertEquals(before, sqlite.poseIndexRows("shoot-invalid-order"))
+            assertEquals(10L, sqlite.shootUpdatedAt("shoot-invalid-order"))
+        }
+    }
+
+    @Test
+    fun reorderDistinguishesUnknownDeletingActiveSessionAndGlobalUnresolvedWork() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf("deleting", "session", "unresolved-source", "unresolved-target").forEach { suffix ->
+            seedShoot(sqlite, "shoot-$suffix", "Shoot $suffix", createdAt = 1L, updatedAt = 10L)
+        }
+        listOf("deleting", "session", "unresolved-target").forEach { suffix ->
+            seedPose(sqlite, "shoot-$suffix", 0, "pose-$suffix-a", "VALIDATED", "A", false)
+            seedPose(sqlite, "shoot-$suffix", 1, "pose-$suffix-b", "VALIDATED", "B", false)
+        }
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
+                "WHERE shoot_id = 'shoot-deleting'",
+        )
+        seedActiveSession(sqlite, "shoot-session")
+        seedImportWork(
+            sqlite = sqlite,
+            shootId = "shoot-unresolved-source",
+            token = "global-unresolved-token",
+            poseId = "global-unresolved-pose",
+            lifecycleState = "PREPARING",
+            createdAt = 10L,
+            intentUpdatedAt = 10L,
+            fileStage = "EXPECTING_RESERVATION",
+            fileUpdatedAt = 10L,
+            reconciliationRequired = false,
+        )
+        val repository = repository()
+
+        assertEquals(
+            ShootReorderResult.UnknownShoot,
+            repository.reorderValidatedReferences("shoot-unknown", listOf("pose-a", "pose-b"), 20L),
+        )
+        assertEquals(
+            ShootReorderResult.ShootDeleting,
+            repository.reorderValidatedReferences(
+                "shoot-deleting",
+                listOf("pose-deleting-b", "pose-deleting-a"),
+                20L,
+            ),
+        )
+        assertEquals(
+            ShootReorderResult.ActiveSession,
+            repository.reorderValidatedReferences(
+                "shoot-session",
+                listOf("pose-session-b", "pose-session-a"),
+                20L,
+            ),
+        )
+        assertEquals(
+            ShootReorderResult.UnresolvedImportWork,
+            repository.reorderValidatedReferences(
+                "shoot-unresolved-target",
+                listOf("pose-unresolved-target-b", "pose-unresolved-target-a"),
+                20L,
+            ),
+        )
+    }
+
+    @Test
+    fun reorderFailsClosedForMissingMismatchedLedgerAndCorruptPersistedPlaylist() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf("missing-ledger", "mismatched-ledger", "gap", "negative", "validation").forEach { suffix ->
+            seedShoot(sqlite, "shoot-$suffix", "Shoot $suffix", createdAt = 1L, updatedAt = 10L)
+        }
+        listOf("missing-ledger", "mismatched-ledger").forEach { suffix ->
+            seedPose(sqlite, "shoot-$suffix", 0, "pose-$suffix-a", "VALIDATED", "A", false)
+            seedPose(sqlite, "shoot-$suffix", 1, "pose-$suffix-b", "VALIDATED", "B", false)
+        }
+        seedImportWork(
+            sqlite,
+            "shoot-missing-ledger",
+            "missing-global-ledger-token",
+            "missing-global-ledger-pose",
+            "REJECTED_QUARANTINED",
+            1L,
+            2L,
+            "QUARANTINE_DURABLE",
+            2L,
+            false,
+            terminalAt = 2L,
+        )
+        sqlite.execSQL(
+            "DELETE FROM reference_import_file_operations WHERE import_token = 'missing-global-ledger-token'",
+        )
+        seedImportWork(
+            sqlite,
+            "shoot-mismatched-ledger",
+            "mismatched-global-ledger-token",
+            "mismatched-global-ledger-pose",
+            "REJECTED_CLEANED",
+            3L,
+            4L,
+            "CLEANED_DURABLE",
+            4L,
+            false,
+            terminalAt = 4L,
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_file_operations SET relative_temp_path = 'wrong/private.tmp' " +
+                "WHERE import_token = 'mismatched-global-ledger-token'",
+        )
+        seedPose(sqlite, "shoot-gap", 0, "pose-gap-a", "VALIDATED", "A", false)
+        seedPose(sqlite, "shoot-gap", 2, "pose-gap-b", "VALIDATED", "B", false)
+        seedPose(sqlite, "shoot-negative", -1, "pose-negative-a", "VALIDATED", "A", false)
+        seedPose(sqlite, "shoot-negative", 0, "pose-negative-b", "VALIDATED", "B", false)
+        seedPose(sqlite, "shoot-validation", 0, "pose-validation-a", "VALIDATED", "A", false)
+        seedPose(sqlite, "shoot-validation", 1, "pose-validation-b", "CORRUPT", "B", false)
+        val repository = repository()
+
+        listOf("missing-ledger", "mismatched-ledger").forEach { suffix ->
+            assertEquals(
+                ShootReorderResult.AuthorityInconsistent,
+                repository.reorderValidatedReferences(
+                    "shoot-$suffix",
+                    listOf("pose-$suffix-b", "pose-$suffix-a"),
+                    20L,
+                ),
+            )
+        }
+        listOf("gap", "negative", "validation").forEach { suffix ->
+            assertEquals(
+                ShootReorderResult.AuthorityInconsistent,
+                repository.reorderValidatedReferences(
+                    "shoot-$suffix",
+                    listOf("pose-$suffix-b", "pose-$suffix-a"),
+                    20L,
+                ),
+            )
+            assertEquals(10L, sqlite.shootUpdatedAt("shoot-$suffix"))
+        }
+    }
+
+    @Test
+    fun latePoseConstraintAndShootTimestampCasFailureRollBackAllReorderWrites() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        listOf("constraint", "cas").forEach { suffix ->
+            seedShoot(sqlite, "shoot-$suffix", "Shoot $suffix", createdAt = 1L, updatedAt = 10L)
+            (0 until 3).forEach { index ->
+                seedPose(sqlite, "shoot-$suffix", index, "pose-$suffix-$index", "VALIDATED", "Pose", false)
+            }
+        }
+        sqlite.execSQL(
+            """
+            CREATE TRIGGER test_fail_final_reorder_index
+            BEFORE UPDATE OF pose_index ON shoot_poses
+            FOR EACH ROW
+            WHEN NEW.shoot_id = 'shoot-constraint' AND NEW.pose_index = 1
+            BEGIN
+                SELECT RAISE(ABORT, 'test reorder index failure');
+            END
+            """.trimIndent(),
+        )
+        sqlite.execSQL(
+            """
+            CREATE TRIGGER test_force_reorder_timestamp_cas_failure
+            AFTER UPDATE OF pose_index ON shoot_poses
+            FOR EACH ROW
+            WHEN NEW.shoot_id = 'shoot-cas' AND NEW.pose_index < 0
+            BEGIN
+                UPDATE shoots SET updated_at_epoch_millis = 99 WHERE shoot_id = NEW.shoot_id;
+            END
+            """.trimIndent(),
+        )
+        val repository = repository()
+
+        listOf("constraint", "cas").forEach { suffix ->
+            val before = sqlite.poseIndexRows("shoot-$suffix")
+            assertEquals(
+                ShootReorderResult.AuthorityInconsistent,
+                repository.reorderValidatedReferences(
+                    "shoot-$suffix",
+                    listOf("pose-$suffix-2", "pose-$suffix-0", "pose-$suffix-1"),
+                    20L,
+                ),
+            )
+            assertEquals(before, sqlite.poseIndexRows("shoot-$suffix"))
+            assertEquals(10L, sqlite.shootUpdatedAt("shoot-$suffix"))
+            assertTrue(sqlite.poseIndexRows("shoot-$suffix").all { row -> row.first >= 0L })
+        }
+    }
+
+    @Test
+    fun reorderLeavesImmutableImportIntentAndFileHistoryUnchanged() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-import-history", "Import history", createdAt = 1L, updatedAt = 10L)
+        seedPose(sqlite, "shoot-import-history", 0, "pose-history-a", "VALIDATED", "A", false)
+        seedPose(sqlite, "shoot-import-history", 1, "pose-history-b", "VALIDATED", "B", false)
+        seedImportWork(
+            sqlite,
+            "shoot-import-history",
+            "history-token",
+            "pose-history-a",
+            "COMMITTED",
+            1L,
+            5L,
+            "FINAL_DURABLE",
+            5L,
+            false,
+            terminalAt = 5L,
+        )
+        val beforeHistory = sqlite.importHistoryRows()
+
+        assertEquals(
+            ShootReorderResult.Reordered,
+            repository().reorderValidatedReferences(
+                "shoot-import-history",
+                listOf("pose-history-b", "pose-history-a"),
+                20L,
+            ),
+        )
+        assertEquals(beforeHistory, sqlite.importHistoryRows())
+    }
+
+    @Test
+    fun concurrentSameTimestampReordersHaveOneWinnerAndOneStaleLoser() {
+        val firstDatabase = openDatabase()
+        val sqlite = firstDatabase.openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-race", "Race", createdAt = 1L, updatedAt = 10L)
+        (0 until 3).forEach { index ->
+            seedPose(sqlite, "shoot-race", index, "pose-race-$index", "VALIDATED", "Pose", false)
+        }
+        val secondDatabase = AppDatabase.create(context, databaseName)
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val firstOrder = listOf("pose-race-2", "pose-race-0", "pose-race-1")
+        val secondOrder = listOf("pose-race-1", "pose-race-2", "pose-race-0")
+        try {
+            val requests = listOf(
+                RoomShootPreparationRepository(firstDatabase) to firstOrder,
+                RoomShootPreparationRepository(secondDatabase) to secondOrder,
+            )
+            val futures = requests.map { (repository, order) ->
+                executor.submit<Pair<List<String>, ShootReorderResult>> {
+                    ready.countDown()
+                    assertTrue(start.await(5, TimeUnit.SECONDS))
+                    order to repository.reorderValidatedReferences("shoot-race", order, 20L)
+                }
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            start.countDown()
+            val outcomes = futures.map { future -> future.get(10, TimeUnit.SECONDS) }
+
+            assertEquals(1, outcomes.count { (_, result) -> result == ShootReorderResult.Reordered })
+            assertEquals(1, outcomes.count { (_, result) -> result == ShootReorderResult.StaleTimestamp })
+            val winningOrder = outcomes.single { (_, result) ->
+                result == ShootReorderResult.Reordered
+            }.first
+            assertEquals(winningOrder, sqlite.poseOrder("shoot-race"))
+            assertEquals((0L..2L).toList(), sqlite.poseIndexRows("shoot-race").map { row -> row.first })
+            assertTrue(sqlite.poseIndexRows("shoot-race").all { row -> row.first >= 0L })
+            assertEquals(20L, sqlite.shootUpdatedAt("shoot-race"))
+        } finally {
+            executor.shutdownNow()
+            secondDatabase.close()
+        }
+    }
+
     private fun openDatabase(): AppDatabase =
         AppDatabase.create(context, databaseName).also { database = it }
 
@@ -625,19 +1078,36 @@ class RoomShootPreparationRepositoryAndroidTest {
         label: String,
         mirrorAllowed: Boolean,
     ) {
+        val validatedAuthority = if (validationState == "VALIDATED") {
+            arrayOf<Any?>(
+                "reference-assets/assets/${"ab".repeat(32)}.asset",
+                "detector=evidence",
+                "model=evidence",
+                "preprocessing=evidence",
+                "v1|NOSE,0.5,0.5,0.0,1.0,1.0",
+                "space=normalized-upright-source",
+            )
+        } else {
+            arrayOfNulls(6)
+        }
         sqlite.execSQL(
             "INSERT INTO shoot_poses (shoot_id, pose_index, pose_id, label, " +
                 "reference_asset_path, mirror_allowed, validation_state, detector_metadata, " +
                 "model_metadata, preprocessing_metadata, landmark_payload, coordinate_metadata) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)",
-            arrayOf<Any>(
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            arrayOf<Any?>(
                 shootId,
                 poseIndex,
                 poseId,
                 label,
-                "reference-assets/private/$poseId",
+                validatedAuthority[0],
                 if (mirrorAllowed) 1 else 0,
                 validationState,
+                validatedAuthority[1],
+                validatedAuthority[2],
+                validatedAuthority[3],
+                validatedAuthority[4],
+                validatedAuthority[5],
             ),
         )
     }
@@ -703,6 +1173,86 @@ class RoomShootPreparationRepositoryAndroidTest {
         )
     }
 
+    private fun seedActiveSession(sqlite: SupportSQLiteDatabase, shootId: String) {
+        sqlite.execSQL(
+            "INSERT INTO shoot_sessions (session_id, shoot_id, current_pose_index, " +
+                "next_attempt_number, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis) VALUES (?, ?, 0, 0, 'ACTIVE', 1, 1)",
+            arrayOf<Any>("session-$shootId", shootId),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.poseOrder(shootId: String): List<String> =
+        query(
+            "SELECT pose_id FROM shoot_poses WHERE shoot_id = ? ORDER BY pose_index",
+            arrayOf(shootId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+
+    private fun SupportSQLiteDatabase.poseIndexRows(shootId: String): List<Pair<Long, String>> =
+        query(
+            "SELECT pose_index, pose_id FROM shoot_poses WHERE shoot_id = ? ORDER BY pose_index",
+            arrayOf(shootId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getLong(0) to cursor.getString(1))
+            }
+        }
+
+    private fun SupportSQLiteDatabase.poseAuthorityRows(shootId: String): List<PoseAuthorityRow> =
+        query(
+            "SELECT pose_id, label, reference_asset_path, mirror_allowed, validation_state, " +
+                "detector_metadata, model_metadata, preprocessing_metadata, landmark_payload, " +
+                "coordinate_metadata FROM shoot_poses WHERE shoot_id = ? ORDER BY pose_id",
+            arrayOf(shootId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        PoseAuthorityRow(
+                            poseId = cursor.getString(0),
+                            values = (1 until cursor.columnCount).map { column ->
+                                if (cursor.isNull(column)) null else cursor.getString(column)
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+
+    private fun SupportSQLiteDatabase.shootUpdatedAt(shootId: String): Long =
+        query(
+            "SELECT updated_at_epoch_millis FROM shoots WHERE shoot_id = ?",
+            arrayOf(shootId),
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getLong(0)
+        }
+
+    private fun SupportSQLiteDatabase.importHistoryRows(): List<List<String?>> =
+        query(
+            "SELECT intent.import_token, intent.shoot_id, intent.pose_id, intent.relative_asset_path, " +
+                "intent.lifecycle_state, intent.created_at_epoch_millis, intent.updated_at_epoch_millis, " +
+                "intent.asset_ready_at_epoch_millis, intent.terminal_at_epoch_millis, " +
+                "file.relative_asset_path, file.relative_temp_path, file.relative_quarantine_path, " +
+                "file.stage, file.byte_count, file.sha256, file.last_failure_code, " +
+                "file.reconciliation_required, file.created_at_epoch_millis, file.updated_at_epoch_millis " +
+                "FROM reference_import_intents AS intent " +
+                "INNER JOIN reference_import_file_operations AS file " +
+                "ON file.import_token = intent.import_token ORDER BY intent.import_token",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add((0 until cursor.columnCount).map { column ->
+                        if (cursor.isNull(column)) null else cursor.getString(column)
+                    })
+                }
+            }
+        }
+
     private fun SupportSQLiteDatabase.persistedShoots(): List<PersistedShoot> =
         query(
             "SELECT shoot_id, name, created_at_epoch_millis, updated_at_epoch_millis, " +
@@ -746,5 +1296,10 @@ class RoomShootPreparationRepositoryAndroidTest {
         val updatedAtEpochMillis: Long,
         val lifecycleState: String,
         val deletionGeneration: Long,
+    )
+
+    private data class PoseAuthorityRow(
+        val poseId: String,
+        val values: List<String?>,
     )
 }
