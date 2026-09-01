@@ -47,6 +47,16 @@ internal interface ReferenceImportDao {
 
     @Query(
         """
+        SELECT * FROM shoot_poses
+        WHERE shoot_id = :shootId
+        ORDER BY pose_index ASC
+        LIMIT :limit
+        """,
+    )
+    fun findPosesInOrderForAdmission(shootId: String, limit: Int): List<ShootPoseEntity>
+
+    @Query(
+        """
         SELECT COUNT(*) FROM shoot_poses
         WHERE shoot_id = :shootId AND validation_state IN ('VALID', 'VALIDATED')
         """,
@@ -60,6 +70,29 @@ internal interface ReferenceImportDao {
         """,
     )
     fun countNonterminalIntents(shootId: String): Long
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM reference_import_intents
+            WHERE lifecycle_state IN ('PREPARING', 'ASSET_READY')
+        )
+        """,
+    )
+    fun hasAnyNonterminalIntents(): Boolean
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1
+            FROM reference_import_intents AS intent
+            LEFT JOIN reference_import_file_operations AS file_operation
+                ON file_operation.import_token = intent.import_token
+            WHERE file_operation.import_token IS NULL
+        )
+        """,
+    )
+    fun hasIntentWithoutFileOperation(): Boolean
 
     @Query(
         """

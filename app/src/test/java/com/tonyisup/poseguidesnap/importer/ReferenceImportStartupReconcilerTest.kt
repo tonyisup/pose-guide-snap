@@ -21,6 +21,7 @@ import com.tonyisup.poseguidesnap.data.ReferenceImportSettlementRejectionReason
 import com.tonyisup.poseguidesnap.data.ReferenceImportSettlementResult
 import com.tonyisup.poseguidesnap.data.ReferenceImportToken
 import com.tonyisup.poseguidesnap.data.RenameExactToQuarantineResult
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -64,6 +65,88 @@ class ReferenceImportStartupReconcilerTest {
             assertEquals("stage=$stage", 0, report.outstandingCount)
             assertFalse("stage=$stage", report.ledgerReadFailed)
         }
+    }
+
+    @Test
+    fun startupReconciliationConsumesTwentyThenOneWithoutMaterializingAnUnboundedLedger() {
+        val operations = (0..20).map { index ->
+            val token = ReferenceImportToken("paged-recovery-${index.toString().padStart(2, '0')}")
+            ReferenceImportFileOperationSnapshot(
+                importToken = token,
+                paths = ReferenceImportFileOperationPaths.forToken(token),
+                stage = ReferenceImportFileOperationStage.FINAL_DURABLE,
+                byteCount = 7L,
+                sha256 = VALID_SHA,
+                lastFailureCode = ReferenceImportFileFailureCode.STATE_MISMATCH,
+                reconciliationRequired = true,
+                createdAtEpochMillis = index.toLong() + 1L,
+                updatedAtEpochMillis = index.toLong() + 1L,
+            )
+        }
+        val pageSizes = mutableListOf<Int>()
+        val cursors = mutableListOf<ReferenceImportRecoveryCursor?>()
+        val journal = object : ReferenceImportRecoveryJournalPort {
+            override fun findRetryableOperationsPage(
+                after: ReferenceImportRecoveryCursor?,
+                limit: Int,
+            ): List<ReferenceImportFileOperationSnapshot> {
+                cursors += after
+                pageSizes += limit
+                return operations.filter { operation ->
+                    after == null ||
+                        operation.createdAtEpochMillis > after.createdAtEpochMillis ||
+                        (operation.createdAtEpochMillis == after.createdAtEpochMillis &&
+                            operation.importToken.value > after.importToken.value)
+                }.take(limit)
+            }
+
+            override fun snapshot(importToken: ReferenceImportToken) =
+                error("committed recovery must not request a mutable snapshot")
+
+            override fun advance(request: ReferenceImportFileAdvanceRequest) =
+                error("committed recovery must not advance")
+
+            override fun markReconciliationRequired(request: ReferenceImportFileReconciliationRequest) =
+                error("committed recovery must not mark again")
+
+            override fun clearReconciliationRequired(
+                request: ReferenceImportFileReconciliationResolutionRequest,
+            ) = error("committed recovery must not clear")
+        }
+        val authority = object : ReferenceImportRecoveryAuthorityPort {
+            override fun findExactIntent(importToken: ReferenceImportToken): PendingReferenceImport {
+                val operation = operations.single { it.importToken == importToken }
+                return PendingReferenceImport(
+                    importToken = importToken,
+                    shootId = "paged-recovery-shoot",
+                    poseId = "pose-${importToken.value}",
+                    relativeAssetPath = operation.paths.relativeAssetPath,
+                    lifecycle = ReferenceImportLifecycle.COMMITTED,
+                    createdAtEpochMillis = operation.createdAtEpochMillis,
+                    updatedAtEpochMillis = operation.updatedAtEpochMillis,
+                )
+            }
+
+            override fun settleFailure(
+                importToken: ReferenceImportToken,
+                settlement: ReferenceImportFailureSettlement,
+                settledAtEpochMillis: Long,
+            ) = error("committed recovery must not settle rejection")
+        }
+        val reconciler = ReferenceImportStartupReconciler(
+            authority = authority,
+            journal = journal,
+            assets = FakeAssets(mutableListOf()) { null },
+        )
+
+        val report = reconciler.reconcile { TIMELINE }
+
+        assertEquals(21, report.examinedCount)
+        assertEquals(21, report.outstandingCount)
+        assertFalse(report.ledgerReadFailed)
+        assertEquals(listOf(20, 20), pageSizes)
+        assertEquals(null, cursors.first())
+        assertEquals(20L, requireNotNull(cursors[1]).createdAtEpochMillis)
     }
 
     @Test
@@ -277,7 +360,44 @@ class ReferenceImportStartupReconcilerTest {
 
         assertTrue(report.ledgerReadFailed)
         assertEquals(0, report.examinedCount)
+        assertEquals(0, report.cleanedCount)
+        assertEquals(0, report.quarantinedCount)
+        assertEquals(0, report.outstandingCount)
+        assertEquals(0, report.settlementFailureCount)
         assertTrue(fixture.events.isEmpty())
+        assertTrue(fixture.authority.lookups.isEmpty())
+        assertTrue(fixture.authority.settlements.isEmpty())
+        assertTrue(fixture.assets.calls.isEmpty())
+        assertEquals(null, fixture.journal.markedStage)
+    }
+
+    @Test
+    fun concreteRoomJournalChecksIntentLedgerCoherenceInsidePageReadTransaction() {
+        val source = projectRoot().resolve(ROOM_JOURNAL_SOURCE_PATH).readText()
+        val functionStart = source.indexOf("fun findRetryableOperationsPage(")
+        val functionEnd = source.indexOf("\n    fun advance(", startIndex = functionStart)
+        assertTrue("Room journal page method is missing", functionStart >= 0)
+        assertTrue("Room journal page method boundary is missing", functionEnd > functionStart)
+        val pageMethod = source.substring(functionStart, functionEnd)
+        val transaction = pageMethod.indexOf("inTransaction {")
+        val coherenceCheck = pageMethod.indexOf("intentDao.hasIntentWithoutFileOperation()")
+        val pageRead = pageMethod.indexOf("dao.findRetryableOperations(")
+
+        assertTrue("Room journal must retain the intent DAO", "database.referenceImportDao()" in source)
+        assertTrue("Room journal page read must run in one Room transaction", transaction >= 0)
+        assertTrue("Missing-ledger coherence check is absent", coherenceCheck >= 0)
+        assertTrue("Retryable page query is absent", pageRead >= 0)
+        assertTrue(
+            "Coherence must be checked after entering the transaction and before returning a page",
+            transaction < coherenceCheck && coherenceCheck < pageRead,
+        )
+    }
+
+    private fun projectRoot(): File {
+        val userDir = requireNotNull(System.getProperty("user.dir"))
+        return generateSequence(File(userDir).absoluteFile, File::getParentFile)
+            .firstOrNull { it.resolve("settings.gradle.kts").isFile }
+            ?: error("Could not resolve project root")
     }
 
     private data class FailureCase(
@@ -350,9 +470,21 @@ class ReferenceImportStartupReconcilerTest {
         var markedStage: ReferenceImportFileOperationStage? = null
         var markedAt: Long? = null
 
-        override fun findRetryableOperations(): List<ReferenceImportFileOperationSnapshot> {
+        override fun findRetryableOperationsPage(
+            after: ReferenceImportRecoveryCursor?,
+            limit: Int,
+        ): List<ReferenceImportFileOperationSnapshot> {
             if (readFailure) throw IllegalStateException("private ledger failure")
+            require(limit in 1..20)
             val snapshot = current ?: return emptyList()
+            if (
+                after != null &&
+                (snapshot.createdAtEpochMillis < after.createdAtEpochMillis ||
+                    (snapshot.createdAtEpochMillis == after.createdAtEpochMillis &&
+                        snapshot.importToken.value <= after.importToken.value))
+            ) {
+                return emptyList()
+            }
             val lifecycle = authority.intent.lifecycle
             val terminalCoherent =
                 (snapshot.stage == ReferenceImportFileOperationStage.FINAL_DURABLE && lifecycle == ReferenceImportLifecycle.COMMITTED) ||
@@ -513,6 +645,8 @@ class ReferenceImportStartupReconcilerTest {
     }
 
     companion object {
+        private const val ROOM_JOURNAL_SOURCE_PATH =
+            "app/src/main/java/com/tonyisup/poseguidesnap/data/RoomReferenceImportFileJournal.kt"
         private val VALID_SHA = "ab".repeat(32)
         private val TIMELINE = ReferenceImportRecoveryTimeline(
             cleanupRequiredAtEpochMillis = 101L,

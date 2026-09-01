@@ -9,6 +9,7 @@ class RoomReferenceImportFileJournal(
     private val database: AppDatabase,
 ) {
     private val dao = database.referenceImportFileOperationDao()
+    private val intentDao = database.referenceImportDao()
 
     fun snapshot(importToken: ReferenceImportToken): ReferenceImportFileOperationSnapshot? =
         try {
@@ -17,12 +18,32 @@ class RoomReferenceImportFileJournal(
             throw IllegalStateException("reference import file operation state is invalid")
         }
 
-    fun findRetryableOperations(): List<ReferenceImportFileOperationSnapshot> =
-        try {
-            dao.findRetryableOperations().map(ReferenceImportFileOperationEntity::toSnapshot)
+    fun findRetryableOperationsPage(
+        afterCreatedAtEpochMillis: Long?,
+        afterImportToken: ReferenceImportToken?,
+        limit: Int,
+    ): List<ReferenceImportFileOperationSnapshot> {
+        require((afterCreatedAtEpochMillis == null) == (afterImportToken == null)) {
+            "reference import recovery cursor must be complete"
+        }
+        require(limit in 1..MAX_RECOVERY_PAGE_SIZE) {
+            "reference import recovery page size is out of bounds"
+        }
+        return try {
+            inTransaction {
+                if (intentDao.hasIntentWithoutFileOperation()) {
+                    throw IllegalStateException("reference import file authority is inconsistent")
+                }
+                dao.findRetryableOperations(
+                    afterCreatedAtEpochMillis = afterCreatedAtEpochMillis,
+                    afterImportToken = afterImportToken?.value,
+                    limit = limit,
+                ).map(ReferenceImportFileOperationEntity::toSnapshot)
+            }
         } catch (_: IllegalArgumentException) {
             throw IllegalStateException("reference import file operation state is invalid")
         }
+    }
 
     fun advance(request: ReferenceImportFileAdvanceRequest): ReferenceImportFileJournalResult {
         validateAdvanceRequest(request)?.let { return rejected(it) }
@@ -287,6 +308,8 @@ class RoomReferenceImportFileJournal(
     private fun rejected(reason: ReferenceImportFileJournalRejectionReason) =
         ReferenceImportFileJournalResult.Rejected(reason)
 }
+
+private const val MAX_RECOVERY_PAGE_SIZE = 20
 
 private fun ReferenceImportFileOperationEntity.toSnapshot(): ReferenceImportFileOperationSnapshot {
     val token = ReferenceImportToken(importToken)

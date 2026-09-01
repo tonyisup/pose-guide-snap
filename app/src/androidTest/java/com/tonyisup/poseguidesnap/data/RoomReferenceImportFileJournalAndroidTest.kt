@@ -11,6 +11,7 @@ import java.util.concurrent.Executors
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -130,7 +131,7 @@ class RoomReferenceImportFileJournalAndroidTest {
         assertEquals(source.stage, marked.stage)
         assertTrue(marked.reconciliationRequired)
         assertEquals(ReferenceImportFileFailureCode.STATE_MISMATCH, marked.lastFailureCode)
-        assertTrue(journal.findRetryableOperations().contains(marked))
+        assertTrue(journal.findRetryableOperationsPage(null, null, 20).contains(marked))
 
         val advanced = applied(
             journal.advance(
@@ -269,7 +270,7 @@ class RoomReferenceImportFileJournalAndroidTest {
             createdAtEpochMillis = 10L,
             token = "00000000-0000-0000-0000-000000000003",
         )
-        val retryable = journal.findRetryableOperations()
+        val retryable = journal.findRetryableOperationsPage(null, null, 20)
         assertEquals(
             listOf(firstSameTime.importToken, secondSameTime.importToken, later.importToken),
             retryable.map(ReferenceImportFileOperationSnapshot::importToken),
@@ -298,6 +299,53 @@ class RoomReferenceImportFileJournalAndroidTest {
         }
     }
 
+    @Test
+    fun retryableQueryPaginatesTwentyThenOneWithoutOverlap() {
+        val journal = journal()
+        (0..20).forEach { index ->
+            seedOperation(
+                stage = ReferenceImportFileOperationStage.WRITING_TEMP,
+                createdAtEpochMillis = index.toLong() + 1L,
+                token = "00000000-0000-0000-0000-${index.toString().padStart(12, '0')}",
+            )
+        }
+
+        val first = journal.findRetryableOperationsPage(null, null, 20)
+        val last = first.last()
+        val second = journal.findRetryableOperationsPage(
+            last.createdAtEpochMillis,
+            last.importToken,
+            20,
+        )
+
+        assertEquals(20, first.size)
+        assertEquals(1, second.size)
+        assertTrue(first.map { it.importToken }.toSet().intersect(second.map { it.importToken }.toSet()).isEmpty())
+        assertEquals(21L, second.single().createdAtEpochMillis)
+    }
+
+    @Test
+    fun retryablePageFailsClosedWhenAValidIntentIsMissingItsRequiredFileOperation() {
+        val sqlite = database.openHelper.writableDatabase
+        val shootId = "missing-ledger-journal-shoot"
+        val token = ReferenceImportToken("missing-ledger-journal-token")
+        val paths = ReferenceImportFileOperationPaths.forToken(token)
+        seedShoot(sqlite, shootId)
+        sqlite.execSQL(
+            "INSERT INTO reference_import_intents (import_token, shoot_id, pose_id, " +
+                "relative_asset_path, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis, asset_ready_at_epoch_millis, terminal_at_epoch_millis) " +
+                "VALUES (?, ?, 'missing-ledger-journal-pose', ?, 'PREPARING', 10, 10, NULL, NULL)",
+            arrayOf<Any>(token.value, shootId, paths.relativeAssetPath),
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            journal().findRetryableOperationsPage(null, null, 20)
+        }
+        assertEquals(1, sqlite.rowCount("reference_import_intents"))
+        assertEquals(0, sqlite.rowCount("reference_import_file_operations"))
+    }
+
     private fun journal() = RoomReferenceImportFileJournal(database)
 
     private fun seedOperation(
@@ -305,19 +353,40 @@ class RoomReferenceImportFileJournalAndroidTest {
         createdAtEpochMillis: Long = 10L,
         token: String = UUID.randomUUID().toString(),
     ): ReferenceImportFileOperationSnapshot {
+        val sqlite = database.openHelper.writableDatabase
         val shootId = UUID.randomUUID().toString()
         val poseId = UUID.randomUUID().toString()
-        seedShoot(database.openHelper.writableDatabase, shootId)
+        seedShoot(sqlite, shootId)
         val importToken = ReferenceImportToken(token)
-        val reservation = ReferenceImportReservation(
-            importToken = importToken,
-            shootId = shootId,
-            poseId = poseId,
-            relativeAssetPath = ReferenceImportAssetPath.forToken(importToken),
+        val paths = ReferenceImportFileOperationPaths.forToken(importToken)
+        sqlite.execSQL(
+            "INSERT INTO reference_import_intents (import_token, shoot_id, pose_id, " +
+                "relative_asset_path, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis, asset_ready_at_epoch_millis, terminal_at_epoch_millis) " +
+                "VALUES (?, ?, ?, ?, 'PREPARING', ?, ?, NULL, NULL)",
+            arrayOf<Any>(
+                token,
+                shootId,
+                poseId,
+                paths.relativeAssetPath,
+                createdAtEpochMillis,
+                createdAtEpochMillis,
+            ),
         )
-        assertEquals(
-            ReferenceImportReserveResult.Reserved,
-            RoomReferenceImportRepository(database).reserveImport(reservation, createdAtEpochMillis),
+        sqlite.execSQL(
+            "INSERT INTO reference_import_file_operations (import_token, relative_asset_path, " +
+                "relative_temp_path, relative_quarantine_path, stage, byte_count, sha256, " +
+                "last_failure_code, reconciliation_required, created_at_epoch_millis, " +
+                "updated_at_epoch_millis) VALUES (?, ?, ?, ?, 'EXPECTING_RESERVATION', NULL, " +
+                "NULL, NULL, 0, ?, ?)",
+            arrayOf<Any>(
+                token,
+                paths.relativeAssetPath,
+                paths.relativeTempPath,
+                paths.relativeQuarantinePath,
+                createdAtEpochMillis,
+                createdAtEpochMillis,
+            ),
         )
         val (byteCount, sha256) = when (stage) {
             ReferenceImportFileOperationStage.EXPECTING_RESERVATION,
@@ -373,6 +442,12 @@ class RoomReferenceImportFileJournalAndroidTest {
             arrayOf<Any>(shootId),
         )
     }
+
+    private fun SupportSQLiteDatabase.rowCount(table: String): Int =
+        query("SELECT COUNT(*) FROM $table").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getInt(0)
+        }
 
     private companion object {
         val VALID_SHA: String = "ab".repeat(32)

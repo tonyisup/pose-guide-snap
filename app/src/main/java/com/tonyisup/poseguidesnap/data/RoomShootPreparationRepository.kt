@@ -389,7 +389,7 @@ class RoomShootPreparationRepository(
             PREPARING,
             ASSET_READY,
             -> if (reconciliationRequired) {
-                ImportWorkStatus.NEEDS_ATTENTION
+                ImportWorkStatus.RECONCILIATION_REQUIRED
             } else {
                 ImportWorkStatus.IN_PROGRESS
             }
@@ -397,7 +397,11 @@ class RoomShootPreparationRepository(
                 if (stage != ReferenceImportFileOperationStage.QUARANTINE_DURABLE) {
                     throw ShootPreparationProjectionException()
                 }
-                ImportWorkStatus.NEEDS_ATTENTION
+                if (reconciliationRequired) {
+                    ImportWorkStatus.RECONCILIATION_REQUIRED
+                } else {
+                    ImportWorkStatus.REJECTED_QUARANTINED
+                }
             }
             else -> throw ShootPreparationProjectionException()
         }

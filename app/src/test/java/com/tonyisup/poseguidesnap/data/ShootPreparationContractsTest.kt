@@ -16,7 +16,7 @@ class ShootPreparationContractsTest {
             ShootPreparationLifecycle.entries.map(Enum<*>::name),
         )
         assertEquals(
-            listOf("IN_PROGRESS", "NEEDS_ATTENTION"),
+            listOf("IN_PROGRESS", "RECONCILIATION_REQUIRED", "REJECTED_QUARANTINED"),
             ImportWorkStatus.entries.map(Enum<*>::name),
         )
     }
@@ -32,7 +32,7 @@ class ShootPreparationContractsTest {
         )
         val reference = reference(index = 1, poseId = "pose-2")
         val work = ImportWorkSummary(
-            status = ImportWorkStatus.NEEDS_ATTENTION,
+            status = ImportWorkStatus.RECONCILIATION_REQUIRED,
             createdAtEpochMillis = 3L,
             updatedAtEpochMillis = 8L,
         )
@@ -46,7 +46,7 @@ class ShootPreparationContractsTest {
         assertEquals(1, reference.poseIndex)
         assertEquals("Pose 1", reference.label)
         assertTrue(reference.mirrorAllowed)
-        assertEquals(ImportWorkStatus.NEEDS_ATTENTION, work.status)
+        assertEquals(ImportWorkStatus.RECONCILIATION_REQUIRED, work.status)
         assertEquals(3L, work.createdAtEpochMillis)
         assertEquals(8L, work.updatedAtEpochMillis)
     }
@@ -220,7 +220,7 @@ class ShootPreparationContractsTest {
             4L,
         )
         val reference = ValidatedReferenceSummary(poseIdSecret, 0, labelSecret, true)
-        val work = ImportWorkSummary(ImportWorkStatus.NEEDS_ATTENTION, 2L, 3L)
+        val work = ImportWorkSummary(ImportWorkStatus.REJECTED_QUARANTINED, 2L, 3L)
         val editor = ShootEditorSnapshot(
             shootIdSecret,
             shootNameSecret,

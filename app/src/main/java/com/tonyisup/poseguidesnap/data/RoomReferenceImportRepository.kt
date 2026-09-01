@@ -14,6 +14,25 @@ class RoomReferenceImportRepository(
     private val dao = database.referenceImportDao()
     private val fileOperationDao = database.referenceImportFileOperationDao()
 
+    fun checkImportAdmission(shootId: String): ReferenceImportAdmissionCheckResult {
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
+            return ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.UNKNOWN_SHOOT,
+            )
+        }
+        return try {
+            inTransaction { checkImportAdmissionInTransaction(shootId) }
+        } catch (_: IllegalArgumentException) {
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.AUTHORITY_INCONSISTENT,
+            )
+        } catch (_: ReferenceImportAuthorityInconsistentException) {
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.AUTHORITY_INCONSISTENT,
+            )
+        }
+    }
+
     fun reserveImport(
         reservation: ReferenceImportReservation,
         reservedAtEpochMillis: Long,
@@ -30,6 +49,10 @@ class RoomReferenceImportRepository(
             classifyReservationConstraint(reservation, reservedAtEpochMillis)
         } catch (_: ReferenceImportCasFailedException) {
             classifyReservationConstraint(reservation, reservedAtEpochMillis)
+        } catch (_: IllegalArgumentException) {
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
+            )
         } catch (_: ReferenceImportAuthorityInconsistentException) {
             ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
@@ -158,6 +181,85 @@ class RoomReferenceImportRepository(
             throw IllegalStateException("reference import authority is inconsistent")
         }
 
+    private fun checkImportAdmissionInTransaction(
+        shootId: String,
+    ): ReferenceImportAdmissionCheckResult {
+        val shoot = dao.findShoot(shootId)
+            ?: return admissionBlocked(ReferenceImportAdmissionCheckBlockReason.UNKNOWN_SHOOT)
+        if (shoot.deletionGeneration < 0L) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        when (shoot.lifecycleState) {
+            ACTIVE -> Unit
+            "DELETING" -> return admissionBlocked(
+                ReferenceImportAdmissionCheckBlockReason.SHOOT_DELETING,
+            )
+            else -> throw ReferenceImportAuthorityInconsistentException()
+        }
+
+        val activeSessionCount = dao.countActiveSessions(shootId)
+        if (activeSessionCount !in 0..1) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        if (activeSessionCount == 1) {
+            return admissionBlocked(ReferenceImportAdmissionCheckBlockReason.ACTIVE_SESSION)
+        }
+        requireGlobalFileAuthorityCoherent()
+
+        if (!hasReservationCapacity(shootId)) {
+            return admissionBlocked(ReferenceImportAdmissionCheckBlockReason.PLAYLIST_FULL)
+        }
+
+        val reconciliationRequired =
+            fileOperationDao.findReconciliationRequiredOperations(limit = 1).singleOrNull()
+        if (reconciliationRequired != null) {
+            val intent = dao.findIntent(reconciliationRequired.importToken)
+                ?: throw ReferenceImportAuthorityInconsistentException()
+            if (!intent.hasCoherentAuthority() || !reconciliationRequired.matches(intent)) {
+                throw ReferenceImportAuthorityInconsistentException()
+            }
+            return admissionBlocked(
+                ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
+            )
+        }
+
+        val retryable = fileOperationDao.findRetryableOperations(
+            afterCreatedAtEpochMillis = null,
+            afterImportToken = null,
+            limit = 1,
+        ).singleOrNull()
+        if (retryable != null) {
+            val intent = dao.findIntent(retryable.importToken)
+                ?: throw ReferenceImportAuthorityInconsistentException()
+            if (!intent.hasCoherentAuthority() || !retryable.matches(intent)) {
+                throw ReferenceImportAuthorityInconsistentException()
+            }
+            if (retryable.reconciliationRequired) {
+                return admissionBlocked(
+                    ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
+                )
+            }
+            return when (intent.lifecycleState) {
+                PREPARING,
+                ASSET_READY,
+                -> admissionBlocked(ReferenceImportAdmissionCheckBlockReason.IMPORT_IN_PROGRESS)
+                else -> admissionBlocked(
+                    ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
+                )
+            }
+        }
+        if (dao.hasAnyNonterminalIntents()) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+
+        return ReferenceImportAdmissionCheckResult.Allowed
+    }
+
+    private fun admissionBlocked(
+        reason: ReferenceImportAdmissionCheckBlockReason,
+    ): ReferenceImportAdmissionCheckResult.Blocked =
+        ReferenceImportAdmissionCheckResult.Blocked(reason)
+
     private fun reserveImportInTransaction(
         reservation: ReferenceImportReservation,
         reservedAtEpochMillis: Long,
@@ -173,18 +275,44 @@ class RoomReferenceImportRepository(
         if (shoot.deletionGeneration < 0L) {
             throw ReferenceImportAuthorityInconsistentException()
         }
-        if (shoot.lifecycleState != ACTIVE) {
-            return ReferenceImportReserveResult.Rejected(
+        when (shoot.lifecycleState) {
+            ACTIVE -> Unit
+            DELETING -> return ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.SHOOT_NOT_ACTIVE,
             )
+            else -> throw ReferenceImportAuthorityInconsistentException()
         }
 
         classifyPoseReservationConflict(reservation)?.let { return it }
         classifyIntentReservationConflict(reservation)?.let { return it }
 
+        val activeSessionCount = dao.countActiveSessions(reservation.shootId)
+        if (activeSessionCount !in 0..1) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        if (activeSessionCount == 1) {
+            return ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.ACTIVE_SESSION,
+            )
+        }
+
+        requireGlobalFileAuthorityCoherent()
+
         if (!hasReservationCapacity(reservation.shootId)) {
             return ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.PLAYLIST_FULL,
+            )
+        }
+        if (
+            dao.hasAnyNonterminalIntents() ||
+            fileOperationDao.findRetryableOperations(
+                afterCreatedAtEpochMillis = null,
+                afterImportToken = null,
+                limit = 1,
+            ).isNotEmpty()
+        ) {
+            return ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.UNRESOLVED_IMPORT_WORK,
             )
         }
 
@@ -283,10 +411,12 @@ class RoomReferenceImportRepository(
         if (shoot.deletionGeneration < 0L) {
             throw ReferenceImportAuthorityInconsistentException()
         }
-        if (shoot.lifecycleState != ACTIVE) {
-            return ReferenceImportReserveResult.Rejected(
+        when (shoot.lifecycleState) {
+            ACTIVE -> Unit
+            DELETING -> return ReferenceImportReserveResult.Rejected(
                 ReferenceImportReserveRejectionReason.SHOOT_NOT_ACTIVE,
             )
+            else -> throw ReferenceImportAuthorityInconsistentException()
         }
 
         return when (existing.lifecycleState) {
@@ -661,7 +791,7 @@ class RoomReferenceImportRepository(
     }
 
     private fun hasReservationCapacity(shootId: String): Boolean {
-        val validatedPoseCount = dao.countAcceptedPoses(shootId)
+        val validatedPoseCount = requireExactValidatedPlaylistCount(shootId)
         val nonterminalIntentCount = dao.countNonterminalIntents(shootId)
         if (
             validatedPoseCount !in 0L..MAX_REFERENCE_COUNT ||
@@ -674,6 +804,43 @@ class RoomReferenceImportRepository(
             throw ReferenceImportAuthorityInconsistentException()
         }
         return reservedReferenceCount < MAX_REFERENCE_COUNT
+    }
+
+    private fun requireExactValidatedPlaylistCount(shootId: String): Long {
+        val poses = dao.findPosesInOrderForAdmission(shootId, Shoot.MAX_REFERENCE_POSES + 1)
+        if (
+            poses.size > Shoot.MAX_REFERENCE_POSES ||
+            poses.any { pose -> pose.validationState !in ACCEPTED_VALIDATION_STATES } ||
+            poses.map(ShootPoseEntity::poseIndex) != poses.indices.toList()
+        ) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        return poses.size.toLong()
+    }
+
+    private fun requireGlobalFileAuthorityCoherent() {
+        if (dao.hasIntentWithoutFileOperation()) {
+            throw ReferenceImportAuthorityInconsistentException()
+        }
+        var afterCreatedAtEpochMillis: Long? = null
+        var afterImportToken: String? = null
+        do {
+            val page = fileOperationDao.findAuthorityPage(
+                afterCreatedAtEpochMillis = afterCreatedAtEpochMillis,
+                afterImportToken = afterImportToken,
+                limit = AUTHORITY_PAGE_SIZE,
+            )
+            page.forEach { operation ->
+                val intent = dao.findIntent(operation.importToken)
+                    ?: throw ReferenceImportAuthorityInconsistentException()
+                if (!intent.hasCoherentAuthority() || !operation.matches(intent)) {
+                    throw ReferenceImportAuthorityInconsistentException()
+                }
+            }
+            val last = page.lastOrNull()
+            afterCreatedAtEpochMillis = last?.createdAtEpochMillis
+            afterImportToken = last?.importToken
+        } while (page.size == AUTHORITY_PAGE_SIZE)
     }
 
     private fun requireContiguousValidatedAppendIndex(shootId: String): Int {
@@ -864,7 +1031,9 @@ class RoomReferenceImportRepository(
 
     private companion object {
         val MAX_REFERENCE_COUNT = Shoot.MAX_REFERENCE_POSES.toLong()
+        const val AUTHORITY_PAGE_SIZE = 20
         const val ACTIVE = "ACTIVE"
+        const val DELETING = "DELETING"
         const val PREPARING = "PREPARING"
         const val ASSET_READY = "ASSET_READY"
         const val COMMITTED = "COMMITTED"

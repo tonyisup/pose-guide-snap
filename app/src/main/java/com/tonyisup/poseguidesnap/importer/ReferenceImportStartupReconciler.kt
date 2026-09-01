@@ -34,7 +34,10 @@ interface ReferenceImportRecoveryAuthorityPort {
 
 /** Persisted file ledger is the sole startup enumeration and retry authority. */
 interface ReferenceImportRecoveryJournalPort {
-    fun findRetryableOperations(): List<ReferenceImportFileOperationSnapshot>
+    fun findRetryableOperationsPage(
+        after: ReferenceImportRecoveryCursor?,
+        limit: Int,
+    ): List<ReferenceImportFileOperationSnapshot>
 
     fun snapshot(importToken: ReferenceImportToken): ReferenceImportFileOperationSnapshot?
 
@@ -47,6 +50,17 @@ interface ReferenceImportRecoveryJournalPort {
     fun clearReconciliationRequired(
         request: ReferenceImportFileReconciliationResolutionRequest,
     ): ReferenceImportFileJournalResult
+}
+
+class ReferenceImportRecoveryCursor(
+    val createdAtEpochMillis: Long,
+    val importToken: ReferenceImportToken,
+) {
+    init {
+        require(createdAtEpochMillis >= 0L) { "reference import recovery cursor time is invalid" }
+    }
+
+    override fun toString(): String = "ReferenceImportRecoveryCursor(redacted)"
 }
 
 /** Exact staged filesystem effects; no scan, provider read, or process-local capability is exposed. */
@@ -146,84 +160,114 @@ class ReferenceImportStartupReconciler(
     fun reconcile(
         timelineForOperation: (ReferenceImportFileOperationSnapshot) -> ReferenceImportRecoveryTimeline,
     ): ReferenceImportStartupReconciliationReport {
-        val operations = try {
-            journal.findRetryableOperations().toList()
-        } catch (_: Exception) {
-            return report(ledgerReadFailed = true)
-        }
-
+        var examined = 0
         var cleaned = 0
         var quarantined = 0
         var outstanding = 0
         var settlementFailures = 0
+        var cursor: ReferenceImportRecoveryCursor? = null
 
-        operations.forEach { operation ->
-            val timeline = try {
-                timelineForOperation(operation)
+        while (true) {
+            val operations = try {
+                journal.findRetryableOperationsPage(cursor, RECOVERY_PAGE_SIZE).toList()
             } catch (_: Exception) {
-                outstanding += 1
-                return@forEach
+                return ReferenceImportStartupReconciliationReport(
+                    examinedCount = examined,
+                    cleanedCount = cleaned,
+                    quarantinedCount = quarantined,
+                    outstandingCount = outstanding,
+                    settlementFailureCount = settlementFailures,
+                    ledgerReadFailed = true,
+                )
             }
-            if (!timeline.isStrictlyNewerThan(operation.updatedAtEpochMillis)) {
-                outstanding += 1
-                return@forEach
+            if (operations.isEmpty()) break
+            if (!operations.formStrictPageAfter(cursor)) {
+                return ReferenceImportStartupReconciliationReport(
+                    examinedCount = examined,
+                    cleanedCount = cleaned,
+                    quarantinedCount = quarantined,
+                    outstandingCount = outstanding,
+                    settlementFailureCount = settlementFailures,
+                    ledgerReadFailed = true,
+                )
             }
+            examined += operations.size
 
-            val intent = try {
-                authority.findExactIntent(operation.importToken)
-            } catch (_: Exception) {
-                null
-            }
-            if (intent == null || !intent.matches(operation)) {
-                markCurrent(operation, timeline, ReferenceImportFileFailureCode.STATE_MISMATCH)
-                outstanding += 1
-                return@forEach
-            }
+            operations.forEach { operation ->
+                val timeline = try {
+                    timelineForOperation(operation)
+                } catch (_: Exception) {
+                    outstanding += 1
+                    return@forEach
+                }
+                if (!timeline.isStrictlyNewerThan(operation.updatedAtEpochMillis)) {
+                    outstanding += 1
+                    return@forEach
+                }
 
-            if (intent.lifecycle.isTerminal) {
-                if (!intent.isCoherentTerminalFor(operation.stage)) {
+                val intent = try {
+                    authority.findExactIntent(operation.importToken)
+                } catch (_: Exception) {
+                    null
+                }
+                if (intent == null || !intent.matches(operation)) {
                     markCurrent(operation, timeline, ReferenceImportFileFailureCode.STATE_MISMATCH)
                     outstanding += 1
                     return@forEach
                 }
-                if (intent.lifecycle == ReferenceImportLifecycle.COMMITTED) {
-                    if (operation.reconciliationRequired) {
+
+                if (intent.lifecycle.isTerminal) {
+                    if (!intent.isCoherentTerminalFor(operation.stage)) {
+                        markCurrent(operation, timeline, ReferenceImportFileFailureCode.STATE_MISMATCH)
                         outstanding += 1
+                        return@forEach
                     }
-                    return@forEach
+                    if (intent.lifecycle == ReferenceImportLifecycle.COMMITTED) {
+                        if (operation.reconciliationRequired) {
+                            outstanding += 1
+                        }
+                        return@forEach
+                    }
+                }
+
+                val outcome = when (operation.stage) {
+                    ReferenceImportFileOperationStage.EXPECTING_RESERVATION,
+                    ReferenceImportFileOperationStage.WRITING_TEMP,
+                    ReferenceImportFileOperationStage.CLEANUP_REQUIRED,
+                    ReferenceImportFileOperationStage.CLEANUP_PENDING_SYNC,
+                    ReferenceImportFileOperationStage.CLEANED_DURABLE,
+                    -> recoverCleanup(operation, timeline)
+
+                    ReferenceImportFileOperationStage.TEMP_SYNCED,
+                    ReferenceImportFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+                    ReferenceImportFileOperationStage.FINAL_DURABLE,
+                    ReferenceImportFileOperationStage.QUARANTINE_REQUIRED,
+                    ReferenceImportFileOperationStage.QUARANTINE_PENDING_SYNC,
+                    ReferenceImportFileOperationStage.QUARANTINE_DURABLE,
+                    -> recoverQuarantine(operation, timeline)
+                }
+
+                when (outcome) {
+                    RecoveryOutcome.CLEANED -> cleaned += 1
+                    RecoveryOutcome.QUARANTINED -> quarantined += 1
+                    RecoveryOutcome.OUTSTANDING -> outstanding += 1
+                    RecoveryOutcome.SETTLEMENT_FAILED -> {
+                        outstanding += 1
+                        settlementFailures += 1
+                    }
                 }
             }
 
-            val outcome = when (operation.stage) {
-                ReferenceImportFileOperationStage.EXPECTING_RESERVATION,
-                ReferenceImportFileOperationStage.WRITING_TEMP,
-                ReferenceImportFileOperationStage.CLEANUP_REQUIRED,
-                ReferenceImportFileOperationStage.CLEANUP_PENDING_SYNC,
-                ReferenceImportFileOperationStage.CLEANED_DURABLE,
-                -> recoverCleanup(operation, timeline)
-
-                ReferenceImportFileOperationStage.TEMP_SYNCED,
-                ReferenceImportFileOperationStage.FINAL_RENAME_PENDING_SYNC,
-                ReferenceImportFileOperationStage.FINAL_DURABLE,
-                ReferenceImportFileOperationStage.QUARANTINE_REQUIRED,
-                ReferenceImportFileOperationStage.QUARANTINE_PENDING_SYNC,
-                ReferenceImportFileOperationStage.QUARANTINE_DURABLE,
-                -> recoverQuarantine(operation, timeline)
-            }
-
-            when (outcome) {
-                RecoveryOutcome.CLEANED -> cleaned += 1
-                RecoveryOutcome.QUARANTINED -> quarantined += 1
-                RecoveryOutcome.OUTSTANDING -> outstanding += 1
-                RecoveryOutcome.SETTLEMENT_FAILED -> {
-                    outstanding += 1
-                    settlementFailures += 1
-                }
-            }
+            val last = operations.last()
+            cursor = ReferenceImportRecoveryCursor(
+                createdAtEpochMillis = last.createdAtEpochMillis,
+                importToken = last.importToken,
+            )
+            if (operations.size < RECOVERY_PAGE_SIZE) break
         }
 
         return ReferenceImportStartupReconciliationReport(
-            examinedCount = operations.size,
+            examinedCount = examined,
             cleanedCount = cleaned,
             quarantinedCount = quarantined,
             outstandingCount = outstanding,
@@ -538,14 +582,27 @@ class ReferenceImportStartupReconciler(
         }
     }
 
-    private fun report(ledgerReadFailed: Boolean) = ReferenceImportStartupReconciliationReport(
-        examinedCount = 0,
-        cleanedCount = 0,
-        quarantinedCount = 0,
-        outstandingCount = 0,
-        settlementFailureCount = 0,
-        ledgerReadFailed = ledgerReadFailed,
-    )
+    private fun List<ReferenceImportFileOperationSnapshot>.formStrictPageAfter(
+        after: ReferenceImportRecoveryCursor?,
+    ): Boolean {
+        if (isEmpty() || size > RECOVERY_PAGE_SIZE) return false
+        var previousCreatedAt = after?.createdAtEpochMillis
+        var previousToken = after?.importToken?.value
+        forEach { operation ->
+            val createdAt = operation.createdAtEpochMillis
+            val token = operation.importToken.value
+            if (
+                previousCreatedAt != null &&
+                (createdAt < previousCreatedAt ||
+                    (createdAt == previousCreatedAt && token <= requireNotNull(previousToken)))
+            ) {
+                return false
+            }
+            previousCreatedAt = createdAt
+            previousToken = token
+        }
+        return true
+    }
 
     private enum class RecoveryOutcome {
         CLEANED,
@@ -611,11 +668,20 @@ internal class RoomReferenceImportRecoveryAuthorityAdapter(
         repository.settleFailure(importToken, settlement, settledAtEpochMillis)
 }
 
+private const val RECOVERY_PAGE_SIZE = 20
+
 internal class RoomReferenceImportRecoveryJournalAdapter(
     private val journal: RoomReferenceImportFileJournal,
 ) : ReferenceImportRecoveryJournalPort {
-    override fun findRetryableOperations(): List<ReferenceImportFileOperationSnapshot> =
-        journal.findRetryableOperations()
+    override fun findRetryableOperationsPage(
+        after: ReferenceImportRecoveryCursor?,
+        limit: Int,
+    ): List<ReferenceImportFileOperationSnapshot> =
+        journal.findRetryableOperationsPage(
+            afterCreatedAtEpochMillis = after?.createdAtEpochMillis,
+            afterImportToken = after?.importToken,
+            limit = limit,
+        )
 
     override fun snapshot(importToken: ReferenceImportToken): ReferenceImportFileOperationSnapshot? =
         journal.snapshot(importToken)

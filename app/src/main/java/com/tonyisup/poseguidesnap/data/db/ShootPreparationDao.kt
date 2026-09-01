@@ -182,6 +182,20 @@ internal interface ShootPreparationDao {
 
     @Query(
         """
+        WITH relevant_intent AS (
+            SELECT *
+            FROM reference_import_intents
+            WHERE shoot_id = :shootId
+              AND lifecycle_state IN ('PREPARING', 'ASSET_READY', 'REJECTED_QUARANTINED')
+            ORDER BY
+                CASE
+                    WHEN lifecycle_state IN ('PREPARING', 'ASSET_READY') THEN 0
+                    ELSE 1
+                END ASC,
+                created_at_epoch_millis DESC,
+                import_token DESC
+            LIMIT 20
+        )
         SELECT
             shoot.shoot_id AS shoot_id,
             shoot.name AS shoot_name,
@@ -225,9 +239,8 @@ internal interface ShootPreparationDao {
         LEFT JOIN shoot_poses AS pose
             ON pose.shoot_id = shoot.shoot_id
            AND pose.validation_state IN ('VALID', 'VALIDATED')
-        LEFT JOIN reference_import_intents AS intent
+        LEFT JOIN relevant_intent AS intent
             ON intent.shoot_id = shoot.shoot_id
-           AND intent.lifecycle_state IN ('PREPARING', 'ASSET_READY', 'REJECTED_QUARANTINED')
         LEFT JOIN reference_import_file_operations AS file
             ON file.import_token = intent.import_token
         WHERE shoot.shoot_id = :shootId

@@ -66,7 +66,8 @@ class ValidatedReferenceSummary(
 
 enum class ImportWorkStatus {
     IN_PROGRESS,
-    NEEDS_ATTENTION,
+    RECONCILIATION_REQUIRED,
+    REJECTED_QUARANTINED,
 }
 
 class ImportWorkSummary(

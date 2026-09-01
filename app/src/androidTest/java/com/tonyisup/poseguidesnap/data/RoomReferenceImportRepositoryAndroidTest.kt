@@ -23,6 +23,166 @@ class RoomReferenceImportRepositoryAndroidTest {
     private lateinit var databaseName: String
     private var database: AppDatabase? = null
 
+    @Test
+    fun importAdmissionAllowsAnActiveEmptyShootWithoutWritingRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Allowed,
+            repository().checkImportAdmission(SHOOT_ID),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun importAdmissionClassifiesUnknownDeletingFullAndActiveSessionWithoutWrites() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "admission-deleting")
+        seedShoot(sqlite, "admission-full")
+        seedShoot(sqlite, "admission-session")
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
+                "WHERE shoot_id = 'admission-deleting'",
+        )
+        (0 until 20).forEach { index ->
+            seedValidatedPose(sqlite, "admission-full", "admission-pose-$index", index)
+        }
+        seedSession(sqlite, "admission-session")
+        val repository = repository()
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.UNKNOWN_SHOOT,
+            ),
+            repository.checkImportAdmission("admission-unknown"),
+        )
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.SHOOT_DELETING,
+            ),
+            repository.checkImportAdmission("admission-deleting"),
+        )
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.PLAYLIST_FULL,
+            ),
+            repository.checkImportAdmission("admission-full"),
+        )
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.ACTIVE_SESSION,
+            ),
+            repository.checkImportAdmission("admission-session"),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun importAdmissionDistinguishesInProgressFromReconciliationRequired() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        val repository = repository()
+        val reservation = reservation()
+        assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(reservation, 10L))
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.IMPORT_IN_PROGRESS,
+            ),
+            repository.checkImportAdmission(SHOOT_ID),
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_file_operations SET reconciliation_required = 1, " +
+                "last_failure_code = 'STATE_MISMATCH' WHERE import_token = ?",
+            arrayOf<Any>(reservation.importToken.value),
+        )
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
+            ),
+            repository.checkImportAdmission(SHOOT_ID),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun importAdmissionPrioritizesAnyReconciliationRequiredWorkOverOlderInProgressWork() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "admission-mixed-source")
+        seedShoot(sqlite, "admission-mixed-target")
+        val repository = repository()
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(
+                reservation(
+                    shootId = "admission-mixed-source",
+                    poseId = "admission-mixed-progress-pose",
+                    token = "admission-mixed-progress-token",
+                ),
+                10L,
+            ),
+        )
+        val reconciliationToken = ReferenceImportToken("admission-mixed-reconciliation-token")
+        val reconciliationPaths = ReferenceImportFileOperationPaths.forToken(reconciliationToken)
+        sqlite.execSQL(
+            "INSERT INTO reference_import_intents (import_token, shoot_id, pose_id, " +
+                "relative_asset_path, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis, asset_ready_at_epoch_millis, terminal_at_epoch_millis) " +
+                "VALUES (?, 'admission-mixed-source', 'admission-mixed-reconciliation-pose', ?, " +
+                "'REJECTED_QUARANTINED', 20, 40, NULL, 40)",
+            arrayOf<Any>(reconciliationToken.value, reconciliationPaths.relativeAssetPath),
+        )
+        sqlite.execSQL(
+            "INSERT INTO reference_import_file_operations (import_token, relative_asset_path, " +
+                "relative_temp_path, relative_quarantine_path, stage, byte_count, sha256, " +
+                "last_failure_code, reconciliation_required, created_at_epoch_millis, " +
+                "updated_at_epoch_millis) VALUES (?, ?, ?, ?, 'QUARANTINE_DURABLE', 7, ?, " +
+                "'STATE_MISMATCH', 1, 20, 30)",
+            arrayOf<Any>(
+                reconciliationToken.value,
+                reconciliationPaths.relativeAssetPath,
+                reconciliationPaths.relativeTempPath,
+                reconciliationPaths.relativeQuarantinePath,
+                "ef".repeat(32),
+            ),
+        )
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.RECONCILIATION_REQUIRED,
+            ),
+            repository.checkImportAdmission("admission-mixed-target"),
+        )
+        assertEquals(2, sqlite.intentCount())
+        assertEquals(2, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun importAdmissionFailsClosedWhenRequiredLedgerAuthorityIsMissing() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        val repository = repository()
+        val reservation = reservation()
+        assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(reservation, 10L))
+        sqlite.execSQL(
+            "DELETE FROM reference_import_file_operations WHERE import_token = ?",
+            arrayOf<Any>(reservation.importToken.value),
+        )
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.checkImportAdmission(SHOOT_ID),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
     @Before
     fun setUp() {
         context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -91,6 +251,522 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
+    fun reservationIsRejectedBeforeCreatingRowsWhenAnActiveSessionExists() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        seedSession(sqlite, SHOOT_ID)
+        val reservation = reservation(
+            poseId = "active-session-pose",
+            token = "active-session-token",
+        )
+
+        val result = repository().reserveImport(reservation, 10L)
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.ACTIVE_SESSION,
+            ),
+            result,
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_intents WHERE import_token = ?",
+                reservation.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_file_operations WHERE import_token = ?",
+                reservation.importToken.value,
+            ),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun reservationDistinguishesDeletingShootFromCorruptShootLifecycleWithoutWritingAuthority() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val deletingShoot = "reserve-deleting-shoot"
+        val corruptShoot = "reserve-corrupt-shoot"
+        seedShoot(sqlite, deletingShoot)
+        seedShoot(sqlite, corruptShoot)
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
+                "WHERE shoot_id = ?",
+            arrayOf<Any>(deletingShoot),
+        )
+        sqlite.execSQL(
+            "UPDATE shoots SET lifecycle_state = 'CORRUPT_UNKNOWN_LIFECYCLE' WHERE shoot_id = ?",
+            arrayOf<Any>(corruptShoot),
+        )
+        val repository = repository()
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.SHOOT_NOT_ACTIVE,
+            ),
+            repository.reserveImport(
+                reservation(
+                    shootId = deletingShoot,
+                    poseId = "reserve-deleting-pose",
+                    token = "reserve-deleting-token",
+                ),
+                10L,
+            ),
+        )
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.reserveImport(
+                reservation(
+                    shootId = corruptShoot,
+                    poseId = "reserve-corrupt-pose",
+                    token = "reserve-corrupt-token",
+                ),
+                20L,
+            ),
+        )
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+        assertEquals(0, sqlite.poseCount(deletingShoot))
+        assertEquals(0, sqlite.poseCount(corruptShoot))
+    }
+
+    @Test
+    fun secondReservationIsRejectedBeforeRowsWhenUnresolvedImportWorkExists() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, SHOOT_ID)
+        val repository = repository()
+        val first = reservation(
+            poseId = "first-unresolved-pose",
+            token = "first-unresolved-token",
+        )
+        val second = reservation(
+            poseId = "second-fresh-pose",
+            token = "second-fresh-token",
+        )
+        val firstPaths = ReferenceImportFileOperationPaths.forToken(first.importToken)
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(first, 10L),
+        )
+
+        val secondResult = repository.reserveImport(second, 20L)
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.UNRESOLVED_IMPORT_WORK,
+            ),
+            secondResult,
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    first.importToken.value,
+                    SHOOT_ID,
+                    first.poseId,
+                    first.relativeAssetPath,
+                    "PREPARING",
+                    10L,
+                    10L,
+                    null,
+                    null,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, shoot_id, pose_id, relative_asset_path, lifecycle_state, " +
+                    "created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "asset_ready_at_epoch_millis, terminal_at_epoch_millis " +
+                    "FROM reference_import_intents WHERE import_token = ?",
+                first.importToken.value,
+            ),
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    first.importToken.value,
+                    firstPaths.relativeAssetPath,
+                    firstPaths.relativeTempPath,
+                    firstPaths.relativeQuarantinePath,
+                    "EXPECTING_RESERVATION",
+                    null,
+                    null,
+                    null,
+                    0L,
+                    10L,
+                    10L,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, relative_asset_path, relative_temp_path, " +
+                    "relative_quarantine_path, stage, byte_count, sha256, last_failure_code, " +
+                    "reconciliation_required, created_at_epoch_millis, updated_at_epoch_millis " +
+                    "FROM reference_import_file_operations WHERE import_token = ?",
+                first.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_intents WHERE import_token = ?",
+                second.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_file_operations WHERE import_token = ?",
+                second.importToken.value,
+            ),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun unresolvedImportWorkInAnotherShootRejectsFreshReservationBeforeCreatingRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootA = "cross-shoot-a"
+        val shootB = "cross-shoot-b"
+        seedShoot(sqlite, shootA)
+        seedShoot(sqlite, shootB)
+        val repository = repository()
+        val reservationA = reservation(
+            shootId = shootA,
+            poseId = "cross-shoot-pose-a",
+            token = "cross-shoot-token-a",
+        )
+        val reservationB = reservation(
+            shootId = shootB,
+            poseId = "cross-shoot-pose-b",
+            token = "cross-shoot-token-b",
+        )
+        val pathsA = ReferenceImportFileOperationPaths.forToken(reservationA.importToken)
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(reservationA, 10L),
+        )
+
+        val resultB = repository.reserveImport(reservationB, 20L)
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.UNRESOLVED_IMPORT_WORK,
+            ),
+            resultB,
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    reservationA.importToken.value,
+                    shootA,
+                    reservationA.poseId,
+                    reservationA.relativeAssetPath,
+                    "PREPARING",
+                    10L,
+                    10L,
+                    null,
+                    null,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, shoot_id, pose_id, relative_asset_path, lifecycle_state, " +
+                    "created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "asset_ready_at_epoch_millis, terminal_at_epoch_millis " +
+                    "FROM reference_import_intents WHERE import_token = ?",
+                reservationA.importToken.value,
+            ),
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    reservationA.importToken.value,
+                    pathsA.relativeAssetPath,
+                    pathsA.relativeTempPath,
+                    pathsA.relativeQuarantinePath,
+                    "EXPECTING_RESERVATION",
+                    null,
+                    null,
+                    null,
+                    0L,
+                    10L,
+                    10L,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, relative_asset_path, relative_temp_path, " +
+                    "relative_quarantine_path, stage, byte_count, sha256, last_failure_code, " +
+                    "reconciliation_required, created_at_epoch_millis, updated_at_epoch_millis " +
+                    "FROM reference_import_file_operations WHERE import_token = ?",
+                reservationA.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_intents WHERE import_token = ?",
+                reservationB.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_file_operations WHERE import_token = ?",
+                reservationB.importToken.value,
+            ),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun reconciliationRequiredTerminalWorkInAnotherShootBlocksFreshReservationWithoutCreatingRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootA = "terminal-reconciliation-shoot-a"
+        val shootB = "terminal-reconciliation-shoot-b"
+        seedShoot(sqlite, shootA)
+        seedShoot(sqlite, shootB)
+        val repository = repository()
+        val reservationA = reservation(
+            shootId = shootA,
+            poseId = "terminal-reconciliation-pose-a",
+            token = "terminal-reconciliation-token-a",
+        )
+        val reservationB = reservation(
+            shootId = shootB,
+            poseId = "terminal-reconciliation-pose-b",
+            token = "terminal-reconciliation-token-b",
+        )
+        val pathsA = ReferenceImportFileOperationPaths.forToken(reservationA.importToken)
+        val canonicalHash = "cd".repeat(32)
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(reservationA, 10L),
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_intents SET lifecycle_state = 'REJECTED_QUARANTINED', " +
+                "updated_at_epoch_millis = 40, terminal_at_epoch_millis = 40 " +
+                "WHERE import_token = ?",
+            arrayOf<Any>(reservationA.importToken.value),
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_file_operations SET stage = 'QUARANTINE_DURABLE', " +
+                "byte_count = 7, sha256 = ?, last_failure_code = 'STATE_MISMATCH', " +
+                "reconciliation_required = 1, updated_at_epoch_millis = 30 " +
+                "WHERE import_token = ?",
+            arrayOf<Any>(canonicalHash, reservationA.importToken.value),
+        )
+
+        val resultB = repository.reserveImport(reservationB, 50L)
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.UNRESOLVED_IMPORT_WORK,
+            ),
+            resultB,
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    reservationA.importToken.value,
+                    shootA,
+                    reservationA.poseId,
+                    reservationA.relativeAssetPath,
+                    "REJECTED_QUARANTINED",
+                    10L,
+                    40L,
+                    null,
+                    40L,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, shoot_id, pose_id, relative_asset_path, lifecycle_state, " +
+                    "created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "asset_ready_at_epoch_millis, terminal_at_epoch_millis " +
+                    "FROM reference_import_intents WHERE import_token = ?",
+                reservationA.importToken.value,
+            ),
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    reservationA.importToken.value,
+                    pathsA.relativeAssetPath,
+                    pathsA.relativeTempPath,
+                    pathsA.relativeQuarantinePath,
+                    "QUARANTINE_DURABLE",
+                    7L,
+                    canonicalHash,
+                    "STATE_MISMATCH",
+                    1L,
+                    10L,
+                    30L,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, relative_asset_path, relative_temp_path, " +
+                    "relative_quarantine_path, stage, byte_count, sha256, last_failure_code, " +
+                    "reconciliation_required, created_at_epoch_millis, updated_at_epoch_millis " +
+                    "FROM reference_import_file_operations WHERE import_token = ?",
+                reservationA.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_intents WHERE shoot_id = ?",
+                shootB,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_file_operations WHERE import_token = ?",
+                reservationB.importToken.value,
+            ),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun missingFileLedgerAuthorityInAnotherShootRejectsFreshReservationBeforeRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        val shootA = "missing-ledger-shoot-a"
+        val shootB = "missing-ledger-shoot-b"
+        seedShoot(sqlite, shootA)
+        seedShoot(sqlite, shootB)
+        val repository = repository()
+        val reservationA = reservation(
+            shootId = shootA,
+            poseId = "missing-ledger-pose-a",
+            token = "missing-ledger-token-a",
+        )
+        val reservationB = reservation(
+            shootId = shootB,
+            poseId = "missing-ledger-pose-b",
+            token = "missing-ledger-token-b",
+        )
+
+        assertEquals(
+            ReferenceImportReserveResult.Reserved,
+            repository.reserveImport(reservationA, 10L),
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_intents SET lifecycle_state = 'REJECTED_QUARANTINED', " +
+                "updated_at_epoch_millis = 40, terminal_at_epoch_millis = 40 " +
+                "WHERE import_token = ?",
+            arrayOf<Any>(reservationA.importToken.value),
+        )
+        sqlite.execSQL(
+            "DELETE FROM reference_import_file_operations WHERE import_token = ?",
+            arrayOf<Any>(reservationA.importToken.value),
+        )
+
+        val resultB = repository.reserveImport(reservationB, 50L)
+
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            resultB,
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_intents WHERE import_token = ?",
+                reservationB.importToken.value,
+            ),
+        )
+        assertEquals(
+            emptyList<List<Any?>>(),
+            sqlite.rows(
+                "SELECT import_token FROM reference_import_file_operations WHERE import_token = ?",
+                reservationB.importToken.value,
+            ),
+        )
+        assertEquals(
+            listOf(
+                listOf(
+                    reservationA.importToken.value,
+                    shootA,
+                    reservationA.poseId,
+                    reservationA.relativeAssetPath,
+                    "REJECTED_QUARANTINED",
+                    10L,
+                    40L,
+                    null,
+                    40L,
+                ),
+            ),
+            sqlite.rows(
+                "SELECT import_token, shoot_id, pose_id, relative_asset_path, lifecycle_state, " +
+                    "created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "asset_ready_at_epoch_millis, terminal_at_epoch_millis " +
+                    "FROM reference_import_intents WHERE import_token = ?",
+                reservationA.importToken.value,
+            ),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
+    }
+
+    @Test
+    fun malformedSettledLedgerAuthorityInAnotherShootRejectsFreshReservationBeforeRows() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "malformed-settled-source")
+        seedShoot(sqlite, "malformed-settled-target")
+        val repository = repository()
+        val settled = reservation(
+            shootId = "malformed-settled-source",
+            poseId = "malformed-settled-pose",
+            token = "malformed-settled-token",
+        )
+        assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(settled, 10L))
+        setFileStage(sqlite, settled.importToken.value, "QUARANTINE_DURABLE")
+        assertEquals(
+            ReferenceImportSettlementResult.Settled,
+            repository.settleFailure(
+                settled.importToken,
+                ReferenceImportFailureSettlement.QUARANTINED,
+                20L,
+            ),
+        )
+        sqlite.execSQL(
+            "UPDATE reference_import_file_operations SET relative_temp_path = 'wrong/private.tmp' " +
+                "WHERE import_token = ?",
+            arrayOf<Any>(settled.importToken.value),
+        )
+        val fresh = reservation(
+            shootId = "malformed-settled-target",
+            poseId = "malformed-settled-fresh-pose",
+            token = "malformed-settled-fresh-token",
+        )
+
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.checkImportAdmission(fresh.shootId),
+        )
+        assertEquals(
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository.reserveImport(fresh, 30L),
+        )
+        assertEquals(1, sqlite.intentCount())
+        assertEquals(1, sqlite.fileOperationCount())
+    }
+
+    @Test
     fun twentyFirstReferenceReservationIsRejectedWithoutCreatingImportRows() {
         val sqlite = openDatabase().openHelper.writableDatabase
         seedShoot(sqlite, SHOOT_ID)
@@ -130,6 +806,12 @@ class RoomReferenceImportRepositoryAndroidTest {
         assertEquals(
             ReferenceImportReserveResult.Reserved,
             repository.reserveImport(twentieth, 20L),
+        )
+        assertEquals(
+            ReferenceImportAdmissionCheckResult.Blocked(
+                ReferenceImportAdmissionCheckBlockReason.PLAYLIST_FULL,
+            ),
+            repository.checkImportAdmission(SHOOT_ID),
         )
         assertEquals(
             ReferenceImportReserveResult.Rejected(
@@ -418,7 +1100,7 @@ class RoomReferenceImportRepositoryAndroidTest {
             reservation("shoot-$suffix", "pose-$suffix", "token-$suffix")
         }
         reservations.values.forEach { candidate ->
-            assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(candidate, 10L))
+            seedReservedImport(sqlite, candidate, 10L)
         }
         setFileStage(sqlite, "token-asset-ready", "FINAL_DURABLE")
         assertEquals(
@@ -500,7 +1182,14 @@ class RoomReferenceImportRepositoryAndroidTest {
         }
         val repository = repository()
 
-        prepare(repository, "shoot-deleting", "pose-deleting", "token-deleting", 10L)
+        seedPreparedImport(
+            repository,
+            sqlite,
+            "shoot-deleting",
+            "pose-deleting",
+            "token-deleting",
+            10L,
+        )
         sqlite.execSQL(
             "UPDATE shoots SET lifecycle_state = 'DELETING', deletion_generation = 1 " +
                 "WHERE shoot_id = 'shoot-deleting'",
@@ -510,14 +1199,28 @@ class RoomReferenceImportRepositoryAndroidTest {
             repository.commitImport(evidence("shoot-deleting", "pose-deleting", "token-deleting"), 30L),
         )
 
-        prepare(repository, "shoot-session", "pose-session", "token-session", 40L)
+        seedPreparedImport(
+            repository,
+            sqlite,
+            "shoot-session",
+            "pose-session",
+            "token-session",
+            40L,
+        )
         seedSession(sqlite, "shoot-session")
         assertEquals(
             ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.ACTIVE_SESSION),
             repository.commitImport(evidence("shoot-session", "pose-session", "token-session"), 60L),
         )
 
-        prepare(repository, "shoot-pose-id", "pose-owned", "token-pose-id", 70L)
+        seedPreparedImport(
+            repository,
+            sqlite,
+            "shoot-pose-id",
+            "pose-owned",
+            "token-pose-id",
+            70L,
+        )
         seedPose(sqlite, "shoot-pose-id", "pose-owned", 0)
         assertEquals(
             ReferenceImportCommitResult.Rejected(ReferenceImportCommitRejectionReason.POSE_ID_CONFLICT),
@@ -541,10 +1244,7 @@ class RoomReferenceImportRepositoryAndroidTest {
                 "pose-$suffix",
                 "token-$suffix",
             )
-            assertEquals(
-                ReferenceImportReserveResult.Reserved,
-                repository().reserveImport(reservation, 10L),
-            )
+            seedReservedImport(sqlite, reservation, 10L)
         }
 
         setFileStage(sqlite, "token-cleaned", "CLEANED_DURABLE")
@@ -616,7 +1316,7 @@ class RoomReferenceImportRepositoryAndroidTest {
     }
 
     @Test
-    fun commitRejectsGapAndUnknownValidationStateWithoutMutatingOrder() {
+    fun reservationRejectsGapAndUnknownValidationStateBeforeCreatingImportRows() {
         val sqlite = openDatabase().openHelper.writableDatabase
         seedShoot(sqlite, "shoot-gap")
         seedShoot(sqlite, "shoot-invalid")
@@ -626,25 +1326,29 @@ class RoomReferenceImportRepositoryAndroidTest {
             "UPDATE shoot_poses SET validation_state = 'BROKEN' WHERE shoot_id = 'shoot-invalid'",
         )
         val repository = repository()
-        prepare(repository, "shoot-gap", "gap-new", "gap-token", 10L)
-        prepare(repository, "shoot-invalid", "invalid-new", "invalid-token", 20L)
 
         assertEquals(
-            ReferenceImportCommitResult.Rejected(
-                ReferenceImportCommitRejectionReason.AUTHORITY_INCONSISTENT,
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
             ),
-            repository.commitImport(evidence("shoot-gap", "gap-new", "gap-token"), 30L),
+            repository.reserveImport(
+                reservation("shoot-gap", "gap-new", "gap-token"),
+                10L,
+            ),
         )
         assertEquals(
-            ReferenceImportCommitResult.Rejected(
-                ReferenceImportCommitRejectionReason.AUTHORITY_INCONSISTENT,
+            ReferenceImportReserveResult.Rejected(
+                ReferenceImportReserveRejectionReason.AUTHORITY_INCONSISTENT,
             ),
-            repository.commitImport(evidence("shoot-invalid", "invalid-new", "invalid-token"), 40L),
+            repository.reserveImport(
+                reservation("shoot-invalid", "invalid-new", "invalid-token"),
+                20L,
+            ),
         )
         assertEquals(1, sqlite.poseCount("shoot-gap"))
         assertEquals(1, sqlite.poseCount("shoot-invalid"))
-        assertEquals("ASSET_READY", sqlite.intentState("gap-token"))
-        assertEquals("ASSET_READY", sqlite.intentState("invalid-token"))
+        assertEquals(0, sqlite.intentCount())
+        assertEquals(0, sqlite.fileOperationCount())
     }
 
     @Test
@@ -766,6 +1470,64 @@ class RoomReferenceImportRepositoryAndroidTest {
                 reservation.importToken,
                 reservation.relativeAssetPath,
                 startAt + 1L,
+            ),
+        )
+    }
+
+    private fun seedPreparedImport(
+        repository: RoomReferenceImportRepository,
+        sqlite: SupportSQLiteDatabase,
+        shootId: String,
+        poseId: String,
+        token: String,
+        startAt: Long,
+    ) {
+        val reservation = reservation(shootId, poseId, token)
+        seedReservedImport(sqlite, reservation, startAt)
+        setFileStage(sqlite, token, "FINAL_DURABLE")
+        assertEquals(
+            ReferenceImportAssetReadyResult.MarkedAssetReady,
+            repository.markAssetReady(
+                reservation.importToken,
+                reservation.relativeAssetPath,
+                startAt + 1L,
+            ),
+        )
+    }
+
+    private fun seedReservedImport(
+        sqlite: SupportSQLiteDatabase,
+        reservation: ReferenceImportReservation,
+        createdAtEpochMillis: Long,
+    ) {
+        val paths = ReferenceImportFileOperationPaths.forToken(reservation.importToken)
+        sqlite.execSQL(
+            "INSERT INTO reference_import_intents (import_token, shoot_id, pose_id, " +
+                "relative_asset_path, lifecycle_state, created_at_epoch_millis, " +
+                "updated_at_epoch_millis, asset_ready_at_epoch_millis, terminal_at_epoch_millis) " +
+                "VALUES (?, ?, ?, ?, 'PREPARING', ?, ?, NULL, NULL)",
+            arrayOf<Any>(
+                reservation.importToken.value,
+                reservation.shootId,
+                reservation.poseId,
+                reservation.relativeAssetPath,
+                createdAtEpochMillis,
+                createdAtEpochMillis,
+            ),
+        )
+        sqlite.execSQL(
+            "INSERT INTO reference_import_file_operations (import_token, relative_asset_path, " +
+                "relative_temp_path, relative_quarantine_path, stage, byte_count, sha256, " +
+                "last_failure_code, reconciliation_required, created_at_epoch_millis, " +
+                "updated_at_epoch_millis) VALUES (?, ?, ?, ?, 'EXPECTING_RESERVATION', NULL, " +
+                "NULL, NULL, 0, ?, ?)",
+            arrayOf<Any>(
+                reservation.importToken.value,
+                paths.relativeAssetPath,
+                paths.relativeTempPath,
+                paths.relativeQuarantinePath,
+                createdAtEpochMillis,
+                createdAtEpochMillis,
             ),
         )
     }

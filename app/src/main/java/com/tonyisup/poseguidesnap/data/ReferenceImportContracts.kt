@@ -172,6 +172,30 @@ enum class ReferenceImportReserveRejectionReason {
     POSE_ID_CONFLICT,
     POSE_ALREADY_EXISTS,
     PLAYLIST_FULL,
+    ACTIVE_SESSION,
+    UNRESOLVED_IMPORT_WORK,
+    AUTHORITY_INCONSISTENT,
+}
+
+sealed interface ReferenceImportAdmissionCheckResult {
+    data object Allowed : ReferenceImportAdmissionCheckResult {
+        override fun toString(): String = "ReferenceImportAdmissionCheckResult.Allowed"
+    }
+
+    data class Blocked(val reason: ReferenceImportAdmissionCheckBlockReason) :
+        ReferenceImportAdmissionCheckResult {
+        override fun toString(): String =
+            "ReferenceImportAdmissionCheckResult.Blocked(reason=${reason.name})"
+    }
+}
+
+enum class ReferenceImportAdmissionCheckBlockReason {
+    UNKNOWN_SHOOT,
+    SHOOT_DELETING,
+    PLAYLIST_FULL,
+    ACTIVE_SESSION,
+    IMPORT_IN_PROGRESS,
+    RECONCILIATION_REQUIRED,
     AUTHORITY_INCONSISTENT,
 }
 
@@ -266,6 +290,8 @@ enum class ReferenceImportSettlementRejectionReason {
 
 internal object ReferenceImportPolicy {
     fun validateTimestamp(timestampEpochMillis: Long): Boolean = timestampEpochMillis >= 0L
+
+    fun validateOwnershipIdentity(value: String): Boolean = isSafeIdentitySegment(value)
 }
 
 private fun isSafeIdentitySegment(value: String): Boolean =
@@ -282,8 +308,12 @@ private fun isSafeIdentitySegment(value: String): Boolean =
         }
 
 private fun requireOwnershipIdentity(shootId: String, poseId: String) {
-    require(isSafeIdentitySegment(shootId)) { "reference shoot id must be a safe identity" }
-    require(isSafeIdentitySegment(poseId)) { "reference pose id must be a safe identity" }
+    require(ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
+        "reference shoot id must be a safe identity"
+    }
+    require(ReferenceImportPolicy.validateOwnershipIdentity(poseId)) {
+        "reference pose id must be a safe identity"
+    }
 }
 
 private fun String.containsProviderUri(): Boolean = contains("content://", ignoreCase = true)

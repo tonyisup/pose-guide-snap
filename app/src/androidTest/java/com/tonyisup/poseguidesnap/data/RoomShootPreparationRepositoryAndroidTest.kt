@@ -258,6 +258,19 @@ class RoomShootPreparationRepositoryAndroidTest {
         seedImportWork(
             sqlite = sqlite,
             shootId = "shoot-editor",
+            token = "token-terminal-quarantined-secret",
+            poseId = "pose-terminal-quarantined",
+            lifecycleState = "REJECTED_QUARANTINED",
+            createdAt = 161L,
+            intentUpdatedAt = 170L,
+            fileStage = "QUARANTINE_DURABLE",
+            fileUpdatedAt = 180L,
+            reconciliationRequired = false,
+            terminalAt = 170L,
+        )
+        seedImportWork(
+            sqlite = sqlite,
+            shootId = "shoot-editor",
             token = "token-cleaned-secret",
             poseId = "pose-cleaned",
             lifecycleState = "REJECTED_CLEANED",
@@ -275,7 +288,7 @@ class RoomShootPreparationRepositoryAndroidTest {
         assertEquals("shoot-editor", snapshot.shootId)
         assertEquals("Editor shoot", snapshot.name)
         assertEquals(ShootPreparationLifecycle.ACTIVE, snapshot.lifecycle)
-        assertEquals(160L, snapshot.updatedAtEpochMillis)
+        assertEquals(180L, snapshot.updatedAtEpochMillis)
         assertEquals(listOf("pose-valid", "pose-validated"), snapshot.validatedReferences.map { it.poseId })
         assertEquals(listOf(0, 1), snapshot.validatedReferences.map { it.poseIndex })
         assertEquals(listOf("First pose", "Second pose"), snapshot.validatedReferences.map { it.label })
@@ -283,13 +296,14 @@ class RoomShootPreparationRepositoryAndroidTest {
         assertEquals(
             listOf(
                 ImportWorkStatus.IN_PROGRESS,
-                ImportWorkStatus.NEEDS_ATTENTION,
-                ImportWorkStatus.NEEDS_ATTENTION,
+                ImportWorkStatus.RECONCILIATION_REQUIRED,
+                ImportWorkStatus.RECONCILIATION_REQUIRED,
+                ImportWorkStatus.REJECTED_QUARANTINED,
             ),
             snapshot.importWork.map { it.status },
         )
-        assertEquals(listOf(110L, 121L, 141L), snapshot.importWork.map { it.createdAtEpochMillis })
-        assertEquals(listOf(120L, 140L, 160L), snapshot.importWork.map { it.updatedAtEpochMillis })
+        assertEquals(listOf(110L, 121L, 141L, 161L), snapshot.importWork.map { it.createdAtEpochMillis })
+        assertEquals(listOf(120L, 140L, 160L, 180L), snapshot.importWork.map { it.updatedAtEpochMillis })
         assertEquals("ShootEditorSnapshot(redacted)", snapshot.toString())
         assertThrows(UnsupportedOperationException::class.java) {
             (snapshot.validatedReferences as MutableList<ValidatedReferenceSummary>).clear()
@@ -315,8 +329,41 @@ class RoomShootPreparationRepositoryAndroidTest {
             "token-preparing-secret",
             "token-ready-secret",
             "token-quarantined-secret",
+            "token-terminal-quarantined-secret",
             "reference-assets/private/",
         ).forEach { secret -> assertFalse(rendered.contains(secret)) }
+    }
+
+    @Test
+    fun editorObservationBoundsHealthyTerminalQuarantineHistoryToNewestTwenty() = runBlocking {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedShoot(sqlite, "shoot-history", "History shoot", createdAt = 1L, updatedAt = 1L)
+        (0..20).forEach { index ->
+            val createdAt = index.toLong() + 1L
+            seedImportWork(
+                sqlite = sqlite,
+                shootId = "shoot-history",
+                token = "history-token-${index.toString().padStart(2, '0')}",
+                poseId = "history-pose-$index",
+                lifecycleState = "REJECTED_QUARANTINED",
+                createdAt = createdAt,
+                intentUpdatedAt = createdAt + 100L,
+                fileStage = "QUARANTINE_DURABLE",
+                fileUpdatedAt = createdAt + 200L,
+                reconciliationRequired = false,
+                terminalAt = createdAt + 100L,
+            )
+        }
+
+        val snapshot = requireNotNull(repository().observeShootEditor("shoot-history").first())
+
+        assertEquals(20, snapshot.importWork.size)
+        assertEquals(
+            (2L..21L).toList(),
+            snapshot.importWork.map(ImportWorkSummary::createdAtEpochMillis),
+        )
+        assertTrue(snapshot.importWork.all { it.status == ImportWorkStatus.REJECTED_QUARANTINED })
+        assertEquals(221L, snapshot.updatedAtEpochMillis)
     }
 
     @Test

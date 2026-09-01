@@ -32,10 +32,55 @@ internal interface ReferenceImportFileOperationDao {
                 )
             )
         )
+          AND (
+              :afterCreatedAtEpochMillis IS NULL
+              OR file_operation.created_at_epoch_millis > :afterCreatedAtEpochMillis
+              OR (
+                  file_operation.created_at_epoch_millis = :afterCreatedAtEpochMillis
+                  AND file_operation.import_token > :afterImportToken
+              )
+          )
         ORDER BY file_operation.created_at_epoch_millis, file_operation.import_token
+        LIMIT :limit
         """,
     )
-    fun findRetryableOperations(): List<ReferenceImportFileOperationEntity>
+    fun findRetryableOperations(
+        afterCreatedAtEpochMillis: Long?,
+        afterImportToken: String?,
+        limit: Int,
+    ): List<ReferenceImportFileOperationEntity>
+
+    @Query(
+        """
+        SELECT file_operation.*
+        FROM reference_import_file_operations AS file_operation
+        INNER JOIN reference_import_intents AS intent
+            ON intent.import_token = file_operation.import_token
+        WHERE file_operation.reconciliation_required = 1
+        ORDER BY file_operation.created_at_epoch_millis, file_operation.import_token
+        LIMIT :limit
+        """,
+    )
+    fun findReconciliationRequiredOperations(limit: Int): List<ReferenceImportFileOperationEntity>
+
+    @Query(
+        """
+        SELECT * FROM reference_import_file_operations
+        WHERE :afterCreatedAtEpochMillis IS NULL
+           OR created_at_epoch_millis > :afterCreatedAtEpochMillis
+           OR (
+               created_at_epoch_millis = :afterCreatedAtEpochMillis
+               AND import_token > :afterImportToken
+           )
+        ORDER BY created_at_epoch_millis, import_token
+        LIMIT :limit
+        """,
+    )
+    fun findAuthorityPage(
+        afterCreatedAtEpochMillis: Long?,
+        afterImportToken: String?,
+        limit: Int,
+    ): List<ReferenceImportFileOperationEntity>
 
     @Insert
     fun insertInitialOperation(operation: ReferenceImportFileOperationEntity)
