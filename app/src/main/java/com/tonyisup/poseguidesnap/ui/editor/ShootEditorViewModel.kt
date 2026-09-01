@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -599,10 +600,11 @@ internal fun classifyPickerResultSafely(
     )
 }
 
-internal class ShootEditorViewModel(
+internal open class ShootEditorViewModel(
     private val shootId: String,
     private val workflow: ShootEditorWorkflowPort,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    closeAuthority: () -> Unit = {},
 ) : ViewModel() {
     private val reducer = ShootEditorReducer(shootId)
     private val generations = AtomicLong(0L)
@@ -615,6 +617,8 @@ internal class ShootEditorViewModel(
     private var nextEffectToken = 0L
     private var pendingEffectToken: Long? = null
     private var pendingEffect: ShootEditorEffect? = null
+    private var cleared = false
+    private var closeAuthority: (() -> Unit)? = closeAuthority
 
     val state: StateFlow<ShootEditorUiState> = _state.asStateFlow()
     val effects: Flow<ShootEditorEffect> = effectChannel.receiveAsFlow().mapNotNull { envelope ->
@@ -738,8 +742,29 @@ internal class ShootEditorViewModel(
 
     override fun toString(): String = "ShootEditorViewModel(redacted)"
 
+    override fun onCleared() {
+        val close = synchronized(transitionLock) {
+            if (cleared) {
+                null
+            } else {
+                cleared = true
+                observationJob?.cancel()
+                observationJob = null
+                invalidatePendingEffect()
+                closeAuthority.also { closeAuthority = null }
+            }
+        }
+        viewModelScope.cancel()
+        try {
+            close?.invoke()
+        } finally {
+            super.onCleared()
+        }
+    }
+
     private fun observe() {
         val nextJob = synchronized(transitionLock) {
+            if (cleared) return
             observationJob?.cancel()
             invalidatePendingEffect()
             if (observationGenerationExhausted || observationGeneration == Long.MAX_VALUE) {
@@ -780,7 +805,7 @@ internal class ShootEditorViewModel(
         generation: Long,
         reduce: (ShootEditorUiState) -> ShootEditorTransition,
     ): ShootEditorUiState = synchronized(transitionLock) {
-        if (observationGenerationExhausted || observationGeneration != generation) {
+        if (cleared || observationGenerationExhausted || observationGeneration != generation) {
             return _state.value
         }
         applyTransitionLocked(reduce)
@@ -795,6 +820,7 @@ internal class ShootEditorViewModel(
     private fun applyTransitionLocked(
         reduce: (ShootEditorUiState) -> ShootEditorTransition,
     ): ShootEditorUiState {
+        if (cleared) return _state.value
         val transition = reduce(_state.value)
         if (transition.effects.size > 1) {
             invalidatePendingEffect()
@@ -835,6 +861,7 @@ internal class ShootEditorViewModel(
     }
 
     private fun nextOperationId(): ShootEditorOperationId? {
+        if (synchronized(transitionLock) { cleared }) return null
         while (true) {
             val current = generations.get()
             if (current == Long.MAX_VALUE) return null
