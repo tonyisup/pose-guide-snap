@@ -175,6 +175,31 @@ internal interface ShootPreparationDao {
                 WHERE any_pose.shoot_id = shoot.shoot_id
             ) AS total_reference_count
         FROM shoots AS shoot
+        ORDER BY shoot.updated_at_epoch_millis DESC, shoot.shoot_id ASC
+        LIMIT :limit OFFSET :offset
+        """,
+    )
+    fun observeShootPage(limit: Int, offset: Int): Flow<List<ShootPreparationShootRow>>
+
+    @Query(
+        """
+        SELECT
+            shoot.shoot_id,
+            shoot.name,
+            shoot.created_at_epoch_millis,
+            shoot.updated_at_epoch_millis,
+            shoot.lifecycle_state,
+            shoot.deletion_generation,
+            (
+                SELECT COUNT(*) FROM shoot_poses AS accepted_pose
+                WHERE accepted_pose.shoot_id = shoot.shoot_id
+                  AND accepted_pose.validation_state IN ('VALID', 'VALIDATED')
+            ) AS accepted_reference_count,
+            (
+                SELECT COUNT(*) FROM shoot_poses AS any_pose
+                WHERE any_pose.shoot_id = shoot.shoot_id
+            ) AS total_reference_count
+        FROM shoots AS shoot
         WHERE shoot.shoot_id = :shootId
         """,
     )

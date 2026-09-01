@@ -49,6 +49,43 @@ class ShootSummary(
     override fun toString(): String = "ShootSummary(redacted)"
 }
 
+class ShootSummaryPage(
+    items: Iterable<ShootSummary>,
+    val hasMore: Boolean,
+) {
+    val items: List<ShootSummary> = immutableProjectionList(items)
+
+    override fun toString(): String = "ShootSummaryPage(redacted)"
+}
+
+internal class ShootPageRequest(
+    val limit: Int,
+    val offset: Int,
+) {
+    init {
+        require(limit in 1..MAX_LIMIT) { "shoot page limit must be within bounds" }
+        require(offset >= 0) { "shoot page offset must be nonnegative" }
+    }
+
+    val queryLimit: Int = limit + 1
+
+    internal companion object {
+        const val MAX_LIMIT = 100
+    }
+}
+
+internal fun <R> projectShootSummaryPage(
+    rows: List<R>,
+    request: ShootPageRequest,
+    mapRow: (R) -> ShootSummary,
+): ShootSummaryPage {
+    check(rows.size <= request.queryLimit) { "shoot page query exceeded its requested bound" }
+    return ShootSummaryPage(
+        items = rows.take(request.limit).map(mapRow),
+        hasMore = rows.size > request.limit,
+    )
+}
+
 class ValidatedReferenceSummary(
     val poseId: String,
     val poseIndex: Int,

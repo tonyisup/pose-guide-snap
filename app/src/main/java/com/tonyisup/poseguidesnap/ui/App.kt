@@ -68,6 +68,7 @@ import com.tonyisup.poseguidesnap.camera.PixelSize
 import com.tonyisup.poseguidesnap.camera.PreviewFillCenterTransform
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
+import com.tonyisup.poseguidesnap.ui.navigation.AppNavHost
 
 private val WarmNearBlack = Color(0xFF171411)
 private val WarmPanel = Color(0xEB211D19)
@@ -87,8 +88,13 @@ fun App(lifecycleOwner: LifecycleOwner) {
             onPrimary = WarmNearBlack,
         ),
     ) {
-        CameraPermissionGate(lifecycleOwner = lifecycleOwner)
+        AppNavHost(lifecycleOwner = lifecycleOwner)
     }
+}
+
+@Composable
+internal fun StartedSessionCameraDestination(lifecycleOwner: LifecycleOwner) {
+    CameraPermissionGate(lifecycleOwner = lifecycleOwner)
 }
 
 @Composable

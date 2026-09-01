@@ -58,6 +58,17 @@ class RoomShootPreparationRepository(
             immutableList(rows.map { row -> row.toValidatedSummary() })
         }
 
+    fun observeShootPage(limit: Int, offset: Int): Flow<ShootSummaryPage> {
+        val request = ShootPageRequest(limit, offset)
+        return dao.observeShootPage(request.queryLimit, request.offset).map { rows ->
+            projectShootSummaryPage(
+                rows = rows,
+                request = request,
+                mapRow = { row -> row.toValidatedSummary() },
+            )
+        }
+    }
+
     fun observeShootEditor(shootId: String): Flow<ShootEditorSnapshot?> =
         dao.observeEditorRows(shootId).map { rows ->
             toEditorSnapshot(rows)
