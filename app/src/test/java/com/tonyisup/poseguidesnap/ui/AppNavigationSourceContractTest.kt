@@ -12,6 +12,10 @@ class AppNavigationSourceContractTest {
         val appBody = bounded(app, "fun App(lifecycleOwner: LifecycleOwner)", "@Composable\ninternal fun StartedSessionCameraDestination")
 
         assertTrue("App must render AppNavHost", "AppNavHost(lifecycleOwner = lifecycleOwner)" in appBody)
+        assertTrue(
+            "App root must paint the declared dark background behind every route",
+            "Surface(\n            modifier = Modifier.fillMaxSize(),\n            color = MaterialTheme.colorScheme.background" in appBody,
+        )
         assertFalse("App root must not call the camera permission gate", "CameraPermissionGate(" in appBody)
     }
 

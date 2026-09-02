@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -399,6 +400,7 @@ internal fun ShootEditorScreen(
                         key = { _, reference -> reference.poseId },
                     ) { index, reference ->
                         ReferenceRow(
+                            rowIndex = index,
                             reference = reference,
                             canMoveUp = index > 0 && !operationPending && !deleting,
                             canMoveDown = index < references.lastIndex && !operationPending && !deleting,
@@ -459,6 +461,7 @@ private fun AddReferenceForm(
     unresolvedImport: Boolean,
 ) {
     val labelError = shootEditorReferenceLabelError(label)
+    val fieldError = labelError?.takeUnless { label.isBlank() }
     val addEnabled = labelError == null &&
         !operationPending && !deleting && !full && !unresolvedImport
     val explanation = when {
@@ -481,9 +484,9 @@ private fun AddReferenceForm(
                 value = label,
                 onValueChange = onLabelChange,
                 label = { Text("Reference label") },
-                isError = labelError != null,
+                isError = fieldError != null,
                 supportingText = {
-                    Text(labelError ?: "${label.length} of $MAX_LABEL_LENGTH characters")
+                    Text(fieldError ?: "${label.length} of $MAX_LABEL_LENGTH characters")
                 },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -504,6 +507,7 @@ private fun AddReferenceForm(
 
 @Composable
 private fun ReferenceRow(
+    rowIndex: Int,
     reference: ShootEditorReferenceItem,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
@@ -512,7 +516,11 @@ private fun ReferenceRow(
 ) {
     val text = shootEditorReferenceText(reference)
     val label = text.label
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("reference-row-$rowIndex"),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),

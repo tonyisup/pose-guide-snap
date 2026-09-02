@@ -3,17 +3,20 @@ package com.tonyisup.poseguidesnap.ui.editor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.junit4.v2.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import com.tonyisup.poseguidesnap.data.ImportWorkStatus
 import com.tonyisup.poseguidesnap.data.ShootPreparationLifecycle
 import java.util.concurrent.atomic.AtomicInteger
@@ -64,9 +67,23 @@ class ShootEditorFlowTest {
         composeRule.onNode(hasText("Shoot editor") and isHeading()).assertExists()
         composeRule.onNodeWithText("September session").assertExists()
         composeRule.onNodeWithText("3 reference poses").assertExists()
-        composeRule.onAllNodesWithText("Validation: Validated").assertCountEquals(3)
-        composeRule.onAllNodesWithText("Mirror allowed").assertCountEquals(2)
-        composeRule.onNodeWithText("Mirror not allowed").assertExists()
+        listOf(
+            Triple("Side stretch", "Validation: Validated", "Mirror allowed"),
+            Triple("Forward fold", "Validation: Validated", "Mirror not allowed"),
+            Triple("Tree pose", "Validation: Validated", "Mirror allowed"),
+        ).forEachIndexed { index, (label, validation, mirrorPolicy) ->
+            composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(label))
+            val inExpectedRow = hasAnyAncestor(hasTestTag("reference-row-$index"))
+            listOf(label, validation, mirrorPolicy).forEach { expectedText ->
+                composeRule.onNode(
+                    hasText(expectedText) and inExpectedRow,
+                    useUnmergedTree = true,
+                ).assertExists()
+            }
+        }
+        composeRule.onNode(hasScrollAction()).performScrollToNode(
+            hasContentDescription("Move Forward fold up"),
+        )
         composeRule.onNodeWithContentDescription("Move Forward fold up")
             .performScrollTo()
             .performClick()
@@ -85,10 +102,11 @@ class ShootEditorFlowTest {
             }
         }
 
-        composeRule.onNodeWithText("Start shoot").performScrollTo().assertIsNotEnabled()
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Start shoot"))
+        composeRule.onNodeWithText("Start shoot").assertIsNotEnabled()
         composeRule.runOnIdle { state.value = loaded(references()) }
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Start shoot"))
         composeRule.onNodeWithText("Start shoot")
-            .performScrollTo()
             .assertIsEnabled()
             .performClick()
         composeRule.runOnIdle { assertEquals(1, starts.get()) }

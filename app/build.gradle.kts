@@ -77,6 +77,9 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    // Compose UI Test requests Espresso 3.5.0 transitively; pin the Android 16-compatible
+    // implementation, which replaces reflective InputManager.getInstance with getSystemService.
+    androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
