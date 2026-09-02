@@ -1,6 +1,6 @@
 # Privacy and Local Data Contract
 
-> **Project status: Tasks 1–11B are committed; Tasks 11A and 11B are host-reviewed and Pixel-exercised.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 11A provides backup-excluded local capture authority, deletion barriers, and export-claim state. Task 11B provides transactional app-private reference import, local validation, and persisted restart recovery without retaining provider URIs. User-facing shoot/picker UI, capture-filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete lifecycle remain unimplemented.
+> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 12 adds Room V3 shoot preparation and the user-facing system Photo Picker workflow while retaining provider URIs only as immediate callback values. Capture-filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete guided lifecycle remain unimplemented.
 
 ## Privacy boundary
 
@@ -8,7 +8,7 @@ The MVP is local-only after the app and pose model are installed:
 
 - Reference-image and live-camera pose processing occurs on the device.
 - There is no account, cloud upload, remote model inference, analytics SDK, advertising SDK, or subscription service.
-- The app will use Android's system photo picker for explicit reference selection.
+- The app uses Android's system photo picker for explicit reference selection.
 - Spoken guidance follows Android's current media route. The app will select only an installed TTS voice verified as not requiring a network connection, request no Android `INTERNET` permission, and fall back to visual-only coaching if an offline voice is unavailable. It will not implement bespoke Bluetooth routing.
 - The absence of `INTERNET` permission is not treated as a backup control. The app explicitly opts every sensitive app-private domain out of Android cloud backup, device-to-device transfer, and supported cross-platform transfer surfaces.
 - App-store publication is not part of the MVP and requires a separate distribution decision.
@@ -38,9 +38,11 @@ Task 11A implements the Room transaction that confirms an already-durable captur
 
 Task 11B implements the separate reference-import path. An explicit picker result is streamed into a deterministic app-private reservation/temp/final protocol without persisting the provider URI. Room records the logical intent and a closed file-operation stage before and after irreversible effects. Synced byte-count/hash evidence governs cleanup or quarantine, startup retries only exact token-derived paths, and an active validated pose is committed only after durable local MoveNet analysis. Rejection, failure, or restart cannot expose a partial active pose or authorize broad directory scanning.
 
+Task 12 exposes that import path through redacted shoot-list/editor projections. Compose and lifecycle owners retain only opaque operation correlation; the provider URI remains local to the immediate Activity Result callback and is passed directly to the import handler. Room V3 solely owns active playlist order and durable session start, and the camera permission boundary remains unreachable until start succeeds.
+
 Task 11A implements the targeted Room compare-and-set from `pending` to `claimed`; only its fresh winner carries external-create authority. Persisted `claimed` or later-stage replay is informational and requires reconciliation rather than authorizing another create. Neither Task 11A nor Task 11B performs `MediaStore.insert()`, update, or delete. Task 14 must consume this authority, persist the exact returned URI before later fallible work, and use only that URI for automatic MediaStore mutation.
 
-Android can otherwise back up app-private files and databases independently of app network permission.[1] The planned application therefore sets `android:allowBackup="false"`, references legacy `android:fullBackupContent="@xml/backup_rules"` and API 31+ `android:dataExtractionRules="@xml/data_extraction_rules"`, and excludes `root`, `file`, `database`, `sharedpref`, `external`, `device_root`, `device_file`, `device_database`, and `device_sharedpref` in every applicable cloud, device-transfer, and compile-SDK-37 cross-platform-transfer section. There is no custom `BackupAgent`. Partial restore of capture files, Room receipts, outbox claims, or quarantine state is forbidden because split restoration can violate authority, exact identity, and receipt invariants.
+Android can otherwise back up app-private files and databases independently of app network permission.[1] The application therefore sets `android:allowBackup="false"`, references legacy `android:fullBackupContent="@xml/backup_rules"` and API 31+ `android:dataExtractionRules="@xml/data_extraction_rules"`, and excludes `root`, `file`, `database`, `sharedpref`, `external`, `device_root`, `device_file`, `device_database`, and `device_sharedpref` in every applicable cloud, device-transfer, and compile-SDK-37 cross-platform-transfer section. There is no custom `BackupAgent`. Partial restore of capture files, Room receipts, outbox claims, or quarantine state is forbidden because split restoration can violate authority, exact identity, and receipt invariants.
 
 ## Storage rules
 

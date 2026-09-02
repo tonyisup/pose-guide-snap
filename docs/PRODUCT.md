@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–11B are committed; Tasks 11A and 11B are host-reviewed and Pixel-exercised.** The app now has durable Room capture authority plus transactional app-private reference import with a persisted filesystem-operation ledger and restart recovery. Gate 2 remains incomplete: there is no shoot-editor/user-facing picker UI, user-facing shutter or auto-capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Preparation UI remains Task 12, and the unified durable capture coordinator/export protocol remains Task 14.
+> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** The app now has Room V3 shoot preparation plus a semantics-labeled create → Photo Picker import → validate → reorder → durably start workflow. Gate 2 remains incomplete: the started route still enters the Task 10 camera diagnostic, with no user-facing shutter or auto-capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Offline-only speech remains Task 13, and the unified durable capture coordinator/export protocol remains Task 14.
 
 ## Product goal
 

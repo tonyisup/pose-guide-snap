@@ -1,8 +1,8 @@
 # Pose Guide Snap
 
-> **Project status: Tasks 11A and 11B are committed, host-reviewed, and Pixel-exercised. Gate 2 remains incomplete.**
+> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised. Gate 2 remains incomplete.**
 >
-> Task 11A landed in `53354660c77e51b039e86c091d644faee209593d` with backup-excluded Room capture authority. Task 11B landed in `d368e96a0335b1281471faca706287c4980652f0` after specification and quality/security PASS on exact candidate digest `d0795a35e76b3dbf0ae89faaac7aa367500aac59ed12aa0bf01cc9bc17a44932`. It adds Room V2 transactional reference-import intent, a persisted filesystem-operation ledger, no-clobber app-private publication, local MoveNet validation, and restart-safe cleanup/quarantine recovery. There is still no shoot-editor UI, user-facing picker flow, product shutter, auto-capture coordinator, MediaStore I/O worker, physical deletion UI, TTS/audio, or end-to-end guided workflow.
+> Task 12 completed the Room V3 shoot-preparation authority and a semantics-labeled create → Photo Picker import → validate → reorder → durably start workflow. The final Pixel follow-up landed in `5bc15c33c5b6c36196f99a2bd8259fe2b00ffeb3` after specification and quality/security/UX approval of exact staged digest `23318b4fa98a15405462f3419d1a5d47ac84af0ef12a79b40b1668d4212d0864`. Camera permission and camera construction remain unreachable until Room owns a valid active session. There is still no product shutter, auto-capture coordinator, capture-to-Room integration, MediaStore I/O worker, physical deletion UI, TTS/audio, or end-to-end guided workflow.
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 
@@ -10,7 +10,7 @@ Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP w
 
 The provisional application ID is `com.tonyisup.poseguidesnap`; the prototype version is `0.1.0` (`versionCode` 1), with `minSdk 29` and target SDK 37. It requests `android.permission.CAMERA` and AndroidX's app-signature `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network, cloud, or analytics library. The manifest disables Android backup and points to fail-closed legacy and API 31+ rules that exclude every supported app storage domain from cloud backup, device transfer, and the compile-SDK-37 iOS cross-platform transfer surface.
 
-Verified Task 10, Task 11A, and Task 11B evidence:
+Verified Task 10–12 evidence:
 
 - Task 10 JVM suite: 266/266 GREEN; lint and debug main/instrumentation builds GREEN.
 - Reproducible APK SHA-256 values: main `a678f014cefc19281bd253cfdb64b97bf0a3ec65f2e3d2f374248bfd47dfc3ad`; instrumentation `3f0985b207286c0c4f249183ae5d434488edf129afd53ed401f70988bd8135c5`.
@@ -22,8 +22,10 @@ Verified Task 10, Task 11A, and Task 11B evidence:
 - Only a fresh `PENDING → CLAIMED` compare-and-set grants external-create authority. Persisted claim replay is informational and reconciliation-required; Task 11A performs no MediaStore insertion or file deletion.
 - Task 11B JVM suite: 413/413 GREEN; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 remained byte-identical while V2 added the reference-import intent and file-operation ledger.
 - The exact Task 11B APK pair passed 25/25 targeted Pixel 6 instrumentation methods covering V1→V2 migration, ledger transitions, no-clobber generated-byte publication, transaction rollback, restart reconciliation, picker-result dispatch/redaction, and public-fixture MoveNet analysis. Test databases, Room lock files, reference assets, and the instrumentation package were removed and verified absent.
+- Current Task 12 host suite: 556/556 GREEN with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 and V2 schema artifacts remain byte-identical, and V3 is the active schema.
+- The final authorized Pixel 6 gate passed 4/4 synthetic-state `ShootEditorFlowTest` methods covering recovery rendering, row-scoped semantics and reorder callbacks, start enablement/callback behavior, and visible import/reconciliation states. A separate earlier manual Pixel run observed the production create/import/reorder/start path, picker recreation, and camera-permission boundary on a pre-final artifact; it is not same-artifact evidence for `5bc15c3`. Camera permission was denied and no preview or sensor run occurred. See the [Task 12 validation record](docs/validation/2026-09-01-task12-room-v3-shoot-preparation-pixel6.md).
 
-The internal camera candidate-capture mechanics are not yet connected to the durable Room protocol. Task 11B's import backend is implemented, but Task 12 still must expose shoot creation, picker import, ordering, rejection, and retry states. Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
+The preparation workflow is now implemented, but the internal camera candidate-capture mechanics are still not connected to the durable Room protocol. Task 13 adds bounded offline-only speech. Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
@@ -32,7 +34,7 @@ From the repository root on the [verified development environment](docs/DEVELOPM
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers only the bounded Task 10 camera, Task 11A Room-authority, and Task 11B reference-import slices, not their end-to-end integration.
+The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers bounded Task 10 camera, Task 11A Room-authority, Task 11B reference-import, and Task 12 editor-semantics slices, plus a separately labeled pre-final manual preparation observation. It does not establish their end-to-end integration.
 
 ## Approved MVP boundary
 

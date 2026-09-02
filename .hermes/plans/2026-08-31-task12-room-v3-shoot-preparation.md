@@ -10,6 +10,8 @@
 
 **Approved decisions:** Room V3 decoupling; durable idempotent Room session creation; enter the existing camera diagnostic after successful start. Task 13 TTS and Task 14 capture/MediaStore integration remain out of scope.
 
+**Status:** Complete. The implementation landed through `5bc15c33c5b6c36196f99a2bd8259fe2b00ffeb3`; the final host gate passed 556/556 JVM tests and all builds, and the authorized Pixel 6 gate passed 4/4 synthetic-state Compose methods. The earlier production preparation workflow was manually observed on a pre-final artifact and remains separately labeled. See `docs/validation/2026-09-01-task12-room-v3-shoot-preparation-pixel6.md`.
+
 ---
 
 ## Non-negotiable boundaries

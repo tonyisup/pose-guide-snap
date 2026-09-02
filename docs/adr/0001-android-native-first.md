@@ -1,6 +1,6 @@
 # ADR 0001: Android Native First
 
-- **Status:** Accepted product boundary; native Android and Task 10 camera slice implemented; full MVP acceptance pending
+- **Status:** Accepted product boundary; native Android through Task 12 shoot preparation implemented; full MVP acceptance pending
 - **Date:** 2026-08-27
 - **Decision owners:** Pose Guide Snap product and architecture review
 - **Reversibility:** Reversible after the Android MVP is evaluated
@@ -11,7 +11,7 @@ Pose Guide Snap depends on tight camera preview/analysis/capture coordination, p
 
 Building simultaneous Android and iOS clients, or adding a cross-platform abstraction before the core interaction is proven, would widen camera, audio, lifecycle, and packaging risk without evidence that audio-only pose correction and conservative auto-capture are trustworthy.
 
-At the decision checkpoint, the repository contained only a buildable native Android/Compose prototype and no camera or guided-capture workflow. Current HEAD now includes the reviewed native Task 10 rear-camera/MoveNet slice, Task 11A Room capture authority, and Task 11B transactional reference-import backend on the Pixel 6, but still lacks shoot-editor/picker UI, the user-facing shutter, camera/filesystem-to-Room capture coordination, MediaStore I/O, TTS/audio, physical deletion, and the complete guided workflow.
+At the decision checkpoint, the repository contained only a buildable native Android/Compose prototype and no camera or guided-capture workflow. Current HEAD now includes the reviewed native Task 10 rear-camera/MoveNet slice, Task 11A Room capture authority, Task 11B transactional reference-import backend, and Task 12 Room V3 shoot-preparation UI on the Pixel 6. It still lacks the user-facing shutter, camera/filesystem-to-Room capture coordination, MediaStore I/O, TTS/audio, physical deletion, and the complete guided workflow.
 
 ## Decision
 

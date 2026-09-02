@@ -1,6 +1,6 @@
 # ADR 0004: Room V3 Shoot-Preparation Authority
 
-- **Status:** Accepted for Task 12 planning
+- **Status:** Accepted and implemented through `5bc15c33c5b6c36196f99a2bd8259fe2b00ffeb3`; bounded Pixel 6 gate complete
 - **Date:** 2026-08-31
 - **Decision owner:** Product/architecture owner
 - **Scope:** Shoot preparation, reference-import placement, playlist ordering, and durable session start
@@ -113,7 +113,7 @@ The committed V1 and V2 schema artifacts remain immutable. V3 is exported as a n
 - Reorder becomes simpler because historical import records do not duplicate mutable order.
 - Durable rejected/quarantined evidence remains available without blocking replacement.
 - The application layer, not Compose, constructs import identity and timelines.
-- A private-device run remains separately permission-gated; host tests and instrumentation compilation are not runtime migration or UI evidence.
+- The final authorized Task 12 Pixel 6 gate passed synthetic-state editor semantics and callback tests. A separate pre-final manual run observed the production preparation flow and picker recreation; it is supporting evidence, not final-commit same-artifact proof. Future private-device runs remain separately permission-gated, and neither evidence class covers Task 13 speech or Task 14 capture/export behavior.
 
 ## Rejected alternatives
 

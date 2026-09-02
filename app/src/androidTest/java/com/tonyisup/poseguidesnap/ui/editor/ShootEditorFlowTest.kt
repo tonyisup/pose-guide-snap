@@ -27,7 +27,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import androidx.test.ext.junit.runners.AndroidJUnit4
 
-/** Compile-only Compose flow evidence. This test uses no database, picker, camera, or device I/O. */
+/** Synthetic-state Compose flow evidence. This test uses no database, picker, camera, or device I/O. */
 @RunWith(AndroidJUnit4::class)
 class ShootEditorFlowTest {
     @get:Rule

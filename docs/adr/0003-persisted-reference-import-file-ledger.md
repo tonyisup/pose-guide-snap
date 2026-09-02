@@ -162,7 +162,7 @@ The authorized Pixel 6 gate must run the exact staged APK and prove V1→V2 migr
 ## Consequences
 
 - Task 11B is larger than the original import slice, but the ownership model is executable and reviewable.
-- Room V2 is committed; future schema changes require an explicit migration from V2.
+- Room V2 remains an immutable committed schema; Task 12's explicit V2→V3 migration removes duplicated import-order authority while preserving the ledger.
 - Filename inference is demoted to evidence checked against the ledger, not authority.
 - The existing rejected Task 11B candidates remain preserved in Git stashes for audit.
-- Task 12 UI remains deferred and must call the final import/startup reconciliation APIs rather than reimplement policy.
+- Task 12's UI is implemented through the application facade and startup reconciliation APIs; it does not reimplement ledger policy or persist provider URIs.
