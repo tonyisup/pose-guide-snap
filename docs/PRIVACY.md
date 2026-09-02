@@ -1,6 +1,6 @@
 # Privacy and Local Data Contract
 
-> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 12 adds Room V3 shoot preparation and the user-facing system Photo Picker workflow while retaining provider URIs only as immediate callback values. Capture-filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete guided lifecycle remain unimplemented.
+> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised.** The app requests `android.permission.CAMERA` plus AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; it requests no `INTERNET`, storage, location, audio, or foreground-service permission and includes no network/cloud/analytics library. Task 12 adds Room V3 shoot preparation and the user-facing system Photo Picker workflow while retaining provider URIs only as immediate callback values. Tasks 14A.1–14A.2 add read-only, redacted Room session reconstruction and active-session discovery that expose no name, label, path, URI, or claim token. Capture-filesystem/Room coordination, MediaStore I/O, TTS, deletion UI, and the complete guided lifecycle remain unimplemented.
 
 ## Privacy boundary
 

@@ -638,6 +638,74 @@ class RoomShootRepositoryAndroidTest {
         assertEquals(expected, reopened)
     }
 
+    @Test
+    fun activeSessionDiscoveryFindsExactSessionAcrossReopen() {
+        val firstDatabase = openDatabase()
+        val sqlite = firstDatabase.openHelper.writableDatabase
+        seedGuidedBootstrapShoot(sqlite)
+        sqlite.execSQL(
+            """
+            INSERT INTO shoots
+                (shoot_id, name, created_at_epoch_millis, updated_at_epoch_millis,
+                 lifecycle_state, deletion_generation)
+            VALUES (?, 'Idle discovery shoot', 1, 1, 'ACTIVE', 0)
+            """.trimIndent(),
+            arrayOf<Any>(SECOND_SHOOT_ID),
+        )
+        assertEquals(
+            ShootStartResult.Started,
+            RoomShootPreparationRepository(firstDatabase).startShoot(
+                shootId = SHOOT_ID,
+                sessionId = SESSION_ID,
+                startedAtEpochMillis = 1L,
+            ),
+        )
+        val expected = ActiveGuidedSessionResult.Exact(SESSION_ID)
+        val firstRepository = repository()
+
+        assertEquals(expected, firstRepository.findActiveGuidedSession(SHOOT_ID))
+        assertEquals(
+            ActiveGuidedSessionResult.None,
+            firstRepository.findActiveGuidedSession(SECOND_SHOOT_ID),
+        )
+        assertEquals(
+            ActiveGuidedSessionResult.UnknownShoot,
+            firstRepository.findActiveGuidedSession("missing-shoot"),
+        )
+        closeDatabase()
+
+        val reopenedRepository = repository()
+        assertEquals(expected, reopenedRepository.findActiveGuidedSession(SHOOT_ID))
+        assertEquals(
+            ActiveGuidedSessionResult.None,
+            reopenedRepository.findActiveGuidedSession(SECOND_SHOOT_ID),
+        )
+    }
+
+    @Test
+    fun activeSessionDiscoveryFailsClosedOnTriggerBypassedCorruption() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedActiveSession(sqlite)
+        sqlite.execSQL("DROP TRIGGER IF EXISTS trigger_shoot_sessions_one_active_insert")
+        sqlite.execSQL("DROP TRIGGER IF EXISTS trigger_shoot_sessions_one_active_update")
+        sqlite.execSQL(
+            """
+            INSERT INTO shoot_sessions
+                (session_id, shoot_id, current_pose_index, next_attempt_number,
+                 lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis)
+            VALUES (?, ?, 0, 0, 'ACTIVE', 1, 1)
+            """.trimIndent(),
+            arrayOf<Any>("corrupt-second-session", SHOOT_ID),
+        )
+
+        assertEquals(
+            ActiveGuidedSessionResult.Rejected(
+                ActiveGuidedSessionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            repository().findActiveGuidedSession(SHOOT_ID),
+        )
+    }
+
     private fun openDatabase(): AppDatabase =
         AppDatabase.create(context, databaseName).also { database = it }
 
@@ -821,6 +889,7 @@ class RoomShootRepositoryAndroidTest {
 
     companion object {
         private const val SHOOT_ID = "shoot-1"
+        private const val SECOND_SHOOT_ID = "shoot-2"
         private const val SESSION_ID = "session-1"
         private const val POSE_ID = "pose-0"
     }

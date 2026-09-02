@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: Tasks 1–12 and Task 14A.1 are implemented, host-verified, and boundedly Pixel-exercised.** The current JVM suite is 579/579 GREEN; lint and debug/release/instrumentation builds are GREEN. Task 14A.1 passed 6/6 exact-APK Pixel 6 Room tests for close/reopen reconstruction, immediate-transaction writer exclusion, nontransactional mutation controls, and read-only evidence. This does not prove UI/process-death resume, camera, capture/export, deletion completion, audio, or the end-to-end workflow. Gates 2–4 remain open.
+> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised.** The current JVM suite is 591/591 GREEN; lint and debug/release/instrumentation builds are GREEN. Task 14A.1 passed 6/6 exact-APK Pixel 6 Room tests; Task 14A.2 passed 8/8 exact-APK Pixel 6 tests covering active-session discovery across reopen, fail-closed multi-active corruption, and the 14A.1 regressions. This does not prove UI/process-death resume, camera, capture/export, deletion completion, audio, or the end-to-end workflow. Gates 2–4 remain open.
 
 ## Testing principles
 
@@ -66,6 +66,13 @@ Task 14A.1 evidence remains bounded to exact-session Room reconstruction:
 - Equivalent nontransactional confirmation/deletion reads produced the expected mixed pre/post facts, demonstrating that the transaction gate is causal rather than decorative.
 - Repeated bootstrap reads changed no V3 authority table, schema digest, `total_changes()`, or `PRAGMA data_version`.
 - UUID-named test databases and the instrumentation package were verified absent afterward. No camera, picker, image, MediaStore, UI, or personal-data path was exercised. See `validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md`.
+
+Task 14A.2 evidence remains bounded to Room active-session discovery:
+
+- 591/591 JVM tests passed with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK assembly passed; schemas unchanged.
+- The new mapper class produced 12/12 behavioral runtime-assertion failures against its compile-safe placeholder before implementation, then 12/12 passes.
+- The installed APK pair matched recorded SHA-256 values and passed 8/8 focused Pixel 6 methods: exact discovery across close/reopen, sessionless-shoot `None`, missing-shoot `UnknownShoot`, fail-closed multi-active corruption with the one-active triggers dropped in the UUID test database, plus the six Task 14A.1 regressions.
+- Test databases and the instrumentation package were verified absent afterward. See `validation/2026-09-02-task14a2-active-session-discovery-pixel6.md`.
 
 ## Pure JVM test matrix
 

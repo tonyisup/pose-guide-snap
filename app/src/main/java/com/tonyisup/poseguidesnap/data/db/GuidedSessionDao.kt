@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.data.db
 import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Transaction
+import com.tonyisup.poseguidesnap.data.ActiveGuidedSessionCandidateRows
 import com.tonyisup.poseguidesnap.data.GuidedAttemptAuthorityRow
 import com.tonyisup.poseguidesnap.data.GuidedExportOutputAuthorityRow
 import com.tonyisup.poseguidesnap.data.GuidedOutboxAuthorityRow
@@ -33,6 +34,26 @@ internal abstract class GuidedSessionDao {
                 .map(CaptureExportOutputEntity::toAuthorityRow),
         )
     }
+
+    @Transaction
+    open fun findActiveSessionCandidates(shootId: String): ActiveGuidedSessionCandidateRows =
+        ActiveGuidedSessionCandidateRows(
+            shoot = findShoot(shootId)?.toAuthorityRow(),
+            sessions = findSessionsForShoot(shootId).map(ShootSessionEntity::toAuthorityRow),
+        )
+
+    @Query("SELECT * FROM shoots WHERE shoot_id = :shootId")
+    protected abstract fun findShoot(shootId: String): ShootEntity?
+
+    @Query(
+        """
+        SELECT *
+        FROM shoot_sessions
+        WHERE shoot_id = :shootId
+        ORDER BY session_id ASC
+        """,
+    )
+    protected abstract fun findSessionsForShoot(shootId: String): List<ShootSessionEntity>
 
     @Query("SELECT * FROM shoot_sessions WHERE session_id = :sessionId")
     protected abstract fun findSession(sessionId: String): ShootSessionEntity?

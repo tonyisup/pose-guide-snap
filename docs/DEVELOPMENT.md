@@ -1,6 +1,6 @@
 # Development Environment
 
-> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** This document records the command-line Android toolchain, the historical Task 3 bootstrap checkpoint, and the commands used to verify the current prototype. Current HEAD includes rear CameraX preview/analysis, direct on-device MoveNet, internal exactly-three app-private candidate mechanics, durable Room capture/deletion/claim authority, transactional reference import, and the Room V3 create → Photo Picker import → validate → reorder → durably start UI. Gate 2 remains incomplete because the camera/filesystem path is not yet connected to Room confirmation or MediaStore I/O.
+> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised.** This document records the command-line Android toolchain, the historical Task 3 bootstrap checkpoint, and the commands used to verify the current prototype. Current HEAD includes rear CameraX preview/analysis, direct on-device MoveNet, internal exactly-three app-private candidate mechanics, durable Room capture/deletion/claim authority, transactional reference import, the Room V3 create → Photo Picker import → validate → reorder → durably start UI, and read-only atomic session bootstrap plus active-session discovery. Gate 2 remains incomplete because the camera/filesystem path is not yet connected to Room confirmation or MediaStore I/O.
 
 ## Verified host
 

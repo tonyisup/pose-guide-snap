@@ -85,7 +85,6 @@ This stronger writer-exclusion behavior supersedes the earlier rejected assumpti
 
 ADR 0005 does not add:
 
-- active-session discovery by shoot;
 - UI or navigation resume;
 - process-death routing;
 - Room schema changes;
@@ -96,6 +95,17 @@ ADR 0005 does not add:
 - speech or audio behavior.
 
 Those remain separate ownership changes. Gate 2 remains open.
+
+## Amendment: Task 14A.2 active-session discovery (2026-09-02)
+
+Task 14A.2 extends this decision with Room-owned discovery of the at-most-one `ACTIVE` session for an exact shoot ID, consumable by a future UI resume path.
+
+- `RoomShootRepository.findActiveGuidedSession(shootId)` validates the shoot ID against the existing ASCII ownership-identity policy, then reads the shoot row and all of its session rows in one `@Transaction` on `GuidedSessionDao` in deterministic order.
+- The pure `ActiveGuidedSessionMapper` returns `Exact(sessionId)` only when the shoot is coherent and `ACTIVE` and exactly one coherent `ACTIVE` session exists. Zero active sessions return `None`; an absent shoot with no sessions returns `UnknownShoot`.
+- Everything else fails closed as `Rejected(AUTHORITY_INCONSISTENT)`: a deleting or malformed shoot, orphaned sessions, any session row with an unknown lifecycle or incoherent shape, more than one active session (a trigger-bypass corruption state), or an exhausted attempt counter on the active session. Query or mapping failures become `Rejected(AUTHORITY_UNAVAILABLE)`.
+- `Exact` enforces the safe-identity policy in its constructor and renders redacted; no session or shoot identity crosses `toString()`.
+
+Discovery adds no write, schema change, UI, or navigation behavior. See [the Task 14A.2 validation record](../validation/2026-09-02-task14a2-active-session-discovery-pixel6.md).
 
 ## Evidence
 

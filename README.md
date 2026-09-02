@@ -1,6 +1,6 @@
 # Pose Guide Snap
 
-> **Project status: Tasks 1–12 and Task 14A.1 are implemented, host-verified, and boundedly Pixel-exercised. Gate 2 remains incomplete.**
+> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised. Gate 2 remains incomplete.**
 >
 > Task 12 completed the Room V3 shoot-preparation authority and a semantics-labeled create → Photo Picker import → validate → reorder → durably start workflow. The final Pixel follow-up landed in `5bc15c33c5b6c36196f99a2bd8259fe2b00ffeb3` after specification and quality/security/UX approval of exact staged digest `23318b4fa98a15405462f3419d1a5d47ac84af0ef12a79b40b1668d4212d0864`. Camera permission and camera construction remain unreachable until Room owns a valid active session. There is still no product shutter, auto-capture coordinator, capture-to-Room integration, MediaStore I/O worker, physical deletion UI, TTS/audio, or end-to-end guided workflow.
 
@@ -25,8 +25,9 @@ Verified Task 10–12 evidence:
 - Current Task 12 host suite: 556/556 GREEN with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 and V2 schema artifacts remain byte-identical, and V3 is the active schema.
 - The final authorized Pixel 6 gate passed 4/4 synthetic-state `ShootEditorFlowTest` methods covering recovery rendering, row-scoped semantics and reorder callbacks, start enablement/callback behavior, and visible import/reconciliation states. A separate earlier manual Pixel run observed the production create/import/reorder/start path, picker recreation, and camera-permission boundary on a pre-final artifact; it is not same-artifact evidence for `5bc15c3`. Camera permission was denied and no preview or sensor run occurred. See the [Task 12 validation record](docs/validation/2026-09-01-task12-room-v3-shoot-preparation-pixel6.md).
 - Task 14A.1 host suite: 579/579 GREEN; lint plus debug, release, and instrumentation APK builds GREEN; Room V1–V3 schema artifacts unchanged. The exact APK pair passed 6/6 Pixel 6 Room tests for nonzero close/reopen restoration, confirmation/deletion writer exclusion under the Room 2.8.4 immediate read transaction, two nontransactional mutation controls, and read-only table/schema evidence. See the [Task 14A.1 validation record](docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md).
+- Task 14A.2 host suite: 591/591 GREEN; lint plus debug, release, and instrumentation APK builds GREEN; schemas unchanged. The exact APK pair passed 8/8 Pixel 6 Room tests: exact active-session discovery across close/reopen, fail-closed multi-active corruption with the one-active triggers bypassed, plus the six Task 14A.1 regressions. See the [Task 14A.2 validation record](docs/validation/2026-09-02-task14a2-active-session-discovery-pixel6.md).
 
-Room can now reconstruct one exact guided session through a redacted atomic V3 snapshot, but no production route discovers or consumes it after process death. Active-session discovery and UI resume are the next separate ownership change. Standalone speech is deferred until the guided-session coordinator exists. Gate 2 remains unpassed; capture/export integration, auto-capture, and the user-facing shutter remain disabled.
+Room can now reconstruct one exact guided session through a redacted atomic V3 snapshot and discover the at-most-one active session for an exact shoot ID, but no UI route consumes either after process death. Stale-safe UI resume routing is the next separate ownership change. Standalone speech is deferred until the guided-session coordinator exists. Gate 2 remains unpassed; capture/export integration, auto-capture, and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
@@ -67,8 +68,9 @@ These are product and architecture commitments, not claims of implemented behavi
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
 | [ADR 0003: Persisted reference-import file ledger](docs/adr/0003-persisted-reference-import-file-ledger.md) | Durable cross-storage import authority and restart-recovery contract |
 | [ADR 0004: Room V3 shoot-preparation authority](docs/adr/0004-room-v3-shoot-preparation-authority.md) | Import-attempt/order separation, preparation ownership, and durable start |
-| [ADR 0005: Atomic Room V3 guided-session bootstrap](docs/adr/0005-atomic-room-v3-guided-session-bootstrap.md) | Exact-session reconstruction, coherence validation, and immediate-transaction writer exclusion |
+| [ADR 0005: Atomic Room V3 guided-session bootstrap](docs/adr/0005-atomic-room-v3-guided-session-bootstrap.md) | Exact-session reconstruction, active-session discovery, coherence validation, and immediate-transaction writer exclusion |
 | [Task 14A.1 validation](docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md) | Exact APK hashes, 6/6 Pixel Room results, cleanup, and evidence limits |
+| [Task 14A.2 validation](docs/validation/2026-09-02-task14a2-active-session-discovery-pixel6.md) | Exact APK hashes, 8/8 Pixel discovery/regression results, cleanup, and evidence limits |
 | [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates, amended by the approved telemetry-free MoveNet/LiteRT revision |
 
 Install and product-usage instructions will be added only after those workflows exist and have been verified on an authorized target.

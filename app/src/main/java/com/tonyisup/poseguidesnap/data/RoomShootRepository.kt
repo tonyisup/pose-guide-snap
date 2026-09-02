@@ -110,6 +110,23 @@ class RoomShootRepository(
         }
     }
 
+    fun findActiveGuidedSession(shootId: String): ActiveGuidedSessionResult {
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(shootId)) {
+            return ActiveGuidedSessionResult.Rejected(
+                ActiveGuidedSessionRejectionReason.INVALID_REQUEST,
+            )
+        }
+        return try {
+            ActiveGuidedSessionMapper.map(
+                guidedSessionDao.findActiveSessionCandidates(shootId),
+            )
+        } catch (_: RuntimeException) {
+            ActiveGuidedSessionResult.Rejected(
+                ActiveGuidedSessionRejectionReason.AUTHORITY_UNAVAILABLE,
+            )
+        }
+    }
+
     fun registerCaptureAttempt(
         sessionId: String,
         command: ShootEffect.CaptureCommand,

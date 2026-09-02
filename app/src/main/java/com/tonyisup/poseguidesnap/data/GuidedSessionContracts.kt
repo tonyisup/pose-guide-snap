@@ -232,6 +232,47 @@ enum class GuidedSessionBootstrapRejectionReason {
     AUTHORITY_UNAVAILABLE,
 }
 
+sealed interface ActiveGuidedSessionResult {
+    data class Exact(val sessionId: String) : ActiveGuidedSessionResult {
+        init {
+            require(ReferenceImportPolicy.validateOwnershipIdentity(sessionId)) {
+                "active session ID must be a safe identity"
+            }
+        }
+
+        override fun toString(): String = "ActiveGuidedSessionResult.Exact(redacted)"
+    }
+
+    data object None : ActiveGuidedSessionResult {
+        override fun toString(): String = "ActiveGuidedSessionResult.None"
+    }
+
+    data object UnknownShoot : ActiveGuidedSessionResult {
+        override fun toString(): String = "ActiveGuidedSessionResult.UnknownShoot"
+    }
+
+    data class Rejected(val reason: ActiveGuidedSessionRejectionReason) :
+        ActiveGuidedSessionResult {
+        override fun toString(): String =
+            "ActiveGuidedSessionResult.Rejected(reason=${reason.name})"
+    }
+}
+
+enum class ActiveGuidedSessionRejectionReason {
+    INVALID_REQUEST,
+    AUTHORITY_INCONSISTENT,
+    AUTHORITY_UNAVAILABLE,
+}
+
+class ActiveGuidedSessionCandidateRows(
+    val shoot: GuidedShootAuthorityRow?,
+    sessions: Iterable<GuidedSessionAuthorityRow> = emptyList(),
+) {
+    val sessions: List<GuidedSessionAuthorityRow> = immutableBootstrapList(sessions)
+
+    override fun toString(): String = "ActiveGuidedSessionCandidateRows(redacted)"
+}
+
 class GuidedSessionBootstrapRows(
     val shoot: GuidedShootAuthorityRow?,
     val session: GuidedSessionAuthorityRow?,
