@@ -397,6 +397,25 @@ class DomainBoundaryTest {
     }
 
     @Test
+    fun guidedSessionBootstrapContractsAndMapperRemainPureKotlin() {
+        val dataRoot = projectRoot().resolve(
+            "app/src/main/java/com/tonyisup/poseguidesnap/data",
+        )
+        withTemporarySourceTree { fixtureRoot ->
+            setOf(
+                "GuidedSessionContracts.kt",
+                "GuidedSessionBootstrapMapper.kt",
+            ).forEach { fileName ->
+                val source = dataRoot.resolve(fileName)
+                assertTrue("Missing guided bootstrap source: $source", source.isFile)
+                source.copyTo(fixtureRoot.resolve(fileName))
+            }
+
+            assertEquals(emptyList<String>(), boundaryViolations(fixtureRoot))
+        }
+    }
+
+    @Test
     fun landmarkValidatesCoordinatesDepthAndConfidence() {
         val minimum = landmark(x = 0.0, y = 0.0, z = -10.0, visibility = 0.0, presence = 0.0)
         val maximum = landmark(x = 1.0, y = 1.0, z = 10.0, visibility = 1.0, presence = 1.0)

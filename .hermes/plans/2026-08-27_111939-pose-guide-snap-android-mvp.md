@@ -8,7 +8,7 @@
 
 **Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; direct LiteRT `1.4.2` with MoveNet MultiPose Lightning float16 v1; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
 
-**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 are implemented and committed. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; and Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`. Their authorized Pixel evidence remains bounded and does not complete Gate 2. Task 13 offline-only speech is the next sequential slice. This revision supersedes every MediaPipe-specific instruction below.
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 and Task 14A.1 are implemented. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; and Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`. Task 14A.1 adds exact-session atomic Room V3 reconstruction; its authorized evidence is bounded to Room and does not complete Gate 2. Active-session discovery/UI resume is the next ownership boundary. Standalone Task 13 speech is deferred until the Task 15 coordinator exists. This revision supersedes every MediaPipe-specific instruction below.
 
 ---
 
@@ -626,57 +626,15 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 ### Task 13: Add Text-to-Speech coaching with cadence control
 
-**Objective:** Deliver concise cues through the active Android media route without flooding or owning shoot policy.
-
-**Files:**
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/AndroidSpeechCoach.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/SpeechScheduler.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/audio/AudioFocusController.kt`
-- Create: `app/src/test/java/com/tonyisup/poseguidesnap/audio/SpeechSchedulerTest.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/audio/AndroidSpeechCoachTest.kt`
-
-**Steps:**
-
-1. Write REDs for cue deduplication, material-change replacement, state-announcement priority, pause cancellation, and TTS initialization failure.
-2. Implement a bounded speech queue and deterministic cadence.
-3. Select only an installed TTS voice whose `Voice.isNetworkConnectionRequired` value is false; do not request the Android `INTERNET` permission for MVP speech.
-4. Request transient audio focus appropriately; do not force a Bluetooth route.
-5. If no verified offline voice is available, fail safely to recoverable visual-only mode and do not synthesize speech.
-6. Add instrumentation tests for offline-voice selection, network-required voice rejection, and visual-only fallback; defer actual earbud audibility to the explicit device gate.
-7. Commit: `feat: add rate-limited spoken pose coaching`.
-
-**Verification:** A rapid synthetic cue stream produces the expected bounded utterance sequence with no stale instruction spoken after pause or pose advance.
+**Status:** Deferred. Standalone speech duplicated foreground, lifecycle, cancellation, timeout, and resource authority before the guided-session coordinator exists. Task 15 will derive a bounded speech subplan from that coordinator; Task 17 retains human-heard speaker/earbud acceptance.
 
 ### Task 14: Add unified durable capture and MediaStore export outbox
 
-**Objective:** Connect both stable-lock and manual reducer effects to one exactly-three-output private capture protocol, exactly-once Room confirmation/advance, and post-confirmation idempotent export.
+**Status:** Split into separately approved ownership changes after broader plans proved unreviewable.
 
-**Files:**
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/camera/CameraXCapturePort.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/PrivateCaptureStore.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/MediaStoreCaptureWriter.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/data/MediaStoreExportWorker.kt`
-- Create: `app/src/main/java/com/tonyisup/poseguidesnap/session/GuidedShootCoordinator.kt`
-- Create: `app/src/test/java/com/tonyisup/poseguidesnap/session/GuidedShootCoordinatorTest.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/session/GuidedShootCaptureTest.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/MediaStoreExportConcurrencyTest.kt`
-- Create: `app/src/androidTest/java/com/tonyisup/poseguidesnap/data/ShootDeletionBarrierTest.kt`
+**Task 14A.1 implemented:** One immutable, redacted, exact-session Room V3 bootstrap validates the complete persisted attempt/receipt/private/outbox/export graph under one immediate transaction. The exact APK pair passed 6/6 Pixel Room tests; see `docs/adr/0005-atomic-room-v3-guided-session-bootstrap.md` and `docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md`.
 
-**Steps:**
-
-1. Write REDs using fake detector, clock, speech, repository, capture store, and export ports for automatic/manual success, manual bypass of only match/lock, duplicate callback/receipt, timeout, each private-file write/sync/finalization failure, final-path collision/no-clobber, Room transaction/cardinality failure, quarantine/uncertain cleanup, pre/post-transaction crash, exactly-once advancement, composite uniqueness/ordinal bounds, known-URI resume, ambiguous MediaStore create, paused two-worker one-insert interleaving, every claim/create/URI/publication crash seam, foreign-row preservation, pause-during-lock, stale frames, deletion-vs-worker interleavings, quarantine retention/resolution/visible count, delete-all, and incomplete tombstone retention.
-2. Make the coordinator the only interpreter of reducer effects.
-3. Assign deterministic `(commandToken, burstOrdinal 0..2)` private identities. For each output, write a same-directory temp file, sync as appropriate, and publish the final private file atomically without clobber. Do not represent the three publications as one filesystem transaction.
-4. Only after all three files are durable, call Task 11A's Room authority transaction to confirm the attempt, record all three authoritative outputs, advance exactly once, apply the unique receipt, and create the export outbox. Automatic and manual commands use this identical path.
-5. If private capture or the Room transaction fails, create no advance/outbox and clean or quarantine unconfirmed files. Re-arm only when resolution is proven; otherwise enter reconciliation-required and do not recapture automatically.
-6. On startup, resolve deterministic pre-transaction private files before retry. For a committed attempt, leave capture/advance complete and replay only pending outbox work.
-7. Export only after a unique Room compare-and-set claim wins. Recheck the deletion generation before `MediaStore.insert()` and before publication. Persist the returned exact URI before later fallible publication. A claimed/create-started missing-URI row is permanently reconciliation-required unless explicitly resolved; timeout/restart cannot return it to pending or issue another create. Never use display name/relative path to update, delete, or reconcile.
-8. Delete-shoot and delete-all first atomically establish the deletion-generation barrier, block capture/advance and new claims, and cancel untouched pending work. Wait for or resolve exact-URI in-progress work; otherwise return incomplete/reconciliation-required while retaining minimal tombstone/quarantine state and preserving foreign rows.
-9. Run coordinator JVM tests before any real capture test.
-10. Run automatic and manual instrumentation capture/export tests on the exact candidate APK.
-11. Commit: `feat: add unified exactly-once capture pipeline`.
-
-**Verification:** Every confirmed automatic or manual token has exactly three durable authoritative private outputs, one applied receipt, one advance, one outbox, and exactly three constrained output rows. Private write/finalization/collision or Room/cardinality failure produces no advance/outbox. The paused two-worker test proves one insert. Every claim/create/URI/publication seam fails closed without auto-recreate; exact-URI work alone may update/delete. Delete races preserve in-progress authority and foreign rows, and unresolved quarantine remains visible until explicit safe resolution.
+**Next boundary:** Add active-session discovery and UI/process-death resume without changing bootstrap authority. Capture-file reconciliation, coordinator integration, MediaStore, and deletion completion each require later independent approval.
 
 ### Task 15: Integrate the complete hands-free sequence
 
@@ -862,7 +820,7 @@ The approved first bounded phase executed **Tasks 1–8 only**:
 - produce a deterministic replay report,
 - stop before detector integration, camera, earbuds, or private image access.
 
-This yielded the core ownership boundary and causal tests without touching private device data. Task 9 then added the reviewed direct MoveNet/LiteRT boundary. Task 10 added the committed, authorized-Pixel CameraX pose slice at `605c904`, including the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. Task 11A added committed Room capture authority at `5335466`; Task 11B added the committed transactional reference-import backend at `d368e96`; and Task 12 added committed Room V3 preparation plus the create → Photo Picker import → validate → reorder → durably start workflow through `5bc15c3`. Those camera mechanics are not yet integrated into a Room-confirmed product capture, and Gate 2 remains unpassed. Task 13 offline-only speech is the next bounded sequence; Tasks 14–18 retain their existing numbers.
+This yielded the core ownership boundary and causal tests without touching private device data. Task 9 then added the reviewed direct MoveNet/LiteRT boundary. Task 10 added the committed, authorized-Pixel CameraX pose slice at `605c904`, including the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. Task 11A added committed Room capture authority at `5335466`; Task 11B added the committed transactional reference-import backend at `d368e96`; Task 12 added committed Room V3 preparation plus the create → Photo Picker import → validate → reorder → durably start workflow through `5bc15c3`; and Task 14A.1 added atomic exact-session Room V3 reconstruction. Gate 2 remains unpassed. Active-session discovery/UI resume is next; standalone Task 13 speech is deferred into Task 15.
 
 ## Sources
 

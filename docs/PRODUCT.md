@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** The app now has Room V3 shoot preparation plus a semantics-labeled create → Photo Picker import → validate → reorder → durably start workflow. Gate 2 remains incomplete: the started route still enters the Task 10 camera diagnostic, with no user-facing shutter or auto-capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Offline-only speech remains Task 13, and the unified durable capture coordinator/export protocol remains Task 14.
+> **Project status: Tasks 1–12 and Task 14A.1 are implemented, host-verified, and boundedly Pixel-exercised.** Room V3 now owns preparation and an exact read-only guided-session bootstrap by session ID. Gate 2 remains incomplete: bootstrap is not reachable through active-session discovery or UI resume, and there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Standalone speech is deferred until the guided-session coordinator exists.
 
 ## Product goal
 
@@ -102,3 +102,5 @@ Deferral is not a promise that a feature will ship. Each item needs a new produc
 - [ADR 0002: On-device pose processing](adr/0002-on-device-pose-processing.md)
 - [ADR 0003: Persisted reference-import file ledger](adr/0003-persisted-reference-import-file-ledger.md)
 - [ADR 0004: Room V3 shoot-preparation authority](adr/0004-room-v3-shoot-preparation-authority.md)
+- [ADR 0005: Atomic Room V3 guided-session bootstrap](adr/0005-atomic-room-v3-guided-session-bootstrap.md)
+- [Task 14A.1 validation](validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md)

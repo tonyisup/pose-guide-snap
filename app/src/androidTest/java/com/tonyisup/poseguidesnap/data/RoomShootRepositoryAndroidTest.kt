@@ -8,6 +8,7 @@ import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.domain.session.CaptureAttempt
 import com.tonyisup.poseguidesnap.domain.session.CaptureToken
 import com.tonyisup.poseguidesnap.domain.session.CaptureTrigger
+import com.tonyisup.poseguidesnap.domain.session.PrivateOutputIdentity
 import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 import java.util.UUID
 import org.junit.After
@@ -574,6 +575,69 @@ class RoomShootRepositoryAndroidTest {
         assertEquals(1L, sqlite.sessionCounter())
     }
 
+    @Test
+    fun roomV3BootstrapSurvivesReopen() {
+        val firstDatabase = openDatabase()
+        val sqlite = firstDatabase.openHelper.writableDatabase
+        seedGuidedBootstrapShoot(sqlite)
+        assertEquals(
+            ShootStartResult.Started,
+            RoomShootPreparationRepository(firstDatabase).startShoot(
+                shootId = SHOOT_ID,
+                sessionId = SESSION_ID,
+                startedAtEpochMillis = 1L,
+            ),
+        )
+        val capture = command(rawToken = "bootstrap-reopen-token")
+        val firstRepository = repository()
+        assertEquals(
+            AttemptRegistrationResult.Registered,
+            firstRepository.registerCaptureAttempt(SESSION_ID, capture, 10L),
+        )
+        assertEquals(
+            CaptureStartAuthorizationResult.Started,
+            firstRepository.authorizeCaptureStart(SESSION_ID, capture.token, 20L),
+        )
+        val confirmation = ShootEffect.ConfirmAndAdvanceCapture(
+            token = capture.token,
+            poseId = capture.poseId,
+            poseIndex = capture.poseIndex,
+            outputs = capture.outputs,
+        )
+        assertEquals(
+            CaptureConfirmationResult.Applied,
+            firstRepository.confirmAndAdvance(
+                command = confirmation,
+                privateOutputs = bootstrapPrivateOutputs(capture.token),
+                exportTargets = bootstrapExportTargets(capture.token),
+                confirmedAtEpochMillis = 30L,
+            ),
+        )
+        val expected = GuidedSessionBootstrapResult.Ready(
+            GuidedSessionSnapshot(
+                sessionId = SESSION_ID,
+                shootId = SHOOT_ID,
+                lifecycle = GuidedSessionLifecycle.ACTIVE,
+                orderedPoseIds = listOf("pose-0", "pose-1", "pose-2"),
+                poseCount = 3,
+                currentPoseIndex = 1,
+                nextAttemptNumber = 1L,
+                deletionGeneration = 0L,
+                attemptCount = 1,
+                confirmedAttemptCount = 1,
+                appliedReceiptTokens = listOf(capture.token.value),
+                unresolvedExportCount = 3,
+                blockingAttempt = null,
+            ),
+        )
+        assertEquals(expected, firstRepository.loadGuidedSessionBootstrap(SESSION_ID))
+        closeDatabase()
+
+        val reopened = repository().loadGuidedSessionBootstrap(SESSION_ID)
+
+        assertEquals(expected, reopened)
+    }
+
     private fun openDatabase(): AppDatabase =
         AppDatabase.create(context, databaseName).also { database = it }
 
@@ -629,6 +693,58 @@ class RoomShootRepositoryAndroidTest {
             ),
         )
     }
+
+    private fun seedGuidedBootstrapShoot(sqlite: SupportSQLiteDatabase) {
+        sqlite.execSQL(
+            """
+            INSERT INTO shoots
+                (shoot_id, name, created_at_epoch_millis, updated_at_epoch_millis,
+                 lifecycle_state, deletion_generation)
+            VALUES (?, 'Bootstrap reopen shoot', 1, 1, 'ACTIVE', 0)
+            """.trimIndent(),
+            arrayOf<Any>(SHOOT_ID),
+        )
+        repeat(3) { poseIndex ->
+            sqlite.execSQL(
+                """
+                INSERT INTO shoot_poses
+                    (shoot_id, pose_index, pose_id, label, reference_asset_path,
+                     mirror_allowed, validation_state, detector_metadata, model_metadata,
+                     preprocessing_metadata, landmark_payload, coordinate_metadata)
+                VALUES (?, ?, ?, ?, NULL, 0, 'VALID', NULL, NULL, NULL, NULL, NULL)
+                """.trimIndent(),
+                arrayOf<Any>(
+                    SHOOT_ID,
+                    poseIndex,
+                    "pose-$poseIndex",
+                    "Bootstrap pose $poseIndex",
+                ),
+            )
+        }
+    }
+
+    private fun bootstrapPrivateOutputs(token: CaptureToken): List<DurablePrivateOutput> =
+        (0..2).map { ordinal ->
+            DurablePrivateOutput(
+                identity = PrivateOutputIdentity(token, ordinal),
+                relativePath = "private/${token.value}/$ordinal.jpg",
+                byteCount = 100L + ordinal,
+                capturedAtEpochMillis = 21L + ordinal,
+                integrityMetadata = null,
+            )
+        }
+
+    private fun bootstrapExportTargets(token: CaptureToken): List<CaptureExportTarget> =
+        (0..2).map { ordinal ->
+            CaptureExportTarget(
+                identity = PrivateOutputIdentity(token, ordinal),
+                targetCollectionUri = "content://media/external_primary/images/media",
+                targetVolume = "external_primary",
+                intendedDisplayName = "${token.value}-$ordinal.jpg",
+                intendedRelativePath = "Pictures/PoseGuideSnap/",
+                intendedMimeType = "image/jpeg",
+            )
+        }
 
     private fun command(
         rawToken: String,

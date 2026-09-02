@@ -91,6 +91,24 @@ class RoomShootRepository(
     private val captureAttemptDao = database.captureAttemptDao()
     private val captureConfirmationDao = database.captureConfirmationDao()
     private val deletionExportDao = database.deletionExportDao()
+    private val guidedSessionDao = database.guidedSessionDao()
+
+    fun loadGuidedSessionBootstrap(sessionId: String): GuidedSessionBootstrapResult {
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(sessionId)) {
+            return GuidedSessionBootstrapResult.Rejected(
+                GuidedSessionBootstrapRejectionReason.INVALID_REQUEST,
+            )
+        }
+        return try {
+            GuidedSessionBootstrapMapper.map(
+                guidedSessionDao.loadGuidedSessionBootstrap(sessionId),
+            )
+        } catch (_: RuntimeException) {
+            GuidedSessionBootstrapResult.Rejected(
+                GuidedSessionBootstrapRejectionReason.AUTHORITY_UNAVAILABLE,
+            )
+        }
+    }
 
     fun registerCaptureAttempt(
         sessionId: String,

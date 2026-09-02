@@ -30,6 +30,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     internal abstract fun deletionExportDao(): DeletionExportDao
 
+    internal abstract fun guidedSessionDao(): GuidedSessionDao
+
     internal abstract fun referenceImportDao(): ReferenceImportDao
 
     internal abstract fun referenceImportFileOperationDao(): ReferenceImportFileOperationDao

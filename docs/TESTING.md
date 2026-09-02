@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised.** The current JVM suite is 556/556 GREEN; lint and debug/release/instrumentation builds are GREEN. The final Task 12 Pixel 6 gate passed 4/4 synthetic-state Compose methods covering recovery rendering, row-scoped semantics/reorder callbacks, start enablement/callback behavior, and visible import/reconciliation states. A separate production preparation workflow was manually observed on a pre-final artifact and is not attributed to those four methods or to final-commit same-artifact evidence. No emulator was used. Gate 2 remains incomplete because the reducer-owned manual capture path, capture-filesystem/Room coordination, MediaStore I/O, audio, physical deletion, and the end-to-end workflow remain unimplemented or unverified.
+> **Project status: Tasks 1–12 and Task 14A.1 are implemented, host-verified, and boundedly Pixel-exercised.** The current JVM suite is 579/579 GREEN; lint and debug/release/instrumentation builds are GREEN. Task 14A.1 passed 6/6 exact-APK Pixel 6 Room tests for close/reopen reconstruction, immediate-transaction writer exclusion, nontransactional mutation controls, and read-only evidence. This does not prove UI/process-death resume, camera, capture/export, deletion completion, audio, or the end-to-end workflow. Gates 2–4 remain open.
 
 ## Testing principles
 
@@ -55,6 +55,17 @@ Task 12 evidence remains bounded to shoot preparation and durable camera-route a
 - A separate manual Pixel run on a pre-final artifact observed production shoot creation/navigation, three public-fixture system Photo Picker imports, Room/MoveNet settlement, transactional reorder, durable start, camera gating, and picker callback survival across recreation. The final source changed afterward, so this is supporting manual evidence rather than same-artifact proof for `5bc15c3`.
 - During that manual run, camera permission was denied after durable start and no preview or sensor run occurred. Device fixture, app/test data, instrumentation package, and rotation changes were cleaned up.
 - Compose semantics and controls were exercised on-device, but no TalkBack or screen-reader usability claim is made. See `validation/2026-09-01-task12-room-v3-shoot-preparation-pixel6.md`.
+
+Task 14A.1 evidence remains bounded to exact-session Room reconstruction:
+
+- 579/579 JVM tests passed with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK assembly passed.
+- Room V1–V3 schema artifacts remained byte-identical.
+- The installed main and instrumentation APK bytes matched their recorded local SHA-256 values.
+- The Pixel 6 running Android 16 passed 6/6 focused methods: one nonzero close/reopen repository test plus five transaction/mutation-control/read-only tests.
+- Room's generated blocking DAO uses an immediate transaction. Confirmation and deletion writers remained blocked while bootstrap was paused before its second SELECT; bootstrap returned complete pre-state and later reads returned complete post-state.
+- Equivalent nontransactional confirmation/deletion reads produced the expected mixed pre/post facts, demonstrating that the transaction gate is causal rather than decorative.
+- Repeated bootstrap reads changed no V3 authority table, schema digest, `total_changes()`, or `PRAGMA data_version`.
+- UUID-named test databases and the instrumentation package were verified absent afterward. No camera, picker, image, MediaStore, UI, or personal-data path was exercised. See `validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md`.
 
 ## Pure JVM test matrix
 

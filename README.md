@@ -1,6 +1,6 @@
 # Pose Guide Snap
 
-> **Project status: Tasks 1–12 are committed, host-reviewed, and boundedly Pixel-exercised. Gate 2 remains incomplete.**
+> **Project status: Tasks 1–12 and Task 14A.1 are implemented, host-verified, and boundedly Pixel-exercised. Gate 2 remains incomplete.**
 >
 > Task 12 completed the Room V3 shoot-preparation authority and a semantics-labeled create → Photo Picker import → validate → reorder → durably start workflow. The final Pixel follow-up landed in `5bc15c33c5b6c36196f99a2bd8259fe2b00ffeb3` after specification and quality/security/UX approval of exact staged digest `23318b4fa98a15405462f3419d1a5d47ac84af0ef12a79b40b1668d4212d0864`. Camera permission and camera construction remain unreachable until Room owns a valid active session. There is still no product shutter, auto-capture coordinator, capture-to-Room integration, MediaStore I/O worker, physical deletion UI, TTS/audio, or end-to-end guided workflow.
 
@@ -24,8 +24,9 @@ Verified Task 10–12 evidence:
 - The exact Task 11B APK pair passed 25/25 targeted Pixel 6 instrumentation methods covering V1→V2 migration, ledger transitions, no-clobber generated-byte publication, transaction rollback, restart reconciliation, picker-result dispatch/redaction, and public-fixture MoveNet analysis. Test databases, Room lock files, reference assets, and the instrumentation package were removed and verified absent.
 - Current Task 12 host suite: 556/556 GREEN with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK builds GREEN. Room V1 and V2 schema artifacts remain byte-identical, and V3 is the active schema.
 - The final authorized Pixel 6 gate passed 4/4 synthetic-state `ShootEditorFlowTest` methods covering recovery rendering, row-scoped semantics and reorder callbacks, start enablement/callback behavior, and visible import/reconciliation states. A separate earlier manual Pixel run observed the production create/import/reorder/start path, picker recreation, and camera-permission boundary on a pre-final artifact; it is not same-artifact evidence for `5bc15c3`. Camera permission was denied and no preview or sensor run occurred. See the [Task 12 validation record](docs/validation/2026-09-01-task12-room-v3-shoot-preparation-pixel6.md).
+- Task 14A.1 host suite: 579/579 GREEN; lint plus debug, release, and instrumentation APK builds GREEN; Room V1–V3 schema artifacts unchanged. The exact APK pair passed 6/6 Pixel 6 Room tests for nonzero close/reopen restoration, confirmation/deletion writer exclusion under the Room 2.8.4 immediate read transaction, two nontransactional mutation controls, and read-only table/schema evidence. See the [Task 14A.1 validation record](docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md).
 
-The preparation workflow is now implemented, but the internal camera candidate-capture mechanics are still not connected to the durable Room protocol. Task 13 adds bounded offline-only speech. Task 14 later connects the reducer, private capture, Task 11A confirmation/advancement, and MediaStore export. Gate 2 remains unpassed until the required common manual path exists; auto-capture and the user-facing shutter remain disabled.
+Room can now reconstruct one exact guided session through a redacted atomic V3 snapshot, but no production route discovers or consumes it after process death. Active-session discovery and UI resume are the next separate ownership change. Standalone speech is deferred until the guided-session coordinator exists. Gate 2 remains unpassed; capture/export integration, auto-capture, and the user-facing shutter remain disabled.
 
 From the repository root on the [verified development environment](docs/DEVELOPMENT.md):
 
@@ -34,7 +35,7 @@ From the repository root on the [verified development environment](docs/DEVELOPM
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers bounded Task 10 camera, Task 11A Room-authority, Task 11B reference-import, and Task 12 editor-semantics slices, plus a separately labeled pre-final manual preparation observation. It does not establish their end-to-end integration.
+The prototype APK is produced at `app/build/outputs/apk/debug/app-debug.apk`. Building an APK is not evidence that the planned guided-capture workflow works; the hardware evidence above covers bounded Task 10 camera, Task 11A Room authority, Task 11B reference import, Task 12 editor semantics, and Task 14A.1 Room bootstrap slices, plus a separately labeled pre-final manual preparation observation. It does not establish their end-to-end integration.
 
 ## Approved MVP boundary
 
@@ -66,6 +67,8 @@ These are product and architecture commitments, not claims of implemented behavi
 | [ADR 0002: On-device pose processing](docs/adr/0002-on-device-pose-processing.md) | Reversible inference-location decision and consequences |
 | [ADR 0003: Persisted reference-import file ledger](docs/adr/0003-persisted-reference-import-file-ledger.md) | Durable cross-storage import authority and restart-recovery contract |
 | [ADR 0004: Room V3 shoot-preparation authority](docs/adr/0004-room-v3-shoot-preparation-authority.md) | Import-attempt/order separation, preparation ownership, and durable start |
+| [ADR 0005: Atomic Room V3 guided-session bootstrap](docs/adr/0005-atomic-room-v3-guided-session-bootstrap.md) | Exact-session reconstruction, coherence validation, and immediate-transaction writer exclusion |
+| [Task 14A.1 validation](docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md) | Exact APK hashes, 6/6 Pixel Room results, cleanup, and evidence limits |
 | [Approved implementation plan](.hermes/plans/2026-08-27_111939-pose-guide-snap-android-mvp.md) | Sequenced implementation tasks and gates, amended by the approved telemetry-free MoveNet/LiteRT revision |
 
 Install and product-usage instructions will be added only after those workflows exist and have been verified on an authorized target.
