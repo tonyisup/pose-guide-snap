@@ -16,11 +16,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.tonyisup.poseguidesnap.ui.StartedSessionCameraDestination
 import com.tonyisup.poseguidesnap.ui.editor.ShootEditorDestination
 import com.tonyisup.poseguidesnap.ui.editor.ShootEditorProductionOwner
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
 import com.tonyisup.poseguidesnap.ui.editor.createShootEditorProductionOwner
+import com.tonyisup.poseguidesnap.ui.session.StartedSessionBootstrapViewModel
+import com.tonyisup.poseguidesnap.ui.session.StartedSessionDestination
+import com.tonyisup.poseguidesnap.ui.session.createStartedSessionBootstrapViewModel
 import com.tonyisup.poseguidesnap.ui.shoots.ShootListScreen
 import com.tonyisup.poseguidesnap.ui.shoots.ShootListViewModel
 
@@ -30,6 +32,7 @@ private const val STARTED_ROUTE = "started-session"
 private const val EDITOR_OWNER_KEY = "shoot-editor-owner"
 private const val EDITOR_TARGET_OWNER_KEY = "shoot-editor-target-owner"
 private const val STARTED_TARGET_OWNER_KEY = "started-session-target-owner"
+private const val STARTED_BOOTSTRAP_OWNER_KEY = "started-session-bootstrap-owner"
 
 internal class EditorNavigationTarget internal constructor(internal val shootId: String) {
     override fun toString(): String = "EditorNavigationTarget(redacted)"
@@ -176,10 +179,28 @@ internal fun AppNavHost(lifecycleOwner: LifecycleOwner) {
                     StartedNavigationTargetOwner::class.java,
                 ]
             }
-            if (targetOwner.target == null) {
+            val target = targetOwner.target
+            if (target == null) {
                 FailClosedToList(navController::popBackStack)
             } else {
-                StartedSessionCameraDestination(lifecycleOwner = lifecycleOwner)
+                val bootstrapFactory: ViewModelProvider.Factory = remember(applicationContext, target) {
+                    viewModelFactory {
+                        initializer {
+                            createStartedSessionBootstrapViewModel(applicationContext, target.handle)
+                        }
+                    }
+                }
+                val owner = remember(backStackEntry, bootstrapFactory) {
+                    ViewModelProvider(backStackEntry, bootstrapFactory)[
+                        STARTED_BOOTSTRAP_OWNER_KEY,
+                        StartedSessionBootstrapViewModel::class.java,
+                    ]
+                }
+                StartedSessionDestination(
+                    owner = owner,
+                    lifecycleOwner = lifecycleOwner,
+                    onBack = navController::popBackStack,
+                )
             }
         }
     }

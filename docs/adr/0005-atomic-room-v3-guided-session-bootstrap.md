@@ -81,9 +81,9 @@ This stronger writer-exclusion behavior supersedes the earlier rejected assumpti
 - The projection validates more state than a screen currently consumes.
 - Android-test compilation requires the Room KSP processor for the test-only database used to install a query callback.
 
-## Explicit exclusions
+## Original Task 14A.1 exclusions
 
-ADR 0005 does not add:
+The original Task 14A.1 slice did not add:
 
 - UI or navigation resume;
 - process-death routing;
@@ -94,7 +94,7 @@ ADR 0005 does not add:
 - MediaStore I/O;
 - speech or audio behavior.
 
-Those remain separate ownership changes. Gate 2 remains open.
+Task 14A.3 now implements bounded UI admission and fail-closed process-recreation routing; the remaining capture, storage, and speech items stay separate ownership changes. Gate 2 remains open.
 
 ## Amendment: Task 14A.2 active-session discovery (2026-09-02)
 
@@ -107,6 +107,19 @@ Task 14A.2 extends this decision with Room-owned discovery of the at-most-one `A
 
 Discovery adds no write, schema change, UI, or navigation behavior. See [the Task 14A.2 validation record](../validation/2026-09-02-task14a2-active-session-discovery-pixel6.md).
 
+## Amendment: Task 14A.3 stale-safe UI admission (2026-09-02)
+
+Task 14A.3 composes discovery and bootstrap while preserving Room as the only persistence authority.
+
+- Discovery is editor-scoped to the selected shoot rather than multiplied across each paginated list row. `hasResumableSession` is a non-authorizing display hint.
+- Resume performs a fresh `findActiveGuidedSession(shootId)` call. Only `Exact(sessionId)` can mint a redacted in-memory handle. Stale, missing, rejected, exceptional, closed, or superseded results cannot navigate.
+- Fresh Start and Resume use the same one-shot capability and constant route. Session identity is absent from route arguments, deep links, saved state, identity-derived keys, UI text, and string rendering.
+- One route-scoped ViewModel owns the bootstrap database across configuration changes, denies leases after close begins, and physically closes after in-flight work returns.
+- The route re-queries `loadGuidedSessionBootstrap(sessionId)`. Only an exact `Ready` snapshot composes the existing camera destination; every other result renders bounded recovery UI without constructing camera content.
+- Process recreation discards the in-memory capability and starts at the shoot list. Reopening the shoot obtains fresh Room authority; the app never invents a resumable identity from navigation state.
+
+See [the Task 14A.3 validation record](../validation/2026-09-02-task14a3-stale-safe-resume-pixel6.md).
+
 ## Evidence
 
-The implementation passed 579 JVM tests, lint, debug/release APK assembly, and Android-test APK assembly. On the authorized Pixel 6 running Android 16, the exact installed APK pair passed six focused Room tests covering close/reopen restoration, confirmation/deletion writer exclusion, two nontransactional mutation controls, and read-only authority/schema evidence. See [the Task 14A.1 validation record](../validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md).
+Task 14A.1 passed 579 JVM tests and six exact-APK Pixel Room methods. Task 14A.2 raised the suite to 591 and passed eight exact-APK Pixel methods. Task 14A.3 raised the suite to 618 and passed eleven final-APK Pixel methods across two successful bounded invocations covering editor Resume semantics, Ready-only injected camera content, compact-height/large-font recovery scrolling, and exact Room discovery/bootstrap reopen regressions. Every slice passed lint plus debug, release, and Android-test APK assembly with Room V1–V3 unchanged. See the linked Task 14A.1–14A.3 validation records for hashes, failure history, cleanup, and evidence boundaries.

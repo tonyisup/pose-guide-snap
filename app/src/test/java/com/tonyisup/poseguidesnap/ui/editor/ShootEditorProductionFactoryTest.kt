@@ -283,6 +283,7 @@ class ShootEditorProductionFactoryTest {
                     ShootEditorReferenceItem("pose-c", 2, "Back", true),
                 ),
                 importWorkStatuses = emptyList(),
+                hasResumableSession = false,
             ),
         )
 
@@ -304,6 +305,9 @@ class ShootEditorProductionFactoryTest {
 
         override suspend fun start(shootId: String): ShootEditorStartOutcome =
             ShootEditorStartOutcome.Rejected(ShootEditorStartRejectionReason.AUTHORITY_UNAVAILABLE)
+
+        override suspend fun resume(shootId: String): ShootEditorResumeOutcome =
+            ShootEditorResumeOutcome.Rejected(ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE)
     }
 
     private class FakeWorkflow : ShootEditorWorkflowPort {
@@ -319,6 +323,8 @@ class ShootEditorProductionFactoryTest {
             ShootReorderResult.AuthorityInconsistent
         override suspend fun start(shootId: String): ShootEditorStartOutcome =
             ShootEditorStartOutcome.Rejected(ShootEditorStartRejectionReason.AUTHORITY_UNAVAILABLE)
+        override suspend fun resume(shootId: String): ShootEditorResumeOutcome =
+            ShootEditorResumeOutcome.Rejected(ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE)
     }
 
     private fun retainedOwner(

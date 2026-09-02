@@ -53,5 +53,6 @@ internal fun ShootEditorDestination(
         onRequestImport = owner::requestImport,
         onRequestReorder = owner::requestReorder,
         onRequestStart = owner::requestStart,
+        onRequestResume = owner::requestResume,
     )
 }

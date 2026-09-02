@@ -1,6 +1,8 @@
 package com.tonyisup.poseguidesnap.ui.editor
 
 import android.net.Task11bTestUri
+import com.tonyisup.poseguidesnap.data.ActiveGuidedSessionRejectionReason
+import com.tonyisup.poseguidesnap.data.ActiveGuidedSessionResult
 import com.tonyisup.poseguidesnap.data.ImportWorkStatus
 import com.tonyisup.poseguidesnap.data.ImportWorkSummary
 import com.tonyisup.poseguidesnap.data.ReferenceImportToken
@@ -25,6 +27,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
@@ -83,6 +86,108 @@ class ShootEditorProductionWorkflowTest {
             listOf(ImportWorkStatus.RECONCILIATION_REQUIRED),
             withBlocker.importWorkStatuses,
         )
+    }
+
+    @Test
+    fun activeProjectionQueriesExactAuthorityAndMapsExactOrNoneWithoutIdentityLeak() = runTest {
+        val activeSessions = FakeActiveSessionPort(ActiveGuidedSessionResult.Exact("session-exact"))
+        val workflow = workflow(activeSessions = activeSessions)
+
+        val exact = requireNotNull(workflow.observeEditorSnapshot(SHOOT_ID).first())
+        activeSessions.result = ActiveGuidedSessionResult.None
+        val none = requireNotNull(workflow.observeEditorSnapshot(SHOOT_ID).first())
+
+        assertTrue(exact.hasResumableSession)
+        assertFalse(none.hasResumableSession)
+        assertEquals(listOf(SHOOT_ID, SHOOT_ID), activeSessions.shootIds)
+        assertFalse(exact.toString().contains("session-exact"))
+    }
+
+    @Test
+    fun nullAndDeletingProjectionSkipDiscoveryWhileDeletingStillRendersFalse() = runTest {
+        val activeSessions = FakeActiveSessionPort(ActiveGuidedSessionResult.Exact("session-unused"))
+        val nullDisplay = workflow(
+            repository = FakeRoomPort(null),
+            activeSessions = activeSessions,
+        ).observeEditorSnapshot(SHOOT_ID).first()
+        val deletingDisplay = workflow(
+            repository = FakeRoomPort(snapshot(lifecycle = ShootPreparationLifecycle.DELETING)),
+            activeSessions = activeSessions,
+        ).observeEditorSnapshot(SHOOT_ID).first()
+
+        assertNull(nullDisplay)
+        assertEquals(ShootPreparationLifecycle.DELETING, requireNotNull(deletingDisplay).lifecycle)
+        assertFalse(deletingDisplay.hasResumableSession)
+        assertEquals(0, activeSessions.shootIds.size)
+    }
+
+    @Test
+    fun activeProjectionRejectsUnknownOrRejectedDiscoveryInsteadOfLyingFalse() {
+        val cases = listOf(
+            ActiveGuidedSessionResult.UnknownShoot,
+            ActiveGuidedSessionResult.Rejected(ActiveGuidedSessionRejectionReason.INVALID_REQUEST),
+            ActiveGuidedSessionResult.Rejected(ActiveGuidedSessionRejectionReason.AUTHORITY_INCONSISTENT),
+            ActiveGuidedSessionResult.Rejected(ActiveGuidedSessionRejectionReason.AUTHORITY_UNAVAILABLE),
+        )
+
+        cases.forEach { result ->
+            val failure = assertThrows(IllegalStateException::class.java) {
+                kotlinx.coroutines.runBlocking {
+                    workflow(activeSessions = FakeActiveSessionPort(result))
+                        .observeEditorSnapshot(SHOOT_ID)
+                        .first()
+                }
+            }
+            assertFalse(failure.toString().contains(SHOOT_ID))
+        }
+    }
+
+    @Test
+    fun resumeFreshlyMapsExactStaleAndEveryClosedRejectionReason() = runTest {
+        val activeSessions = FakeActiveSessionPort(ActiveGuidedSessionResult.Exact("session-fresh"))
+        val workflow = workflow(activeSessions = activeSessions)
+
+        val exact = workflow.resume(SHOOT_ID) as ShootEditorResumeOutcome.Resumable
+        assertEquals("session-fresh", exact.handle.navigationKey)
+
+        listOf(ActiveGuidedSessionResult.None, ActiveGuidedSessionResult.UnknownShoot).forEach { result ->
+            activeSessions.result = result
+            assertSame(ShootEditorResumeOutcome.Stale, workflow.resume(SHOOT_ID))
+        }
+        val rejectionCases = mapOf(
+            ActiveGuidedSessionRejectionReason.INVALID_REQUEST to
+                ShootEditorResumeRejectionReason.INVALID_REQUEST,
+            ActiveGuidedSessionRejectionReason.AUTHORITY_INCONSISTENT to
+                ShootEditorResumeRejectionReason.AUTHORITY_INCONSISTENT,
+            ActiveGuidedSessionRejectionReason.AUTHORITY_UNAVAILABLE to
+                ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE,
+        )
+        assertEquals(ActiveGuidedSessionRejectionReason.entries.toSet(), rejectionCases.keys)
+        rejectionCases.forEach { (reason, expected) ->
+            activeSessions.result = ActiveGuidedSessionResult.Rejected(reason)
+            val rejected = workflow.resume(SHOOT_ID) as ShootEditorResumeOutcome.Rejected
+            assertSame(expected, rejected.reason)
+        }
+        assertEquals(6, activeSessions.shootIds.size)
+    }
+
+    @Test
+    fun resumeContainsRuntimeFailureButPropagatesCancellationWithoutRawLeak() = runTest {
+        val marker = "raw-resume-secret content://private/resume"
+        val activeSessions = FakeActiveSessionPort(ActiveGuidedSessionResult.None)
+        val workflow = workflow(activeSessions = activeSessions)
+
+        activeSessions.failure = IllegalStateException(marker)
+        val unavailable = workflow.resume(SHOOT_ID) as ShootEditorResumeOutcome.Rejected
+        assertSame(ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE, unavailable.reason)
+        assertFalse(unavailable.toString().contains(marker))
+
+        val cancellation = CancellationException(marker)
+        activeSessions.failure = cancellation
+        val propagated = assertThrows(CancellationException::class.java) {
+            kotlinx.coroutines.runBlocking { workflow.resume(SHOOT_ID) }
+        }
+        assertSame(cancellation, propagated)
     }
 
     @Test
@@ -448,6 +553,9 @@ class ShootEditorProductionWorkflowTest {
 
     private fun workflow(
         repository: ShootEditorRoomPort = FakeRoomPort(snapshot()),
+        activeSessions: ShootEditorActiveSessionPort = ShootEditorActiveSessionPort {
+            ActiveGuidedSessionResult.None
+        },
         application: ShootEditorImportApplicationPort = FakeApplication(
             ReferenceImportAllocationResult.Blocked(
                 ReferenceImportAllocationBlockReason.AUTHORITY_UNAVAILABLE,
@@ -461,6 +569,7 @@ class ShootEditorProductionWorkflowTest {
         sessionId: () -> String = { "session-safe" },
     ) = RoomShootEditorWorkflow(
         repository = repository,
+        activeSessions = activeSessions,
         imports = application,
         pickerRegistry = registry,
         authority = authority,
@@ -468,6 +577,19 @@ class ShootEditorProductionWorkflowTest {
         wallClockProvider = wallClock,
         sessionIdProvider = sessionId,
     )
+
+    private class FakeActiveSessionPort(
+        var result: ActiveGuidedSessionResult,
+    ) : ShootEditorActiveSessionPort {
+        val shootIds = mutableListOf<String>()
+        var failure: RuntimeException? = null
+
+        override fun findActiveGuidedSession(shootId: String): ActiveGuidedSessionResult {
+            shootIds += shootId
+            failure?.let { throw it }
+            return result
+        }
+    }
 
     private class FakeRoomPort(var snapshot: ShootEditorSnapshot?) : ShootEditorRoomPort {
         var reorderTime: Long? = null
@@ -511,10 +633,11 @@ class ShootEditorProductionWorkflowTest {
         importWork: List<ImportWorkSummary> = listOf(
             ImportWorkSummary(ImportWorkStatus.RECONCILIATION_REQUIRED, 900L, 901L),
         ),
+        lifecycle: ShootPreparationLifecycle = ShootPreparationLifecycle.ACTIVE,
     ) = ShootEditorSnapshot(
         shootId = shootId,
         name = "Studio",
-        lifecycle = ShootPreparationLifecycle.ACTIVE,
+        lifecycle = lifecycle,
         validatedReferences = listOf(
             ValidatedReferenceSummary("pose-a", 0, "Front", true),
             ValidatedReferenceSummary("pose-b", 1, "Side", false),

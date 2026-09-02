@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.ui.editor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
@@ -17,6 +18,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.unit.dp
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tonyisup.poseguidesnap.data.ImportWorkStatus
 import com.tonyisup.poseguidesnap.data.ShootPreparationLifecycle
 import java.util.concurrent.atomic.AtomicInteger
@@ -25,7 +28,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import androidx.test.ext.junit.runners.AndroidJUnit4
 
 /** Synthetic-state Compose flow evidence. This test uses no database, picker, camera, or device I/O. */
 @RunWith(AndroidJUnit4::class)
@@ -113,6 +115,47 @@ class ShootEditorFlowTest {
     }
 
     @Test
+    fun resumableSessionIsActionableAndBlockedWhileAnotherOperationIsActive() {
+        val data = ShootEditorLoadedData(
+            snapshot(
+                references = references(),
+                hasResumableSession = true,
+            ),
+        )
+        val state = mutableStateOf<ShootEditorUiState>(ShootEditorUiState.Content(data))
+        val resumes = AtomicInteger()
+        composeRule.setContent {
+            MaterialTheme {
+                screen(
+                    state = state.value,
+                    onRequestResume = resumes::incrementAndGet,
+                )
+            }
+        }
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Resume session"))
+        composeRule.onNodeWithText("Resume session")
+            .assertHeightIsAtLeast(48.dp)
+            .assertIsEnabled()
+            .performClick()
+        composeRule.runOnIdle { assertEquals(1, resumes.get()) }
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Start shoot"))
+        composeRule.onNodeWithText("Start shoot").assertIsNotEnabled()
+
+        composeRule.runOnIdle {
+            state.value = ShootEditorUiState.Reordering(
+                data,
+                ShootEditorOperationId("shoot-fixture", 1L),
+            )
+        }
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Resume session"))
+        composeRule.onNodeWithText("Resume session")
+            .assertIsNotEnabled()
+            .performClick()
+        composeRule.runOnIdle { assertEquals(1, resumes.get()) }
+    }
+
+    @Test
     fun importAndReconciliationStatusRemainVisible() {
         val operation = ShootEditorOperationId("shoot-fixture", 1L)
         val data = ShootEditorLoadedData(
@@ -145,11 +188,13 @@ class ShootEditorFlowTest {
     private fun snapshot(
         references: List<ShootEditorReferenceItem>,
         importWorkStatuses: List<ImportWorkStatus> = emptyList(),
+        hasResumableSession: Boolean = false,
     ): ShootEditorDisplaySnapshot = ShootEditorDisplaySnapshot(
         name = "September session",
         lifecycle = ShootPreparationLifecycle.ACTIVE,
         references = references,
         importWorkStatuses = importWorkStatuses,
+        hasResumableSession = hasResumableSession,
     )
 
     private fun references(): List<ShootEditorReferenceItem> = listOf(
@@ -164,6 +209,7 @@ class ShootEditorFlowTest {
         onRetry: () -> Unit = {},
         onRequestReorder: (List<String>) -> Unit = {},
         onRequestStart: () -> Unit = {},
+        onRequestResume: () -> Unit = {},
     ) {
         ShootEditorScreen(
             state = state,
@@ -172,6 +218,7 @@ class ShootEditorFlowTest {
             onRequestImport = {},
             onRequestReorder = onRequestReorder,
             onRequestStart = onRequestStart,
+            onRequestResume = onRequestResume,
         )
     }
 }

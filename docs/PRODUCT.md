@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised.** Room V3 now owns preparation, an exact read-only guided-session bootstrap by session ID, and active-session discovery by exact shoot ID. Gate 2 remains incomplete: no UI route consumes discovery or bootstrap after process death, and there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Standalone speech is deferred until the guided-session coordinator exists.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented, host-verified, and boundedly Pixel-exercised.** Room V3 owns preparation, exact guided-session bootstrap, and active-session discovery. The selected shoot's editor now re-discovers Resume authority at click time, and one retained started-route owner gates camera construction on a fresh exact `Ready` bootstrap for both Start and Resume. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Standalone speech is deferred until the guided-session coordinator exists.
 
 ## Product goal
 
@@ -105,3 +105,4 @@ Deferral is not a promise that a feature will ship. Each item needs a new produc
 - [ADR 0005: Atomic Room V3 guided-session bootstrap](adr/0005-atomic-room-v3-guided-session-bootstrap.md)
 - [Task 14A.1 validation](validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md)
 - [Task 14A.2 validation](validation/2026-09-02-task14a2-active-session-discovery-pixel6.md)
+- [Task 14A.3 validation](validation/2026-09-02-task14a3-stale-safe-resume-pixel6.md)

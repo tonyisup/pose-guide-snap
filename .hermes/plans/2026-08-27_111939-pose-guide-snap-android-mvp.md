@@ -8,7 +8,7 @@
 
 **Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; direct LiteRT `1.4.2` with MoveNet MultiPose Lightning float16 v1; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
 
-**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 and Task 14A.1 are implemented. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; and Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`. Task 14A.1 adds exact-session atomic Room V3 reconstruction; its authorized evidence is bounded to Room and does not complete Gate 2. Active-session discovery/UI resume is the next ownership boundary. Standalone Task 13 speech is deferred until the Task 15 coordinator exists. This revision supersedes every MediaPipe-specific instruction below.
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly validated. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`; and Task 14A.2 active-session discovery is committed at `478547f`. Task 14A.3 adds stale-safe editor Resume and one retained bootstrap-before-camera owner; its authorized evidence remains bounded and does not complete Gate 2. Standalone Task 13 speech is deferred until the Task 15 coordinator exists. This revision supersedes every MediaPipe-specific instruction below.
 
 ---
 
@@ -632,9 +632,9 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 **Status:** Split into separately approved ownership changes after broader plans proved unreviewable.
 
-**Task 14A.1 implemented:** One immutable, redacted, exact-session Room V3 bootstrap validates the complete persisted attempt/receipt/private/outbox/export graph under one immediate transaction. The exact APK pair passed 6/6 Pixel Room tests; see `docs/adr/0005-atomic-room-v3-guided-session-bootstrap.md` and `docs/validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md`.
+**Tasks 14A.1–14A.3 implemented:** One immutable, redacted, exact-session Room V3 bootstrap validates the complete persisted attempt/receipt/private/outbox/export graph under one immediate transaction; transactional discovery finds the at-most-one active session for an exact shoot; and editor-scoped stale-safe Resume plus one retained bootstrap-before-camera owner compose those reads for both Start and Resume. See ADR 0005 and the Task 14A.1–14A.3 validation records.
 
-**Next boundary:** Add active-session discovery and UI/process-death resume without changing bootstrap authority. Capture-file reconciliation, coordinator integration, MediaStore, and deletion completion each require later independent approval.
+**Next boundary:** Add capture-file reconciliation and the guided-session coordinator without weakening bootstrap authority. MediaStore and deletion completion each require later independent approval.
 
 ### Task 15: Integrate the complete hands-free sequence
 

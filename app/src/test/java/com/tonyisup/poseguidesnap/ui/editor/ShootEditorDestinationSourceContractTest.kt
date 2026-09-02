@@ -53,6 +53,7 @@ class ShootEditorDestinationSourceContractTest {
             "private const val EDITOR_OWNER_KEY",
             "private const val EDITOR_TARGET_OWNER_KEY",
             "private const val STARTED_TARGET_OWNER_KEY",
+            "private const val STARTED_BOOTSTRAP_OWNER_KEY",
         ).forEach { marker -> assertTrue("missing constant identity marker: $marker", marker in navigation) }
         listOf(
             "{shootId}",
@@ -61,12 +62,18 @@ class ShootEditorDestinationSourceContractTest {
             "SavedStateHandle",
             "deepLink",
             "EDITOR_OWNER_KEY +",
+            "STARTED_BOOTSTRAP_OWNER_KEY +",
         ).forEach { forbidden ->
             assertFalse("navigation identity must not carry a raw argument: $forbidden", forbidden in navigation)
         }
         assertFalse(
-            "owner key must not contain the target identity",
+            "editor owner key must not contain the target identity",
             Regex("EDITOR_OWNER_KEY\\s*[+]", RegexOption.MULTILINE).containsMatchIn(navigation),
+        )
+        assertFalse(
+            "started owner key must not contain the target identity",
+            Regex("STARTED_BOOTSTRAP_OWNER_KEY\\s*[+]", RegexOption.MULTILINE)
+                .containsMatchIn(navigation),
         )
     }
 
@@ -137,13 +144,19 @@ class ShootEditorDestinationSourceContractTest {
     }
 
     @Test
-    fun cameraGateStaysOutsideListAndEditorAndOwnerIsNeverCompositionClosed() {
+    fun cameraGateStaysOutsideListEditorAndNavigationAndOwnerIsNeverCompositionClosed() {
         val app = source(APP_PATH)
         val navigation = source(NAVIGATION_PATH)
         val destination = sourceOrEmpty(DESTINATION_PATH)
+        val startedDestination = sourceOrEmpty(STARTED_DESTINATION_PATH)
         val listBranch = bounded(navigation, "composable(LIST_ROUTE)", "composable(EDITOR_ROUTE)")
         val editorBranch = bounded(navigation, "composable(EDITOR_ROUTE)", "composable(STARTED_ROUTE)")
-        val startedDestination = bounded(
+        val startedBranch = bounded(
+            navigation,
+            "composable(STARTED_ROUTE)",
+            "@Composable\nprivate fun FailClosedToList",
+        )
+        val cameraDestination = bounded(
             app,
             "internal fun StartedSessionCameraDestination",
             "private fun CameraPermissionGate",
@@ -152,13 +165,35 @@ class ShootEditorDestinationSourceContractTest {
         assertFalse("list must not call camera gate", "CameraPermissionGate" in listBranch)
         assertFalse("editor must not call camera gate", "CameraPermissionGate" in editorBranch)
         assertFalse("editor destination must not construct camera", "CameraPermissionGate" in destination)
+        assertFalse(
+            "navigation must delegate instead of directly calling camera destination",
+            "StartedSessionCameraDestination" in navigation,
+        )
+        listOf(
+            "createStartedSessionBootstrapViewModel(applicationContext, target.handle)",
+            "STARTED_BOOTSTRAP_OWNER_KEY",
+            "StartedSessionDestination(",
+        ).forEach { marker ->
+            assertTrue("started route must retain bootstrap owner and delegate: $marker", marker in startedBranch)
+        }
+        listOf(
+            "owner.state.collectAsStateWithLifecycle()",
+            "startedSessionAuthorizesCamera(state)",
+            "cameraContent()",
+            "StartedSessionCameraDestination(lifecycleOwner)",
+        ).forEach { marker ->
+            assertTrue("Ready-only started destination chain missing: $marker", marker in startedDestination)
+        }
         assertTrue(
-            "started destination remains sole camera gate caller",
-            "CameraPermissionGate(lifecycleOwner = lifecycleOwner)" in startedDestination,
+            "camera destination remains sole camera gate caller",
+            "CameraPermissionGate(lifecycleOwner = lifecycleOwner)" in cameraDestination,
         )
         listOf("DisposableEffect", "owner.close(", "pickerCoordinator.close(")
             .forEach { forbidden ->
-                assertFalse("composition must not close retained owner: $forbidden", forbidden in destination + navigation)
+                assertFalse(
+                    "composition must not close retained owner: $forbidden",
+                    forbidden in destination + navigation + startedDestination,
+                )
             }
     }
 
@@ -191,5 +226,7 @@ class ShootEditorDestinationSourceContractTest {
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorDestination.kt"
         const val OWNER_PATH =
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/editor/ShootEditorProductionFactory.kt"
+        const val STARTED_DESTINATION_PATH =
+            "app/src/main/java/com/tonyisup/poseguidesnap/ui/session/StartedSessionDestination.kt"
     }
 }

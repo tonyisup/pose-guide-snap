@@ -8,6 +8,7 @@ import com.tonyisup.poseguidesnap.data.JournaledReferenceAssetStore
 import com.tonyisup.poseguidesnap.data.RoomReferenceImportFileJournal
 import com.tonyisup.poseguidesnap.data.RoomReferenceImportRepository
 import com.tonyisup.poseguidesnap.data.RoomShootPreparationRepository
+import com.tonyisup.poseguidesnap.data.RoomShootRepository
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.importer.AndroidMoveNetReferenceAnalyzer
 import com.tonyisup.poseguidesnap.importer.BlockingMoveNetReferenceDetectorMapperAdapter
@@ -279,6 +280,7 @@ private fun createProductionRuntime(
     )
     val workflow = RoomShootEditorWorkflow(
         repository = RoomShootEditorAdapter(RoomShootPreparationRepository(database)),
+        activeSessions = RoomShootEditorActiveSessionAdapter(RoomShootRepository(database)),
         imports = ShootEditorImportApplicationAdapter(applicationService),
         pickerRegistry = registry,
         authority = authority,

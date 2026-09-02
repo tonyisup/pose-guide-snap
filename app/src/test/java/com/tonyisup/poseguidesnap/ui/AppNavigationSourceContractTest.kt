@@ -20,9 +20,25 @@ class AppNavigationSourceContractTest {
     }
 
     @Test
-    fun cameraPermissionAndControllerAreOnlyReachableInsideStartedDestination() {
+    fun startedRouteRetainsBootstrapOwnerBeforeReadyOnlyDestinationCanReachCamera() {
         val app = source(APP_PATH)
-        val navigation = sourceOrEmpty(NAVIGATION_PATH)
+        val navigation = source(NAVIGATION_PATH)
+        val destination = sourceOrEmpty(STARTED_DESTINATION_PATH)
+        val destinationWrapper = bounded(
+            destination,
+            "internal fun StartedSessionDestination(",
+            "@Composable\ninternal fun StartedSessionScreen(",
+        )
+        val destinationScreen = bounded(
+            destination,
+            "internal fun StartedSessionScreen(",
+            "internal const val STARTED_SESSION_STATUS_TAG",
+        )
+        val startedRoute = bounded(
+            navigation,
+            "composable(STARTED_ROUTE)",
+            "@Composable\nprivate fun FailClosedToList",
+        )
 
         listOf(
             "internal fun StartedSessionCameraDestination",
@@ -31,11 +47,81 @@ class AppNavigationSourceContractTest {
         listOf(
             "private const val LIST_ROUTE",
             "startDestination = LIST_ROUTE",
-            "StartedSessionCameraDestination(lifecycleOwner = lifecycleOwner)",
-        ).forEach { marker -> assertTrue("Missing navigation marker: $marker", marker in navigation) }
+            "private const val STARTED_BOOTSTRAP_OWNER_KEY",
+        ).forEach { marker ->
+            assertTrue("Missing constant started-route marker: $marker", marker in navigation)
+        }
+        listOf(
+            "StartedNavigationTargetOwner(capabilities.consumeStartedSession())",
+            "STARTED_TARGET_OWNER_KEY",
+        ).forEach { marker ->
+            assertTrue("Missing retained started-route marker: $marker", marker in startedRoute)
+        }
+
+        val nullBranch = bounded(startedRoute, "if (target == null)", "} else {")
+        val validBranch = startedRoute.substringAfter("} else {")
+        listOf("FailClosedToList", "navController::popBackStack").forEach { marker ->
+            assertTrue("null started target must fail closed: $marker", marker in nullBranch)
+        }
+        listOf(
+            "createStartedSessionBootstrapViewModel",
+            "bootstrapFactory",
+            "StartedSessionBootstrapViewModel",
+            "StartedSessionDestination(",
+            "StartedSessionCameraDestination",
+        ).forEach { forbidden ->
+            assertFalse(
+                "null started target must not construct bootstrap or camera resources: $forbidden",
+                forbidden in nullBranch,
+            )
+        }
+
+        listOf(
+            "remember(applicationContext, target)",
+            "viewModelFactory",
+            "createStartedSessionBootstrapViewModel(applicationContext, target.handle)",
+            "ViewModelProvider(backStackEntry, bootstrapFactory)",
+            "STARTED_BOOTSTRAP_OWNER_KEY",
+            "StartedSessionBootstrapViewModel::class.java",
+            "StartedSessionDestination(",
+            "owner = owner",
+            "lifecycleOwner = lifecycleOwner",
+            "onBack = navController::popBackStack",
+        ).forEach { marker ->
+            assertTrue("valid started target must retain bootstrap destination: $marker", marker in validBranch)
+        }
+        assertFalse(
+            "AppNavHost must not directly reach the camera destination",
+            "StartedSessionCameraDestination" in navigation,
+        )
+
+        listOf(
+            "owner.state.collectAsStateWithLifecycle()",
+            "StartedSessionScreen(",
+            "onRetry = owner::retry",
+            "StartedSessionCameraDestination(lifecycleOwner)",
+        ).forEach { marker ->
+            assertTrue("started wrapper must preserve retained camera chain: $marker", marker in destinationWrapper)
+        }
+        listOf(
+            "startedSessionAuthorizesCamera(state)",
+            "cameraContent()",
+        ).forEach { marker ->
+            assertTrue("started screen must preserve Ready-only camera gate: $marker", marker in destinationScreen)
+        }
+        val destinationBody = destination.substringAfter("internal class StartedSessionStatusPresentation")
+        assertTrue(
+            "production camera destination must appear exactly once as the injected screen callback",
+            destinationBody.windowed("StartedSessionCameraDestination".length)
+                .count { it == "StartedSessionCameraDestination" } == 1 &&
+                "cameraContent = { StartedSessionCameraDestination(lifecycleOwner) }" in destinationWrapper,
+        )
 
         val listDestination = bounded(navigation, "composable(LIST_ROUTE)", "composable(EDITOR_ROUTE)")
-        assertFalse("List destination must not construct camera permission launchers", "rememberLauncherForActivityResult" in listDestination)
+        assertFalse(
+            "List destination must not construct camera permission launchers",
+            "rememberLauncherForActivityResult" in listDestination,
+        )
         assertFalse("List destination must not construct CameraX", "CameraXController" in listDestination)
     }
 
@@ -171,6 +257,8 @@ class AppNavigationSourceContractTest {
         const val APP_PATH = "app/src/main/java/com/tonyisup/poseguidesnap/ui/App.kt"
         const val NAVIGATION_PATH =
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/navigation/AppNavHost.kt"
+        const val STARTED_DESTINATION_PATH =
+            "app/src/main/java/com/tonyisup/poseguidesnap/ui/session/StartedSessionDestination.kt"
         const val SHOOT_LIST_SCREEN_PATH =
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/shoots/ShootListScreen.kt"
         const val SHOOT_LIST_CONTRACT_PATH =

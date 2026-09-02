@@ -1,6 +1,6 @@
 # Testing and Acceptance Contract
 
-> **Project status: Tasks 1–12, 14A.1, and 14A.2 are implemented, host-verified, and boundedly Pixel-exercised.** The current JVM suite is 591/591 GREEN; lint and debug/release/instrumentation builds are GREEN. Task 14A.1 passed 6/6 exact-APK Pixel 6 Room tests; Task 14A.2 passed 8/8 exact-APK Pixel 6 tests covering active-session discovery across reopen, fail-closed multi-active corruption, and the 14A.1 regressions. This does not prove UI/process-death resume, camera, capture/export, deletion completion, audio, or the end-to-end workflow. Gates 2–4 remain open.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented, host-verified, and boundedly Pixel-exercised.** The current JVM suite is 618/618 GREEN; lint and debug/release/instrumentation builds are GREEN. The final Task 14A.3 APK pair passed 11/11 Pixel 6 methods across two successful bounded invocations covering synthetic editor Resume, Ready-only camera admission with injected fake camera content, compact-height/large-font recovery scrolling, and exact Room discovery/bootstrap reopen regressions. This does not prove a real process-kill gesture flow, actual camera use, capture/export, deletion completion, audio, TalkBack usability, or the end-to-end workflow. Gates 2–4 remain open.
 
 ## Testing principles
 
@@ -73,6 +73,14 @@ Task 14A.2 evidence remains bounded to Room active-session discovery:
 - The new mapper class produced 12/12 behavioral runtime-assertion failures against its compile-safe placeholder before implementation, then 12/12 passes.
 - The installed APK pair matched recorded SHA-256 values and passed 8/8 focused Pixel 6 methods: exact discovery across close/reopen, sessionless-shoot `None`, missing-shoot `UnknownShoot`, fail-closed multi-active corruption with the one-active triggers dropped in the UUID test database, plus the six Task 14A.1 regressions.
 - Test databases and the instrumentation package were verified absent afterward. See `validation/2026-09-02-task14a2-active-session-discovery-pixel6.md`.
+
+Task 14A.3 evidence remains bounded to stale-safe UI admission and retained bootstrap ownership:
+
+- 618/618 JVM tests passed with zero failures, errors, or skips; lint plus debug, release, and instrumentation APK assembly passed; schemas unchanged.
+- Behavioral RED/GREEN covered editor-scoped discovery, fresh click-time Resume, stale and rejected authority, queued-effect revocation, bootstrap mapping, cancellation, close-after-in-flight leases, stale-generation suppression, retry/exhaustion, and Ready-only camera authorization.
+- Installed main and instrumentation APK bytes matched local SHA-256 values. The awake/unlocked Pixel 6 passed 11/11 methods across two successful bounded invocations: 5 editor Compose, 4 started-destination Compose with injected fake camera content, and 2 Room reopen regressions. The fourth destination method proves Retry and Back remain reachable by scrolling in a 320dp × 180dp viewport at 2.0 font scale.
+- The first invocation found the device unable to launch the Compose test host; both Room tests passed while all UI tests failed before a semantics hierarchy existed. The unchanged APK pair passed after the device was explicitly made awake/unlocked and a separate rerun was authorized. This is recorded as an environmental harness failure, not hidden or counted as product evidence.
+- Test databases and the instrumentation package were verified absent after every attempt. No camera, picker, image, MediaStore, personal-data, or TalkBack path was exercised. See `validation/2026-09-02-task14a3-stale-safe-resume-pixel6.md`.
 
 ## Pure JVM test matrix
 

@@ -79,6 +79,7 @@ internal class ShootEditorDisplaySnapshot(
     val lifecycle: ShootPreparationLifecycle,
     references: Iterable<ShootEditorReferenceItem>,
     importWorkStatuses: Iterable<ImportWorkStatus>,
+    val hasResumableSession: Boolean = false,
 ) {
     val references: List<ShootEditorReferenceItem> =
         RedactedImmutableList(references, MAX_DISPLAY_ITEMS)
@@ -97,7 +98,18 @@ internal class ShootEditorDisplaySnapshot(
         require(this.references.indices.all { index -> this.references[index].poseIndex == index }) {
             "shoot display reference indices must be unique and contiguous"
         }
+        require(lifecycle != ShootPreparationLifecycle.DELETING || !hasResumableSession) {
+            "deleting shoot cannot expose a resumable-session hint"
+        }
     }
+
+    fun withoutResumableSession(): ShootEditorDisplaySnapshot = ShootEditorDisplaySnapshot(
+        name = name,
+        lifecycle = lifecycle,
+        references = references,
+        importWorkStatuses = importWorkStatuses,
+        hasResumableSession = false,
+    )
 
     override fun toString(): String = "ShootEditorDisplaySnapshot(redacted)"
 }
@@ -133,6 +145,8 @@ internal interface ShootEditorWorkflowPort {
     suspend fun reorder(shootId: String, orderedPoseIds: List<String>): ShootReorderResult
 
     suspend fun start(shootId: String): ShootEditorStartOutcome
+
+    suspend fun resume(shootId: String): ShootEditorResumeOutcome
 }
 
 internal class StartedSessionHandle(val navigationKey: String) {
@@ -173,6 +187,27 @@ internal sealed interface ShootEditorStartOutcome {
     }
 }
 
+internal enum class ShootEditorResumeRejectionReason {
+    INVALID_REQUEST,
+    AUTHORITY_INCONSISTENT,
+    AUTHORITY_UNAVAILABLE,
+}
+
+internal sealed interface ShootEditorResumeOutcome {
+    class Resumable(val handle: StartedSessionHandle) : ShootEditorResumeOutcome {
+        override fun toString(): String = "ShootEditorResumeOutcome.Resumable(redacted)"
+    }
+
+    data object Stale : ShootEditorResumeOutcome {
+        override fun toString(): String = "ShootEditorResumeOutcome.Stale"
+    }
+
+    class Rejected(val reason: ShootEditorResumeRejectionReason) : ShootEditorResumeOutcome {
+        override fun toString(): String =
+            "ShootEditorResumeOutcome.Rejected(reason=${reason.name})"
+    }
+}
+
 internal data class ShootEditorOperationId(
     val shootId: String,
     val generation: Long,
@@ -190,6 +225,7 @@ internal enum class ShootEditorStartEligibility {
     TOO_FEW_REFERENCES,
     SHOOT_DELETING,
     UNRESOLVED_IMPORT_WORK,
+    ACTIVE_SESSION,
     OPERATION_IN_PROGRESS,
     UNAVAILABLE,
 }
@@ -212,6 +248,8 @@ internal enum class ShootEditorFeedbackCode {
     START_INELIGIBLE,
     START_CONFLICT,
     START_FAILED,
+    RESUME_STALE,
+    RESUME_FAILED,
 }
 
 internal class ShootEditorFeedback(
@@ -317,6 +355,20 @@ internal sealed interface ShootEditorUiState {
             ShootEditorStartEligibility.OPERATION_IN_PROGRESS
         override fun toString(): String = "ShootEditorUiState.Starting(redacted)"
     }
+
+    class Resuming(
+        override val data: ShootEditorLoadedData,
+        val operationId: ShootEditorOperationId,
+    ) : Loaded {
+        override val startEligibility: ShootEditorStartEligibility =
+            ShootEditorStartEligibility.OPERATION_IN_PROGRESS
+        override fun toString(): String = "ShootEditorUiState.Resuming(redacted)"
+    }
+}
+
+internal enum class ShootEditorNavigationOrigin {
+    FRESH_START,
+    RESUME,
 }
 
 internal sealed interface ShootEditorEffect {
@@ -329,6 +381,7 @@ internal sealed interface ShootEditorEffect {
 
     class NavigateToStartedSession(
         val handle: StartedSessionHandle,
+        val origin: ShootEditorNavigationOrigin,
     ) : ShootEditorEffect {
         override fun toString(): String =
             "ShootEditorEffect.NavigateToStartedSession(redacted)"
@@ -367,6 +420,11 @@ internal class ShootEditorReducer(private val shootId: String) {
             is ShootEditorUiState.Importing -> ShootEditorUiState.Importing(data, current.operationId)
             is ShootEditorUiState.Reordering -> ShootEditorUiState.Reordering(data, current.operationId)
             is ShootEditorUiState.Starting -> ShootEditorUiState.Starting(data, current.operationId)
+            is ShootEditorUiState.Resuming -> if (snapshot.hasResumableSession) {
+                ShootEditorUiState.Resuming(data, current.operationId)
+            } else {
+                idleState(data)
+            }
             else -> idleState(data)
         }
         return ShootEditorTransition(state)
@@ -544,11 +602,21 @@ internal class ShootEditorReducer(private val shootId: String) {
         return when (outcome) {
             is ShootEditorStartOutcome.Started -> ShootEditorTransition(
                 idleState(current.data.withFeedback(null)),
-                listOf(ShootEditorEffect.NavigateToStartedSession(outcome.handle)),
+                listOf(
+                    ShootEditorEffect.NavigateToStartedSession(
+                        handle = outcome.handle,
+                        origin = ShootEditorNavigationOrigin.FRESH_START,
+                    ),
+                ),
             )
             is ShootEditorStartOutcome.Resumable -> ShootEditorTransition(
                 idleState(current.data.withFeedback(null)),
-                listOf(ShootEditorEffect.NavigateToStartedSession(outcome.handle)),
+                listOf(
+                    ShootEditorEffect.NavigateToStartedSession(
+                        handle = outcome.handle,
+                        origin = ShootEditorNavigationOrigin.FRESH_START,
+                    ),
+                ),
             )
             is ShootEditorStartOutcome.Rejected -> {
                 val feedbackCode = when (outcome.reason) {
@@ -562,6 +630,54 @@ internal class ShootEditorReducer(private val shootId: String) {
                     idleState(current.data.withFeedback(ShootEditorFeedback(feedbackCode))),
                 )
             }
+        }
+    }
+
+    fun resumeCompleted(
+        current: ShootEditorUiState,
+        operationId: ShootEditorOperationId,
+        outcome: ShootEditorResumeOutcome,
+    ): ShootEditorTransition {
+        if (current !is ShootEditorUiState.Resuming ||
+            !operationId.belongsTo(shootId) || current.operationId != operationId
+        ) return noOp(current)
+        return when (outcome) {
+            is ShootEditorResumeOutcome.Resumable -> ShootEditorTransition(
+                idleState(current.data.withFeedback(null)),
+                listOf(
+                    ShootEditorEffect.NavigateToStartedSession(
+                        handle = outcome.handle,
+                        origin = ShootEditorNavigationOrigin.RESUME,
+                    ),
+                ),
+            )
+            ShootEditorResumeOutcome.Stale -> ShootEditorTransition(
+                idleState(
+                    ShootEditorLoadedData(
+                        current.data.snapshot.withoutResumableSession(),
+                        ShootEditorFeedback(ShootEditorFeedbackCode.RESUME_STALE),
+                        current.data.localReconciliationRequired,
+                    ),
+                ),
+            )
+            is ShootEditorResumeOutcome.Rejected -> ShootEditorTransition(
+                idleState(current.data.withFeedback(ShootEditorFeedback(ShootEditorFeedbackCode.RESUME_FAILED))),
+            )
+        }
+    }
+
+    fun beginResume(
+        current: ShootEditorUiState,
+        operationId: ShootEditorOperationId,
+    ): ShootEditorTransition {
+        val data = current.idleDataOrNull() ?: return noOp(current)
+        if (!operationId.belongsTo(shootId)) return noOp(current)
+        return if (data.snapshot.hasResumableSession) {
+            ShootEditorTransition(ShootEditorUiState.Resuming(data, operationId))
+        } else {
+            ShootEditorTransition(
+                idleState(data.withFeedback(ShootEditorFeedback(ShootEditorFeedbackCode.RESUME_STALE))),
+            )
         }
     }
 
@@ -740,6 +856,22 @@ internal open class ShootEditorViewModel(
         }
     }
 
+    fun requestResume() {
+        val operationId = nextOperationId() ?: return
+        viewModelScope.launch(dispatcher) {
+            val begun = applyTransition { current -> reducer.beginResume(current, operationId) }
+            if (begun !is ShootEditorUiState.Resuming || begun.operationId != operationId) return@launch
+            val outcome = try {
+                workflow.resume(shootId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                ShootEditorResumeOutcome.Rejected(ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE)
+            }
+            applyTransition { current -> reducer.resumeCompleted(current, operationId, outcome) }
+        }
+    }
+
     override fun toString(): String = "ShootEditorViewModel(redacted)"
 
     override fun onCleared() {
@@ -885,9 +1017,17 @@ private class ShootEditorEffectEnvelope(
 private fun ShootEditorEffect.isStillValidFor(state: ShootEditorUiState): Boolean = when (this) {
     is ShootEditorEffect.LaunchPhotoPicker ->
         state is ShootEditorUiState.Importing && state.operationId == operationId
-    is ShootEditorEffect.NavigateToStartedSession ->
-        (state is ShootEditorUiState.Empty && state.data.feedback == null) ||
-            (state is ShootEditorUiState.Content && state.data.feedback == null)
+    is ShootEditorEffect.NavigateToStartedSession -> {
+        val data = when (state) {
+            is ShootEditorUiState.Empty -> state.data
+            is ShootEditorUiState.Content -> state.data
+            else -> null
+        }
+        data != null && data.feedback == null && when (origin) {
+            ShootEditorNavigationOrigin.FRESH_START -> true
+            ShootEditorNavigationOrigin.RESUME -> data.snapshot.hasResumableSession
+        }
+    }
 }
 
 private fun ShootEditorLoadedData.idleStartEligibility(): ShootEditorStartEligibility = when {
@@ -895,6 +1035,7 @@ private fun ShootEditorLoadedData.idleStartEligibility(): ShootEditorStartEligib
         ShootEditorStartEligibility.SHOOT_DELETING
     localReconciliationRequired || snapshot.hasBlockingImportWork() ->
         ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK
+    snapshot.hasResumableSession -> ShootEditorStartEligibility.ACTIVE_SESSION
     snapshot.references.size !in 3..20 ->
         ShootEditorStartEligibility.TOO_FEW_REFERENCES
     else -> ShootEditorStartEligibility.ELIGIBLE

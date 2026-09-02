@@ -21,6 +21,8 @@ class ShootEditorScreenTest {
                 "This shoot is being deleted and cannot be started.",
             ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK to
                 "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot.",
+            ShootEditorStartEligibility.ACTIVE_SESSION to
+                "Resume the active session before starting a new one.",
             ShootEditorStartEligibility.OPERATION_IN_PROGRESS to
                 "Wait for the current operation to finish before starting.",
             ShootEditorStartEligibility.UNAVAILABLE to
@@ -174,6 +176,7 @@ class ShootEditorScreenTest {
             "onRequestImport: (String) -> Unit",
             "onRequestReorder: (List<String>) -> Unit",
             "onRequestStart: () -> Unit",
+            "onRequestResume: () -> Unit",
             ".statusBarsPadding()",
             ".navigationBarsPadding()",
             "heading()",
@@ -193,6 +196,8 @@ class ShootEditorScreenTest {
             "Move ${'$'}label up",
             "Move ${'$'}label down",
             "Start shoot",
+            "Resume session",
+            "Resuming session",
             "liveRegion = LiveRegionMode.Polite",
             "heightIn(min = MIN_TOUCH_TARGET)",
             "LazyColumn(",

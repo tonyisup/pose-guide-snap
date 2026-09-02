@@ -73,6 +73,7 @@ class ShootEditorViewModelTest {
             lifecycle = ShootPreparationLifecycle.ACTIVE,
             references = references,
             importWorkStatuses = workStatuses,
+            hasResumableSession = false,
         )
         val reducer = ShootEditorReducer(SHOOT_ID)
 
@@ -104,7 +105,7 @@ class ShootEditorViewModelTest {
             assertFalse(rendered.contains("private-label-0"))
         }
         assertEquals(
-            setOf("name", "lifecycle", "references", "importWorkStatuses"),
+            setOf("name", "lifecycle", "references", "importWorkStatuses", "hasResumableSession"),
             ShootEditorDisplaySnapshot::class.java.declaredFields
                 .filterNot { field -> Modifier.isStatic(field.modifiers) }
                 .map { field -> field.name }
@@ -132,6 +133,7 @@ class ShootEditorViewModelTest {
                     lifecycle = ShootPreparationLifecycle.ACTIVE,
                     references = emptyList(),
                     importWorkStatuses = emptyList(),
+                    hasResumableSession = false,
                 )
             }
         }
@@ -160,6 +162,7 @@ class ShootEditorViewModelTest {
                         lifecycle = ShootPreparationLifecycle.ACTIVE,
                         references = malformed,
                         importWorkStatuses = emptyList(),
+                        hasResumableSession = false,
                     )
                 }
             }
@@ -177,6 +180,7 @@ class ShootEditorViewModelTest {
                 lifecycle = ShootPreparationLifecycle.ACTIVE,
                 references = oversizedReferences,
                 importWorkStatuses = emptyList(),
+                hasResumableSession = false,
             )
         }
         assertTrue("reference projection copy must stop at max + 1", referenceReads <= 21)
@@ -197,6 +201,7 @@ class ShootEditorViewModelTest {
                 lifecycle = ShootPreparationLifecycle.ACTIVE,
                 references = emptyList(),
                 importWorkStatuses = oversizedImportWork,
+                hasResumableSession = false,
             )
         }
         assertTrue("import-work projection copy must stop at max + 1", importWorkReads <= 21)
@@ -557,6 +562,308 @@ class ShootEditorViewModelTest {
     }
 
     @Test
+    fun resumableHintDisablesStartAfterLifecycleAndImportBarriersAndDeletingRejectsHint() {
+        val reducer = ShootEditorReducer(SHOOT_ID)
+        val active = loadedState(
+            reducer,
+            snapshot(referenceCount = 3, hasResumableSession = true),
+        )
+        assertEquals(ShootEditorStartEligibility.ACTIVE_SESSION, active.startEligibility)
+        val blocked = reducer.beginStart(active, operation(1))
+        assertFalse(blocked.state is ShootEditorUiState.Starting)
+        assertEquals(ShootEditorFeedbackCode.START_INELIGIBLE, data(blocked.state).feedback?.code)
+
+        assertEquals(
+            ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK,
+            loadedState(
+                reducer,
+                snapshot(
+                    referenceCount = 3,
+                    workStatus = ImportWorkStatus.IN_PROGRESS,
+                    hasResumableSession = true,
+                ),
+            ).startEligibility,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            snapshot(
+                referenceCount = 3,
+                lifecycle = ShootPreparationLifecycle.DELETING,
+                hasResumableSession = true,
+            )
+        }
+    }
+
+    @Test
+    fun resumeReducerNavigatesOnceForExactAndClearsOnlyHintForStale() {
+        val reducer = ShootEditorReducer(SHOOT_ID)
+        val resumable = loadedState(
+            reducer,
+            snapshot(referenceCount = 3, hasResumableSession = true),
+        )
+        val exactOperation = operation(31)
+        val exactPending = reducer.beginResume(resumable, exactOperation).state
+        assertTrue(exactPending is ShootEditorUiState.Resuming)
+        val handle = StartedSessionHandle("resume-navigation")
+        val exact = reducer.resumeCompleted(
+            exactPending,
+            exactOperation,
+            ShootEditorResumeOutcome.Resumable(handle),
+        )
+        assertEquals(1, exact.effects.size)
+        val navigation = exact.effects.single() as ShootEditorEffect.NavigateToStartedSession
+        assertSame(handle, navigation.handle)
+        assertSame(ShootEditorNavigationOrigin.RESUME, navigation.origin)
+
+        val staleOperation = operation(32)
+        val stalePending = reducer.beginResume(resumable, staleOperation).state
+        val stale = reducer.resumeCompleted(
+            stalePending,
+            staleOperation,
+            ShootEditorResumeOutcome.Stale,
+        )
+        assertTrue(stale.effects.isEmpty())
+        assertFalse(data(stale.state).snapshot.hasResumableSession)
+        assertEquals(ShootEditorFeedbackCode.RESUME_STALE, data(stale.state).feedback?.code)
+        assertEquals(3, data(stale.state).snapshot.references.size)
+    }
+
+    @Test
+    fun resumeReducerRejectsMissingHintAndClosedFailuresWithoutNavigationOrReasonLeak() {
+        val reducer = ShootEditorReducer(SHOOT_ID)
+        val unavailable = loadedState(reducer, snapshot(referenceCount = 3))
+        val notBegun = reducer.beginResume(unavailable, operation(40))
+        assertFalse(notBegun.state is ShootEditorUiState.Resuming)
+        assertTrue(notBegun.effects.isEmpty())
+        assertEquals(ShootEditorFeedbackCode.RESUME_STALE, data(notBegun.state).feedback?.code)
+
+        ShootEditorResumeRejectionReason.entries.forEachIndexed { index, reason ->
+            val operation = operation(index + 41L)
+            val pending = reducer.beginResume(
+                loadedState(
+                    reducer,
+                    snapshot(referenceCount = 3, hasResumableSession = true),
+                ),
+                operation,
+            ).state
+            val failed = reducer.resumeCompleted(
+                pending,
+                operation,
+                ShootEditorResumeOutcome.Rejected(reason),
+            )
+            assertTrue(failed.effects.isEmpty())
+            assertEquals(ShootEditorFeedbackCode.RESUME_FAILED, data(failed.state).feedback?.code)
+            assertFalse(failed.state.toString().contains(reason.name))
+        }
+    }
+
+    @Test
+    fun authoritativeSnapshotClearingHintInvalidatesResumeAndLateExactIsIdentityNoOp() {
+        val reducer = ShootEditorReducer(SHOOT_ID)
+        val operation = operation(51)
+        val pending = reducer.beginResume(
+            loadedState(
+                reducer,
+                snapshot(referenceCount = 3, hasResumableSession = true),
+            ),
+            operation,
+        ).state
+        val invalidated = reducer.snapshotChanged(
+            pending,
+            snapshot(referenceCount = 3, hasResumableSession = false),
+        ).state
+
+        assertFalse(invalidated is ShootEditorUiState.Resuming)
+        assertIdentityNoOp(
+            invalidated,
+            reducer.resumeCompleted(
+                invalidated,
+                operation,
+                ShootEditorResumeOutcome.Resumable(StartedSessionHandle("late-resume")),
+            ),
+        )
+    }
+
+    @Test
+    fun viewModelFreshResumeRequeryNavigatesExactlyOnce() = runTest {
+        val workflow = FakeWorkflow().apply {
+            snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+            resumeOutcome = ShootEditorResumeOutcome.Resumable(
+                StartedSessionHandle("fresh-resume"),
+            )
+        }
+        val viewModel = ShootEditorViewModel(
+            SHOOT_ID,
+            workflow,
+            StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+        val navigation = async { viewModel.effects.first() }
+
+        viewModel.requestResume()
+        runCurrent()
+
+        assertEquals(1, workflow.resumeCalls)
+        assertEquals(SHOOT_ID, workflow.lastResumeShootId)
+        val effect = navigation.await() as ShootEditorEffect.NavigateToStartedSession
+        assertEquals("fresh-resume", effect.handle.navigationKey)
+        assertSame(ShootEditorNavigationOrigin.RESUME, effect.origin)
+        val replay = async { viewModel.effects.first() }
+        runCurrent()
+        assertFalse(replay.isCompleted)
+        replay.cancel()
+    }
+
+    @Test
+    fun queuedResumeNavigationIsRevokedWhenNewerSnapshotClearsResumableHintBeforeCollection() = runTest {
+        val workflow = FakeWorkflow().apply {
+            snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+            resumeOutcome = ShootEditorResumeOutcome.Resumable(
+                StartedSessionHandle("queued-resume"),
+            )
+        }
+        val viewModel = ShootEditorViewModel(
+            SHOOT_ID,
+            workflow,
+            StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+
+        viewModel.requestResume()
+        runCurrent()
+        assertEquals(1, workflow.resumeCalls)
+
+        workflow.snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = false))
+        runCurrent()
+
+        val navigation = async { viewModel.effects.first() }
+        runCurrent()
+        assertFalse(navigation.isCompleted)
+        navigation.cancel()
+    }
+
+    @Test
+    fun queuedFreshStartNavigationRemainsValidWithoutResumableHint() = runTest {
+        val workflow = FakeWorkflow().apply {
+            snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = false))
+            startOutcome = ShootEditorStartOutcome.Started(
+                StartedSessionHandle("queued-fresh-start"),
+            )
+        }
+        val viewModel = ShootEditorViewModel(
+            SHOOT_ID,
+            workflow,
+            StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+
+        viewModel.requestStart()
+        runCurrent()
+        workflow.snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = false))
+        runCurrent()
+
+        val navigation = async { viewModel.effects.first() }
+        runCurrent()
+        val effect = navigation.await() as ShootEditorEffect.NavigateToStartedSession
+        assertEquals("queued-fresh-start", effect.handle.navigationKey)
+        assertSame(ShootEditorNavigationOrigin.FRESH_START, effect.origin)
+    }
+
+    @Test
+    fun viewModelStaleResumeNeverNavigatesAndClearsLocalHintWithActionableFeedback() = runTest {
+        repeat(2) {
+            val workflow = FakeWorkflow().apply {
+                snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+                resumeOutcome = ShootEditorResumeOutcome.Stale
+            }
+            val viewModel = ShootEditorViewModel(
+                SHOOT_ID,
+                workflow,
+                StandardTestDispatcher(testScheduler),
+            )
+            runCurrent()
+            val navigation = async { viewModel.effects.first() }
+
+            viewModel.requestResume()
+            runCurrent()
+
+            assertEquals(1, workflow.resumeCalls)
+            assertFalse(data(viewModel.state.value).snapshot.hasResumableSession)
+            assertEquals(
+                ShootEditorFeedbackCode.RESUME_STALE,
+                data(viewModel.state.value).feedback?.code,
+            )
+            assertFalse(navigation.isCompleted)
+            navigation.cancel()
+        }
+    }
+
+    @Test
+    fun delayedViewModelResumeCannotNavigateAfterFreshSnapshotClearsHint() = runTest {
+        val deferred = CompletableDeferred<ShootEditorResumeOutcome>()
+        val workflow = FakeWorkflow().apply {
+            snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+            resumeBlock = deferred
+        }
+        val viewModel = ShootEditorViewModel(
+            SHOOT_ID,
+            workflow,
+            StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+        val navigation = async { viewModel.effects.first() }
+        viewModel.requestResume()
+        runCurrent()
+        assertTrue(viewModel.state.value is ShootEditorUiState.Resuming)
+
+        workflow.snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = false))
+        runCurrent()
+        assertFalse(viewModel.state.value is ShootEditorUiState.Resuming)
+        deferred.complete(
+            ShootEditorResumeOutcome.Resumable(StartedSessionHandle("late-fresh-resume")),
+        )
+        runCurrent()
+
+        assertFalse(navigation.isCompleted)
+        navigation.cancel()
+    }
+
+    @Test
+    fun viewModelResumeRejectionAndThrowUseGenericFailureWithoutRawLeak() = runTest {
+        ShootEditorResumeRejectionReason.entries.forEach { reason ->
+            val workflow = FakeWorkflow().apply {
+                snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+                resumeOutcome = ShootEditorResumeOutcome.Rejected(reason)
+            }
+            val viewModel = ShootEditorViewModel(
+                SHOOT_ID,
+                workflow,
+                StandardTestDispatcher(testScheduler),
+            )
+            runCurrent()
+            viewModel.requestResume()
+            runCurrent()
+            assertEquals(ShootEditorFeedbackCode.RESUME_FAILED, data(viewModel.state.value).feedback?.code)
+            assertFalse(viewModel.state.value.toString().contains(reason.name))
+        }
+
+        val marker = "raw-resume-failure content://private/resume"
+        val throwing = FakeWorkflow().apply {
+            snapshots.emit(snapshot(referenceCount = 3, hasResumableSession = true))
+            resumeFailure = IllegalStateException(marker)
+        }
+        val viewModel = ShootEditorViewModel(
+            SHOOT_ID,
+            throwing,
+            StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+        viewModel.requestResume()
+        runCurrent()
+        assertEquals(ShootEditorFeedbackCode.RESUME_FAILED, data(viewModel.state.value).feedback?.code)
+        assertFalse(viewModel.state.value.toString().contains(marker))
+    }
+
+    @Test
     fun startedAndResumableOutcomesEachEmitOneNavigationWhileRejectionsRemainRecoverable() {
         val reducer = ShootEditorReducer(SHOOT_ID)
         listOf<(StartedSessionHandle) -> ShootEditorStartOutcome>(
@@ -573,6 +880,7 @@ class ShootEditorViewModelTest {
             assertEquals(1, transition.effects.size)
             val effect = transition.effects.single() as ShootEditorEffect.NavigateToStartedSession
             assertSame(handle, effect.handle)
+            assertSame(ShootEditorNavigationOrigin.FRESH_START, effect.origin)
             assertFalse(transition.state is ShootEditorUiState.Starting)
         }
 
@@ -731,7 +1039,8 @@ class ShootEditorViewModelTest {
         runCurrent()
         assertEquals(1, workflow.startCalls)
         assertEquals(SHOOT_ID, workflow.lastStartShootId)
-        assertTrue(navigation.await() is ShootEditorEffect.NavigateToStartedSession)
+        val effect = navigation.await() as ShootEditorEffect.NavigateToStartedSession
+        assertSame(ShootEditorNavigationOrigin.FRESH_START, effect.origin)
     }
 
     @Test
@@ -1085,6 +1394,13 @@ class ShootEditorViewModelTest {
         )
         val data = ShootEditorLoadedData(snapshot)
         val handle = StartedSessionHandle("navigation-secret")
+        assertEquals(
+            setOf(
+                ShootEditorNavigationOrigin.FRESH_START,
+                ShootEditorNavigationOrigin.RESUME,
+            ),
+            ShootEditorNavigationOrigin.entries.toSet(),
+        )
         val values = listOf(
             operation,
             data,
@@ -1097,9 +1413,17 @@ class ShootEditorViewModelTest {
             ShootEditorUiState.Importing(data, operation),
             ShootEditorUiState.Reordering(data, operation),
             ShootEditorUiState.Starting(data, operation),
+            ShootEditorUiState.Resuming(data, operation),
             ShootEditorFeedback(ShootEditorFeedbackCode.IMPORT_TERMINAL_REJECTED),
             ShootEditorEffect.LaunchPhotoPicker(operation, pickerLaunch),
-            ShootEditorEffect.NavigateToStartedSession(handle),
+            ShootEditorEffect.NavigateToStartedSession(
+                handle,
+                ShootEditorNavigationOrigin.FRESH_START,
+            ),
+            ShootEditorEffect.NavigateToStartedSession(
+                handle,
+                ShootEditorNavigationOrigin.RESUME,
+            ),
             ShootEditorStartOutcome.Started(handle),
             ShootEditorStartOutcome.Resumable(handle),
             ShootEditorTransition(ShootEditorUiState.Content(data)),
@@ -1115,7 +1439,12 @@ class ShootEditorViewModelTest {
 
         val transition = ShootEditorTransition(
             ShootEditorUiState.Content(data),
-            listOf(ShootEditorEffect.NavigateToStartedSession(handle)),
+            listOf(
+                ShootEditorEffect.NavigateToStartedSession(
+                    handle,
+                    ShootEditorNavigationOrigin.FRESH_START,
+                ),
+            ),
         )
         assertThrows(UnsupportedOperationException::class.java) {
             (transition.effects as MutableList).clear()
@@ -1216,11 +1545,13 @@ class ShootEditorViewModelTest {
             (0 until referenceCount).map(::reference),
         lifecycle: ShootPreparationLifecycle = ShootPreparationLifecycle.ACTIVE,
         workStatus: ImportWorkStatus? = null,
+        hasResumableSession: Boolean = false,
     ): ShootEditorDisplaySnapshot = ShootEditorDisplaySnapshot(
         name = "private-shoot-name",
         lifecycle = lifecycle,
         references = references,
         importWorkStatuses = workStatus?.let(::listOf) ?: emptyList(),
+        hasResumableSession = hasResumableSession,
     )
 
     private fun projectRoot(): File {
@@ -1250,9 +1581,9 @@ class ShootEditorViewModelTest {
         var snapshotFlow: Flow<ShootEditorDisplaySnapshot?> = snapshots
         var allocationResult: ShootEditorImportAllocationOutcome =
             ShootEditorImportAllocationOutcome.Blocked(
-            ReferenceImportAllocationBlockReason.AUTHORITY_UNAVAILABLE,
-            ReferenceImportRetryAction.RETRY_ALLOCATION,
-        )
+                ReferenceImportAllocationBlockReason.AUTHORITY_UNAVAILABLE,
+                ReferenceImportRetryAction.RETRY_ALLOCATION,
+            )
         var classifiedOutcome = ReferenceImportOutcome(
             ReferenceImportOutcomeStatus.CANCELLED,
             ReferenceImportRetryAction.NONE,
@@ -1261,20 +1592,27 @@ class ShootEditorViewModelTest {
         var startOutcome: ShootEditorStartOutcome = ShootEditorStartOutcome.Rejected(
             ShootEditorStartRejectionReason.AUTHORITY_UNAVAILABLE,
         )
+        var resumeOutcome: ShootEditorResumeOutcome = ShootEditorResumeOutcome.Rejected(
+            ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE,
+        )
         var allocateFailure: RuntimeException? = null
         var classifyFailure: CancellationException? = null
         var observeFactoryFailure: RuntimeException? = null
         var reorderFailure: RuntimeException? = null
         var startFailure: RuntimeException? = null
+        var resumeFailure: RuntimeException? = null
         var reorderBlock: CompletableDeferred<ShootReorderResult>? = null
+        var resumeBlock: CompletableDeferred<ShootEditorResumeOutcome>? = null
         var allocateCalls = 0
         var classifyCalls = 0
         var reorderCalls = 0
         var startCalls = 0
+        var resumeCalls = 0
         var lastAllocateShootId: String? = null
         var lastLabel: String? = null
         var lastOrder: List<String>? = null
         var lastStartShootId: String? = null
+        var lastResumeShootId: String? = null
 
         override fun observeEditorSnapshot(shootId: String): Flow<ShootEditorDisplaySnapshot?> {
             observeFactoryFailure?.let { throw it }
@@ -1313,6 +1651,13 @@ class ShootEditorViewModelTest {
             lastStartShootId = shootId
             startFailure?.let { throw it }
             return startOutcome
+        }
+
+        override suspend fun resume(shootId: String): ShootEditorResumeOutcome {
+            resumeCalls += 1
+            lastResumeShootId = shootId
+            resumeFailure?.let { throw it }
+            return resumeBlock?.await() ?: resumeOutcome
         }
     }
 

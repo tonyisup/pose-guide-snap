@@ -1,8 +1,11 @@
 package com.tonyisup.poseguidesnap.ui.editor
 
 import android.net.Uri
+import com.tonyisup.poseguidesnap.data.ActiveGuidedSessionRejectionReason
+import com.tonyisup.poseguidesnap.data.ActiveGuidedSessionResult
 import com.tonyisup.poseguidesnap.data.ImportWorkStatus
 import com.tonyisup.poseguidesnap.data.RoomShootPreparationRepository
+import com.tonyisup.poseguidesnap.data.RoomShootRepository
 import com.tonyisup.poseguidesnap.data.ShootEditorSnapshot
 import com.tonyisup.poseguidesnap.data.ShootReorderResult
 import com.tonyisup.poseguidesnap.data.ShootStartResult
@@ -59,6 +62,17 @@ internal class RoomShootEditorAdapter(
         sessionId: String,
         startedAtEpochMillis: Long,
     ): ShootStartResult = repository.startShoot(shootId, sessionId, startedAtEpochMillis)
+}
+
+internal fun interface ShootEditorActiveSessionPort {
+    fun findActiveGuidedSession(shootId: String): ActiveGuidedSessionResult
+}
+
+internal class RoomShootEditorActiveSessionAdapter(
+    private val repository: RoomShootRepository,
+) : ShootEditorActiveSessionPort {
+    override fun findActiveGuidedSession(shootId: String): ActiveGuidedSessionResult =
+        repository.findActiveGuidedSession(shootId)
 }
 
 internal interface ShootEditorImportApplicationPort {
@@ -212,6 +226,7 @@ internal class ShootEditorPickerCoordinator(
 
 internal class RoomShootEditorWorkflow(
     private val repository: ShootEditorRoomPort,
+    private val activeSessions: ShootEditorActiveSessionPort,
     private val imports: ShootEditorImportApplicationPort,
     private val pickerRegistry: ShootEditorPickerRegistry,
     private val authority: ShootEditorResourceAuthority,
@@ -226,7 +241,20 @@ internal class RoomShootEditorWorkflow(
         val lease = authority.tryAcquire() ?: throw ShootEditorAuthorityUnavailableException()
         try {
             repository.observeShootEditor(shootId).collect { snapshot ->
-                emit(snapshot?.toDisplaySnapshot(shootId))
+                if (snapshot == null) {
+                    emit(null)
+                } else if (snapshot.lifecycle == com.tonyisup.poseguidesnap.data.ShootPreparationLifecycle.DELETING) {
+                    emit(snapshot.toDisplaySnapshot(shootId, false))
+                } else {
+                    val hasResumableSession = when (activeSessions.findActiveGuidedSession(shootId)) {
+                        is ActiveGuidedSessionResult.Exact -> true
+                        ActiveGuidedSessionResult.None -> false
+                        ActiveGuidedSessionResult.UnknownShoot,
+                        is ActiveGuidedSessionResult.Rejected,
+                        -> throw ShootEditorProjectionUnavailableException()
+                    }
+                    emit(snapshot.toDisplaySnapshot(shootId, hasResumableSession))
+                }
             }
         } finally {
             lease.close()
@@ -320,6 +348,39 @@ internal class RoomShootEditorWorkflow(
         }
     }
 
+    override suspend fun resume(shootId: String): ShootEditorResumeOutcome = withContext(blockingDispatcher) {
+        val lease = authority.tryAcquire() ?: return@withContext ShootEditorResumeOutcome.Rejected(
+            ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE,
+        )
+        try {
+            try {
+                when (val result = activeSessions.findActiveGuidedSession(shootId)) {
+                    is ActiveGuidedSessionResult.Exact ->
+                        ShootEditorResumeOutcome.Resumable(StartedSessionHandle(result.sessionId))
+                    ActiveGuidedSessionResult.None,
+                    ActiveGuidedSessionResult.UnknownShoot,
+                    -> ShootEditorResumeOutcome.Stale
+                    is ActiveGuidedSessionResult.Rejected -> ShootEditorResumeOutcome.Rejected(
+                        when (result.reason) {
+                            ActiveGuidedSessionRejectionReason.INVALID_REQUEST ->
+                                ShootEditorResumeRejectionReason.INVALID_REQUEST
+                            ActiveGuidedSessionRejectionReason.AUTHORITY_INCONSISTENT ->
+                                ShootEditorResumeRejectionReason.AUTHORITY_INCONSISTENT
+                            ActiveGuidedSessionRejectionReason.AUTHORITY_UNAVAILABLE ->
+                                ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE
+                        },
+                    )
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: RuntimeException) {
+                ShootEditorResumeOutcome.Rejected(ShootEditorResumeRejectionReason.AUTHORITY_UNAVAILABLE)
+            }
+        } finally {
+            lease.close()
+        }
+    }
+
     override fun toString(): String = "RoomShootEditorWorkflow(redacted)"
 
     private fun startIdentity(): StartIdentity = synchronized(startIdentityLock) {
@@ -338,7 +399,10 @@ internal class RoomShootEditorWorkflow(
         }
     }
 
-    private fun ShootEditorSnapshot.toDisplaySnapshot(expectedShootId: String): ShootEditorDisplaySnapshot {
+    private fun ShootEditorSnapshot.toDisplaySnapshot(
+        expectedShootId: String,
+        hasResumableSession: Boolean,
+    ): ShootEditorDisplaySnapshot {
         require(shootId == expectedShootId) { "editor projection identity mismatch" }
         return ShootEditorDisplaySnapshot(
             name = name,
@@ -358,6 +422,7 @@ internal class RoomShootEditorWorkflow(
                         status == ImportWorkStatus.RECONCILIATION_REQUIRED
                 }
                 .asIterable(),
+            hasResumableSession = hasResumableSession,
         )
     }
 
@@ -376,6 +441,10 @@ internal class RoomShootEditorWorkflow(
         override fun toString(): String = "StartIdentity(redacted)"
     }
 }
+
+private class ShootEditorProjectionUnavailableException : IllegalStateException(
+    "editor projection unavailable",
+)
 
 private class ShootEditorAuthorityUnavailableException : IllegalStateException(
     "editor authority unavailable",

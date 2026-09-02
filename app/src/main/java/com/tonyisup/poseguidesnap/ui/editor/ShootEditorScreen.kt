@@ -78,6 +78,8 @@ internal fun shootEditorEligibilityMessage(
         "This shoot is being deleted and cannot be started."
     ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK ->
         "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot."
+    ShootEditorStartEligibility.ACTIVE_SESSION ->
+        "Resume the active session before starting a new one."
     ShootEditorStartEligibility.OPERATION_IN_PROGRESS ->
         "Wait for the current operation to finish before starting."
     ShootEditorStartEligibility.UNAVAILABLE ->
@@ -122,6 +124,10 @@ internal fun shootEditorFeedbackText(
             "Another shoot session is already active."
         ShootEditorFeedbackCode.START_FAILED ->
             "The shoot could not be started right now."
+        ShootEditorFeedbackCode.RESUME_STALE ->
+            "That session is no longer available to resume."
+        ShootEditorFeedbackCode.RESUME_FAILED ->
+            "The session could not be resumed right now."
     }
     val guidance = retryGuidance(feedback.retryAction) ?: when (feedback.code) {
         ShootEditorFeedbackCode.SOURCE_UNAVAILABLE ->
@@ -156,6 +162,10 @@ internal fun shootEditorFeedbackText(
             "Finish the active session before starting this shoot."
         ShootEditorFeedbackCode.START_FAILED ->
             "Review the requirements and try again later."
+        ShootEditorFeedbackCode.RESUME_STALE ->
+            "Review the shoot, then start again when it is ready."
+        ShootEditorFeedbackCode.RESUME_FAILED ->
+            "Try resuming the session again later."
     }
     return ShootEditorFeedbackText(status, guidance)
 }
@@ -259,6 +269,7 @@ internal fun ShootEditorScreen(
     onRequestImport: (String) -> Unit,
     onRequestReorder: (List<String>) -> Unit,
     onRequestStart: () -> Unit,
+    onRequestResume: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var label by rememberSaveable { mutableStateOf("") }
@@ -337,7 +348,8 @@ internal fun ShootEditorScreen(
                 val operationPending = state is ShootEditorUiState.AllocatingImport ||
                     state is ShootEditorUiState.Importing ||
                     state is ShootEditorUiState.Reordering ||
-                    state is ShootEditorUiState.Starting
+                    state is ShootEditorUiState.Starting ||
+                    state is ShootEditorUiState.Resuming
                 val deleting = snapshot.lifecycle == ShootPreparationLifecycle.DELETING
                 val full = references.size >= MAX_REFERENCES
                 val unresolvedImport = data.localReconciliationRequired ||
@@ -413,6 +425,25 @@ internal fun ShootEditorScreen(
                                     ?.let(onRequestReorder)
                             },
                         )
+                    }
+                }
+                if (snapshot.hasResumableSession) {
+                    item(key = "resume") {
+                        Button(
+                            onClick = onRequestResume,
+                            enabled = !operationPending,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = MIN_TOUCH_TARGET),
+                        ) {
+                            Text(
+                                if (state is ShootEditorUiState.Resuming) {
+                                    "Resuming session"
+                                } else {
+                                    "Resume session"
+                                },
+                            )
+                        }
                     }
                 }
                 item(key = "start") {
@@ -609,6 +640,7 @@ private fun operationStatus(state: ShootEditorUiState.Loaded): String? = when (s
     is ShootEditorUiState.Importing -> "Reference photo selection and import are in progress."
     is ShootEditorUiState.Reordering -> "Saving the reference order."
     is ShootEditorUiState.Starting -> "Starting the shoot."
+    is ShootEditorUiState.Resuming -> "Resuming session."
     is ShootEditorUiState.Empty,
     is ShootEditorUiState.Content,
     -> null
