@@ -1,6 +1,6 @@
 # ADR 0006: Room V4 Capture-File Journal Foundation
 
-- **Status:** Accepted architecture; Task 14B.1A checkpoints through Task 4 are implemented and verified, but the complete candidate is not yet dual-approved, committed, landed, or shipped
+- **Status:** Accepted architecture; the Task 14B.1A foundation landed at `57b33c9`, but final specification review returned `REQUEST_CHANGES` for a malformed residual-authority key; an uncommitted local repair awaits exact-byte review, and no product-shipped claim is made
 - **Date:** 2026-09-03
 - **Decision owner:** Product/architecture owner
 - **Scope:** Task 14B.1A Room V4 capture-file journal foundation only
@@ -122,7 +122,7 @@ The exact Task 4 candidate v5 patch SHA-256 is `377dc02c781ece2cf78e48f93c727d02
 - The cumulative Task 5 host gate passed JVM tests, lint, and debug, release, and Android-test assembly; V1–V3 and frozen V4 schema bytes remained exact, Room compiler payloads were absent from runtime classpaths and packaged dex, and emitted APK manifests retained no `INTERNET` permission.
 - Documentation candidate v1 found caller-list traversal before the unfinished-confirmation guard. Repair v1 was specification-rejected for a receipt-first bypass; repair v2 was specification-rejected because its nullable-timestamp guard did not enforce unfinished lifecycle authority. The final eight-scenario Pixel 6 method covers REGISTERED and CAPTURING with null or malformed non-null timestamps, each with and without a raw receipt. It failed on v2 with 3 reads and passed 1/1 after v3 moved the unavailable guard to explicit lifecycle state. Repair v3, SHA-256 `ed29acd613a890d213e398aaacf4a2d79512662ac0dbf88c411404fcfdb3bd3a`, received exact-byte specification `PASS` and engineering/security `APPROVED`; that approval covers only the two-file repair, not the complete landing candidate. The cumulative host gate then passed again with 635/635 JVM tests and zero lint errors. The current-byte integrated five-class Pixel 6 run executed 106 tests with 0 failures, 0 errors, and 10 expected skips, and left no matching test-database residue.
 
-Task 4 SHA-256 `377dc02c781ece2cf78e48f93c727d02ea9d41082a12229ff22803e97a306491` identifies only the three-file Task 4 Android-test candidate; repair-v3 SHA-256 `ed29acd613a890d213e398aaacf4a2d79512662ac0dbf88c411404fcfdb3bd3a` identifies only its two-file call-order repair. Neither identifies or approves the complete Task 14B.1A landing candidate. The implementation remains uncommitted and unshipped, and its final same-digest reviews are still required; no commit, push, or ship claim is made.
+Task 4 SHA-256 `377dc02c781ece2cf78e48f93c727d02ea9d41082a12229ff22803e97a306491` identifies only the three-file Task 4 Android-test candidate; repair-v3 SHA-256 `ed29acd613a890d213e398aaacf4a2d79512662ac0dbf88c411404fcfdb3bd3a` identifies only its two-file call-order repair. Neither identifies or approves the complete 43-path Task 14B.1A candidate that landed at `57b33c9`. Final review later reproduced a byte-equivalent `BLOB` residual-journal token that ordinary text equality missed and returned `REQUEST_CHANGES`. The uncommitted local query-and-regression repair passed a causal Pixel 6 RED/GREEN cycle and host/build gates but still requires exact-byte specification and engineering/security review; no product-shipped claim is made.
 
 ## Scope boundary
 

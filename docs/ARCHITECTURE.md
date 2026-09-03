@@ -1,6 +1,6 @@
 # Architecture Contract
 
-> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. An uncommitted, unshipped Task 14B.1A candidate moves local persistence to Room V4 and adds capture-file journal intent as a ninth guided-bootstrap authority family.** This is a logical authority foundation only. It adds no per-file effect admission, journal-transition API, camera/filesystem capture path, or MediaStore I/O, so Gate 2 is not yet passed.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. The Task 14B.1A Room V4 journal foundation landed at `57b33c9`, but final specification review returned `REQUEST_CHANGES` because ordinary text equality could miss byte-equivalent malformed `BLOB` residual-journal authority. An uncommitted local query-and-regression repair is under review.** This remains a logical authority foundation only. It adds no per-file effect admission, journal-transition API, camera/filesystem capture path, or MediaStore I/O, so Gate 2 is not yet passed and no product-shipped claim is made.
 
 ## Fixed MVP decisions
 

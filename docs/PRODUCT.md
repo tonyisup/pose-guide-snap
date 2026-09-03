@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. An uncommitted, unshipped Task 14B.1A candidate adds the local Room V4 capture-file journal foundation.** New attempts receive exactly three initial journal rows atomically, but logical `Started` state grants no camera, filesystem, or per-file effect authority. Unfinished confirmation is intentionally unavailable until Task 14B.1C. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. The Task 14B.1A Room V4 journal foundation landed at `57b33c9`, but final specification review returned `REQUEST_CHANGES`; an uncommitted local fail-closed repair is under review.** New attempts receive exactly three initial journal rows atomically, but logical `Started` state grants no camera, filesystem, or per-file effect authority. Unfinished confirmation is intentionally unavailable until Task 14B.1C. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Repository landing is not a product-shipped claim.
 
 ## Product goal
 

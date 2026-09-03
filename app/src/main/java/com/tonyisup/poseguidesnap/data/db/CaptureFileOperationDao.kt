@@ -17,7 +17,10 @@ internal interface CaptureFileOperationDao {
 
     // Value-insensitive residual-authority count for the Task 3D fail-closed confirmation guard;
     // deliberately scalar so malformed rows cannot be coerced or filtered during entity mapping.
-    @Query("SELECT COUNT(*) FROM capture_file_operations WHERE command_token = :commandToken")
+    @Query(
+        "SELECT COUNT(*) FROM capture_file_operations " +
+            "WHERE CAST(command_token AS BLOB) = CAST(:commandToken AS BLOB)",
+    )
     fun countOperationsForToken(commandToken: String): Long
 
     @Insert

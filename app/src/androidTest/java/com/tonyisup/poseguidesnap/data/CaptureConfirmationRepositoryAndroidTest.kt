@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
+import com.tonyisup.poseguidesnap.data.db.CaptureFileOperationStateTriggers
 import com.tonyisup.poseguidesnap.domain.session.CaptureAttempt
 import com.tonyisup.poseguidesnap.domain.session.CaptureToken
 import com.tonyisup.poseguidesnap.domain.session.CaptureTrigger
@@ -997,6 +998,64 @@ class CaptureConfirmationRepositoryAndroidTest {
         assertEquals(beforeRejectedReplay, fixture.sqlite.journalAuthoritySnapshot())
     }
 
+    @Test
+    fun confirmedReplayRejectsByteEquivalentBlobResidualJournalAuthority() {
+        val fixture = prepareUnregisteredAttempt("blob-residual-journal-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
+        fixture.sqlite.seedExpectingReservationJournalRows(
+            commandToken = fixture.command.token.value,
+            ordinals = listOf(0),
+            createdAtEpochMillis = 10L,
+            updatedAtEpochMillis = 20L,
+        )
+
+        fixture.sqlite.corruptJournalTokenStorageAsByteEquivalentBlob(
+            fixture.command.token.value,
+        )
+        assertEquals(
+            listOf(listOf("blob", fixture.command.token.value.encodeToByteArray().toHex())),
+            fixture.sqlite.rows(
+                "SELECT typeof(command_token), hex(command_token) " +
+                    "FROM capture_file_operations " +
+                    "WHERE CAST(command_token AS BLOB) = CAST(? AS BLOB)",
+                fixture.command.token.value,
+            ),
+        )
+        assertEquals(
+            listOf(listOf(0L)),
+            fixture.sqlite.rows(
+                "SELECT COUNT(*) FROM capture_file_operations WHERE command_token = ?",
+                fixture.command.token.value,
+            ),
+        )
+        assertEquals(
+            listOf(listOf(1L)),
+            fixture.sqlite.rows(
+                "SELECT COUNT(*) FROM capture_file_operations " +
+                    "WHERE CAST(command_token AS BLOB) = CAST(? AS BLOB)",
+                fixture.command.token.value,
+            ),
+        )
+        assertEquals(
+            1,
+            fixture.sqlite.rows("PRAGMA foreign_key_check(`capture_file_operations`)").size,
+        )
+        val before = fixture.sqlite.journalAuthoritySnapshot()
+
+        assertEquals(
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            ),
+            fixture.repository.confirmAndAdvance(
+                fixture.command,
+                fixture.privateOutputs,
+                fixture.exportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(before, fixture.sqlite.journalAuthoritySnapshot())
+    }
+
     private fun ConfirmationFixture.installAbortingTestTrigger(
         name: String,
         timingAndEvent: String,
@@ -1620,6 +1679,28 @@ class CaptureConfirmationRepositoryAndroidTest {
                 ),
             )
         }
+    }
+
+    private fun SupportSQLiteDatabase.corruptJournalTokenStorageAsByteEquivalentBlob(
+        commandToken: String,
+    ) {
+        execSQL("DROP TRIGGER IF EXISTS `trigger_capture_file_operations_state_insert`")
+        execSQL("DROP TRIGGER IF EXISTS `trigger_capture_file_operations_state_update`")
+        execSQL("PRAGMA foreign_keys = OFF")
+        try {
+            execSQL(
+                "UPDATE capture_file_operations SET command_token = CAST(? AS BLOB) " +
+                    "WHERE command_token = ?",
+                arrayOf<Any>(commandToken, commandToken),
+            )
+        } finally {
+            execSQL("PRAGMA foreign_keys = ON")
+            CaptureFileOperationStateTriggers.install(this)
+        }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
+        "%02X".format(byte.toInt() and 0xff)
     }
 
     private fun SupportSQLiteDatabase.seedCoherentConfirmedConfirmationGraph(

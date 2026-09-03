@@ -369,7 +369,9 @@ Then prove:
 
 **Task 5 documentation-review remediation:** documentation candidate v1 at SHA-256 `61153394876c5fbc04655e2bf6033a230758998c8bb9e084039fca44985ea205` was rejected because the master status overstated Task 4's approval scope and production copied caller lists before the unfinished-confirmation guard. Repair v1 at SHA-256 `5a50a69780c7dec93e683ff4b68ff5f3eb6ee417969eaa5b8242b007d7d4081d` was specification-rejected for a receipt-first bypass. Repair v2 at SHA-256 `d31b524a27d090e254b5f76d7a479d35619696b48df2cae6103efe5197c70a8a` was specification-rejected because its nullable-timestamp guard did not enforce unfinished lifecycle authority. Repair v3 now performs exact command-token attempt lookup and token/pose matching before unconditional `REGISTERED`/`CAPTURING` rejection, which precedes caller-list element traversal, receipt lookup, journal reads, session/shoot loads, deletion classification, broader-authority reads, and writes. On the `CONFIRMED` path, caller snapshot/validation still precedes receipt and residual-journal adjudication, and any residual journal row fails closed with `JOURNAL_AUTHORITY_INVALID`. The final eight-scenario Pixel 6 method covers both unfinished lifecycles with null or malformed non-null timestamps, each with and without a raw receipt. It failed on v2 (`expected 0`, observed 3 reads) and passed `1/1` on v3. Repair v3, SHA-256 `ed29acd613a890d213e398aaacf4a2d79512662ac0dbf88c411404fcfdb3bd3a`, received exact-byte specification `PASS` and engineering/security `APPROVED`; that approval covers only the two-file repair, not the complete landing candidate. The post-v3 cumulative host gate passed all five Gradle tasks, JVM `635/635`, and lint with zero errors. The current-byte integrated five-class Pixel 6 run executed `106` tests with `0` failures, `0` errors, and `10` expected skips, and exact UUID teardown left no matching test-database residue.
 
-**Landing:** Stage one complete 14B.1A candidate. Compute its exact staged digest. Require specification `PASS` and engineering/security `APPROVED` on those same bytes. Any change invalidates both. Commit and push only after both gates pass.
+**Post-landing correction:** the exact 43-path candidate landed at `57b33c9` while its final review was in flight. That review became procedurally stale, and a narrow continuation returned `REQUEST_CHANGES`: `countOperationsForToken(...)` used ordinary text equality, so a physically representable byte-equivalent `BLOB` journal key could be counted as absent and allow receipt-backed `AlreadyApplied` despite residual authority. A deterministic Android regression proved ordinary text count `0`, byte-correlated count `1`, and one FK violation; it failed on `57b33c9` with `AlreadyApplied`. The uncommitted production repair uses `CAST(command_token AS BLOB) = CAST(:commandToken AS BLOB)`; the same exact regression then passed `1/1`, cleanup left no matching test-database residue, and the cumulative host/build gate passed with JVM `635/635` and zero lint errors. The correction and updated documentation still require exact-byte specification and engineering/security review before any follow-up commit or push.
+
+**Corrective landing:** Freeze the complete post-`57b33c9` correction as one exact candidate. Require specification `PASS` and engineering/security `APPROVED` on the same bytes. Any change invalidates both. Commit and push the correction only after explicit authorization.
 
 Suggested subject:
 
@@ -392,7 +394,7 @@ Task 14B.1A is complete only when:
 - deletion timestamps cannot move backward relative to stable journal authority;
 - unfinished confirmation cannot consume caller-selected metadata or mutate authority;
 - no production per-file transition, physical effect, or user-facing capture path exists;
-- exact candidate bytes pass both reviews before commit/push.
+- exact corrected candidate bytes pass both reviews before any follow-up commit/push.
 
 ## Approval requested
 

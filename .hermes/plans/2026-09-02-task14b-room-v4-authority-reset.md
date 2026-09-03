@@ -1,6 +1,6 @@
 # Task 14B Room V4 Authority Reset
 
-**Status:** Approved on 2026-09-02 after four rejected exact-plan revisions. Task 14B.1A checkpoints are implemented and verified in the working tree; its complete landing candidate still awaits final same-digest review. Tasks 14B.1B and 14B.1C remain deferred.
+**Status:** Approved on 2026-09-02 after four rejected exact-plan revisions. The complete 43-path Task 14B.1A foundation landed at `57b33c9`, but final specification review returned `REQUEST_CHANGES` for a malformed byte-equivalent `BLOB` residual-journal key. An uncommitted local fail-closed repair awaits exact-byte review. Tasks 14B.1B and 14B.1C remain deferred, Gate 2 remains incomplete, and no product-shipped claim is made.
 
 **Baseline:** `main` at `6997861487d3d7dd31c21b9a947d1ccde3b2f418`.
 
