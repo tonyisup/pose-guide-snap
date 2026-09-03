@@ -1,5 +1,8 @@
 package com.tonyisup.poseguidesnap.data
 
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
+import com.tonyisup.poseguidesnap.domain.session.PrivateOutputIdentity
+
 object GuidedSessionBootstrapMapper {
     fun map(rows: GuidedSessionBootstrapRows): GuidedSessionBootstrapResult {
         val hasConstituentRows = rows.shoot != null ||
@@ -8,7 +11,8 @@ object GuidedSessionBootstrapMapper {
             rows.privateOutputs.isNotEmpty() ||
             rows.receipts.isNotEmpty() ||
             rows.outboxes.isNotEmpty() ||
-            rows.exportOutputs.isNotEmpty()
+            rows.exportOutputs.isNotEmpty() ||
+            rows.captureFileOperations.isNotEmpty()
         val session = rows.session
         if (session == null) {
             return if (hasConstituentRows) {
@@ -69,11 +73,18 @@ object GuidedSessionBootstrapMapper {
         if (rows.exportOutputs.any { it.commandToken !in attemptTokens }) {
             return rejected(GuidedSessionBootstrapRejectionReason.INVALID_EXPORT_AUTHORITY)
         }
+        if (rows.captureFileOperations.any { it.commandToken !in attemptTokens }) {
+            return rejected(
+                GuidedSessionBootstrapRejectionReason.INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+            )
+        }
 
         val privateByToken = rows.privateOutputs.groupBy(GuidedPrivateOutputAuthorityRow::commandToken)
         val receiptsByToken = rows.receipts.groupBy(GuidedReceiptAuthorityRow::commandToken)
         val outboxesByToken = rows.outboxes.groupBy(GuidedOutboxAuthorityRow::commandToken)
         val exportsByToken = rows.exportOutputs.groupBy(GuidedExportOutputAuthorityRow::commandToken)
+        val captureFilesByToken = rows.captureFileOperations
+            .groupBy(GuidedCaptureFileOperationAuthorityRow::commandToken)
         var unresolvedExportCount = 0
         var confirmedAttemptCount = 0
         val blockingAttempts = mutableListOf<GuidedAttemptAuthorityRow>()
@@ -83,7 +94,15 @@ object GuidedSessionBootstrapMapper {
             val receipts = receiptsByToken[attempt.commandToken].orEmpty()
             val outboxes = outboxesByToken[attempt.commandToken].orEmpty()
             val exports = exportsByToken[attempt.commandToken].orEmpty()
+            val captureFiles = captureFilesByToken[attempt.commandToken].orEmpty()
             if (attempt.lifecycleState != CONFIRMED) {
+                val state = requireNotNull(attempt.stateOrNull())
+                if (!captureFiles.haveCoherentCaptureFileOperationShape(attempt, state)) {
+                    return rejected(
+                        GuidedSessionBootstrapRejectionReason
+                            .INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+                    )
+                }
                 blockingAttempts += attempt
                 if (privateOutputs.isNotEmpty()) {
                     return rejected(
@@ -100,6 +119,12 @@ object GuidedSessionBootstrapMapper {
                     return rejected(GuidedSessionBootstrapRejectionReason.INVALID_EXPORT_AUTHORITY)
                 }
                 return@forEach
+            }
+
+            if (captureFiles.isNotEmpty()) {
+                return rejected(
+                    GuidedSessionBootstrapRejectionReason.INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+                )
             }
 
             val confirmedAt = attempt.confirmedAtEpochMillis!!
@@ -263,6 +288,68 @@ object GuidedSessionBootstrapMapper {
                         attempt.confirmedAtEpochMillis == null
                 }
         }
+    }
+
+    private fun List<GuidedCaptureFileOperationAuthorityRow>
+        .haveCoherentCaptureFileOperationShape(
+            attempt: GuidedAttemptAuthorityRow,
+            attemptState: GuidedCaptureAttemptState,
+        ): Boolean {
+        if (size != BURST_SIZE || !isWellFormedUtf16(attempt.commandToken)) return false
+        val captureToken = CaptureToken(attempt.commandToken)
+        val rowsAreCoherent = indices.all { ordinal ->
+            val operation = this[ordinal]
+            val stage = CaptureFileOperationStage.entries
+                .firstOrNull { it.name == operation.stage }
+                ?: return@all false
+            val failure = operation.lastFailureCode?.let { storedFailure ->
+                CaptureFileFailureCode.entries.firstOrNull { it.name == storedFailure }
+                    ?: return@all false
+            }
+            val expectedPaths = CaptureFileOperationPaths.forIdentity(
+                PrivateOutputIdentity(captureToken, ordinal),
+            )
+            operation.hasCanonicalStorage &&
+                operation.commandToken == attempt.commandToken &&
+                operation.burstOrdinal == ordinal &&
+                operation.relativeFinalPath == expectedPaths.relativeFinalPath &&
+                operation.relativeTempPath == expectedPaths.relativeTempPath &&
+                operation.relativeQuarantinePath == expectedPaths.relativeQuarantinePath &&
+                operation.createdAtEpochMillis == attempt.createdAtEpochMillis &&
+                operation.updatedAtEpochMillis in
+                operation.createdAtEpochMillis..attempt.updatedAtEpochMillis &&
+                (
+                    operation.capturedAtEpochMillis == null ||
+                        operation.capturedAtEpochMillis in
+                        operation.createdAtEpochMillis..operation.updatedAtEpochMillis
+                    ) &&
+                hasValidCaptureFileOperationEvidence(
+                    stage,
+                    operation.byteCount,
+                    operation.sha256,
+                    operation.capturedAtEpochMillis,
+                ) &&
+                operation.reconciliationRequired == (failure != null) &&
+                when (attemptState) {
+                    GuidedCaptureAttemptState.REGISTERED ->
+                        stage == CaptureFileOperationStage.EXPECTING_RESERVATION &&
+                            failure == null &&
+                            operation.updatedAtEpochMillis == operation.createdAtEpochMillis
+                    GuidedCaptureAttemptState.CAPTURING -> {
+                        val hasProgressed =
+                            stage != CaptureFileOperationStage.EXPECTING_RESERVATION ||
+                                failure != null ||
+                                operation.updatedAtEpochMillis > operation.createdAtEpochMillis
+                        !hasProgressed ||
+                            (
+                                operation.updatedAtEpochMillis > operation.createdAtEpochMillis &&
+                                    operation.updatedAtEpochMillis == attempt.updatedAtEpochMillis
+                                )
+                    }
+                    GuidedCaptureAttemptState.CONFIRMED -> false
+                }
+        }
+        return rowsAreCoherent
     }
 
     private fun List<GuidedPrivateOutputAuthorityRow>.haveCoherentPrivateOutputShape(

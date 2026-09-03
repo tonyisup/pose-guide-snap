@@ -8,7 +8,7 @@
 
 **Tech Stack:** Native Android; Kotlin; Jetpack Compose; CameraX Preview/ImageAnalysis/ImageCapture; direct LiteRT `1.4.2` with MoveNet MultiPose Lightning float16 v1; coroutines/Flow; Room; DataStore for preferences; Android TextToSpeech; JUnit, kotlinx-coroutines-test, Turbine, Compose UI tests, and Android instrumentation tests.
 
-**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly validated. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`; and Task 14A.2 active-session discovery is committed at `478547f`. Task 14A.3 adds stale-safe editor Resume and one retained bootstrap-before-camera owner; its authorized evidence remains bounded and does not complete Gate 2. Standalone Task 13 speech is deferred until the Task 15 coordinator exists. This revision supersedes every MediaPipe-specific instruction below.
+**Status:** Product and architecture defaults are approved, including the current app-private capture-authority revision that supersedes the earlier MediaStore-authoritative wording. Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly validated. Task 9 uses direct bundled MoveNet/LiteRT after exact-artifact review proved MediaPipe Tasks Core's mandatory Google metrics path incompatible with the no-analytics/no-network contract. Task 10's reviewed camera slice is committed at `605c904`; Task 11A's reviewed Room capture authority is committed at `5335466`; Task 11B's reviewed transactional reference-import backend is committed at `d368e96`; Task 12's reviewed Room V3 preparation workflow is committed through `5bc15c3`; and Task 14A.2 active-session discovery is committed at `478547f`. Task 14A.3 adds stale-safe editor Resume and one retained bootstrap-before-camera owner; its authorized evidence remains bounded and does not complete Gate 2. Task 14B.1 is now split into 14B.1A/1B/1C. Task 14B.1A checkpoints through Task 4 are implemented and boundedly verified. Only the exact three-file Task 4 Android-test candidate v5 was dual-approved; the complete Task 14B.1A landing candidate remains unfrozen, unreviewed, uncommitted, unlanded, and unshipped. No camera/filesystem capture behavior was added. Standalone Task 13 speech is deferred until the Task 15 coordinator exists. This revision supersedes every MediaPipe-specific instruction below.
 
 ---
 
@@ -233,6 +233,7 @@ Planned Room entities:
 - `PoseEntity(id, shootId, sortIndex, label, referenceAssetPath, landmarkPayload, detectorVersion, mirrorAllowed, validationStatus)`
 - `SessionEntity(id, shootId, startedAt, completedAt, state)`
 - `CaptureAttemptEntity(commandToken, sessionId, poseId, triggerType, state, reconciliationRequired, startedAt, confirmedAt)`
+- `CaptureFileOperationEntity(commandToken, burstOrdinal, deterministic final/temp/quarantine paths, stage, optional byte-count/hash/capture-time evidence, failure/reconciliation state, createdAt, updatedAt)`; Room V4 atomically creates exactly three initial rows for each new attempt, but Task 14B.1A exposes no production per-file transition API
 - `PrivateCaptureOutputEntity(commandToken, burstOrdinal, deterministicPrivatePath, durabilityState, scoreSummary, capturedAt, integrityMetadata)`
 - `CaptureConfirmationReceiptEntity(commandToken, appliedAt)` with a unique command-token key
 - `CaptureExportOutboxEntity(commandToken, state, createdAt, updatedAt, retryMetadata)` with exactly one committed row per confirmed command
@@ -630,11 +631,38 @@ The planned rule content is fail-closed, not an allowlist of selected sensitive 
 
 ### Task 14: Add unified durable capture and MediaStore export outbox
 
-**Status:** Split into separately approved ownership changes after broader plans proved unreviewable.
+**Status:** Split into separately approved ownership changes after broader plans proved unreviewable. Task 14B.1 is further split into 14B.1A, 14B.1B, and 14B.1C so logical attempt start, physical-effect admission, and first-application confirmation cannot be conflated.
 
 **Tasks 14A.1–14A.3 implemented:** One immutable, redacted, exact-session Room V3 bootstrap validates the complete persisted attempt/receipt/private/outbox/export graph under one immediate transaction; transactional discovery finds the at-most-one active session for an exact shoot; and editor-scoped stale-safe Resume plus one retained bootstrap-before-camera owner compose those reads for both Start and Resume. See ADR 0005 and the Task 14A.1–14A.3 validation records.
 
-**Next boundary:** Add capture-file reconciliation and the guided-session coordinator without weakening bootstrap authority. MediaStore and deletion completion each require later independent approval.
+#### Task 14B.1A — Room V4 journal foundation
+
+**Status:** Implementation checkpoints through Task 4 are verified in the current working tree, but the complete Task 14B.1A landing candidate has not yet received final same-digest reviews and is not committed, landed, pushed, or shipped. The exact three-file Task 4 Android-test candidate v5, SHA-256 `377dc02c781ece2cf78e48f93c727d02ea9d41082a12229ff22803e97a306491`, received specification `PASS` and engineering/security `APPROVED` without byte drift.
+
+Room V4 adds `capture_file_operations` and atomically pairs every new capture attempt with exactly three initial `EXPECTING_RESERVATION` journal rows. Logical `markCaptureAttemptStarted(...)` may move coherent Room state to `CAPTURING`, but `Started` is explicitly non-authorizing: it grants no CameraX or filesystem capability. Guided-session bootstrap validates the journal as its ninth authority family. Stable initial rows do not block deletion, but their complete validated clocks participate losslessly in deletion's causal maximum.
+
+Malformed storage classes, row shapes, ownership, cardinality, paths, or authority graphs fail closed. Confirmation of unfinished `REGISTERED` or `CAPTURING` attempts returns `JOURNAL_CONFIRMATION_NOT_AVAILABLE` before caller-list traversal; confirmed replay with any residual journal authority returns `JOURNAL_AUTHORITY_INVALID`; only coherent receipt-backed confirmed replay with zero journal rows remains `AlreadyApplied`. V3→V4 preserves existing authority and creates no journal rows for migrated attempts.
+
+**Evidence boundary:** Android-test compilation passed; JVM tests passed 635/635; the integrated Pixel 6 five-class suite executed 105 tests with 0 failures, 0 errors, and 10 expected skips; the migration class passed 10/10. The earlier Task 3C/3D device suite passed 79/79 twice with 10 expected skips. This evidence covers the Room authority foundation only. No camera/filesystem capture behavior or personal-media access was implemented or proven. See ADR 0006 and `.hermes/plans/2026-09-02-task14b1a-room-v4-journal-foundation.md`.
+
+#### Task 14B.1B — Per-file physical-effect admission and reconciliation
+
+**Status:** Deferred until Task 14B.1A lands.
+
+Add typed per-ordinal Room compare-and-set transitions and reconciliation requests, define the admitted/stable stage matrix, and interlock deletion only while an admitted physical effect is unsettled. Prove deletion-first, admission-first, and settlement-first serialization while keeping confirmation fail-closed. This task establishes Room admission/reconciliation authority only; it does not invoke CameraX or perform filesystem work.
+
+#### Task 14B.1C — Journal-owned first-application confirmation
+
+**Status:** Deferred until Task 14B.1B lands.
+
+Remove caller-selected private-output authority from first application. Derive exactly three immutable outputs from coherent ordered `FINAL_DURABLE` journal rows, then atomically create the confirmed outputs, receipt, outbox, and export rows while consuming exactly three transient journal rows. Preserve rollback, idempotency, deletion, clock, concurrency, and residual-authority rejection. Camera/filesystem composition remains out of scope.
+
+#### Remaining Task 14B sequence
+
+1. **Task 14B.2:** attempt settlement and restart reconstruction.
+2. **Task 14B.3:** journaled app-private filesystem adapter and bounded startup reconciliation.
+3. **Task 15:** guided-session coordinator; only this stage may order logical start → per-file admission → CameraX/filesystem effect → durable settlement.
+4. MediaStore export execution, deletion completion, and TTS remain separately approved later work.
 
 ### Task 15: Integrate the complete hands-free sequence
 
@@ -820,7 +848,7 @@ The approved first bounded phase executed **Tasks 1–8 only**:
 - produce a deterministic replay report,
 - stop before detector integration, camera, earbuds, or private image access.
 
-This yielded the core ownership boundary and causal tests without touching private device data. Task 9 then added the reviewed direct MoveNet/LiteRT boundary. Task 10 added the committed, authorized-Pixel CameraX pose slice at `605c904`, including the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. Task 11A added committed Room capture authority at `5335466`; Task 11B added the committed transactional reference-import backend at `d368e96`; Task 12 added committed Room V3 preparation plus the create → Photo Picker import → validate → reorder → durably start workflow through `5bc15c3`; and Task 14A.1 added atomic exact-session Room V3 reconstruction. Gate 2 remains unpassed. Active-session discovery/UI resume is next; standalone Task 13 speech is deferred into Task 15.
+This yielded the core ownership boundary and causal tests without touching private device data. Task 9 then added the reviewed direct MoveNet/LiteRT boundary. Task 10 added the committed, authorized-Pixel CameraX pose slice at `605c904`, including the fixed attributed reference, aligned live/reference skeletons, and internal candidate-capture mechanics. Task 11A added committed Room capture authority at `5335466`; Task 11B added the committed transactional reference-import backend at `d368e96`; Task 12 added committed Room V3 preparation plus the create → Photo Picker import → validate → reorder → durably start workflow through `5bc15c3`; and Tasks 14A.1–14A.3 added atomic exact-session reconstruction, active-session discovery, and stale-safe UI admission through current committed HEAD `6997861487d3d7dd31c21b9a947d1ccde3b2f418`. Task 14B.1A checkpoints through Task 4 are implemented and verified in the working tree. Only the exact three-file Task 4 candidate and exact two-file repair v3 received same-digest dual approval; the complete landing candidate still awaits final same-digest reviews and has not been committed, landed, pushed, or shipped. Gate 2 remains unpassed. Task 14B.1B per-file admission/reconciliation, Task 14B.1C journal-owned first application, later filesystem composition, and standalone speech remain deferred.
 
 ## Sources
 

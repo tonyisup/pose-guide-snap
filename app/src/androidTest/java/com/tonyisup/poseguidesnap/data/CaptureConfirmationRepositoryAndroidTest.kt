@@ -17,6 +17,7 @@ import kotlin.collections.AbstractList
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -39,6 +40,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         context.deleteDatabase(databaseName)
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun nonFinalConfirmationAtomicallyPersistsAuthorityAndAdvancesExactlyOnePose() {
         val fixture = prepareCapturingAttempt("non-final-token", poseCount = 2)
@@ -81,6 +83,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         assertCommittedOutputs(fixture)
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun finalPoseConfirmationCompletesSessionWhileRetainingValidCurrentIndex() {
         val fixture = prepareCapturingAttempt("final-token", poseCount = 1)
@@ -117,16 +120,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun exactDuplicateReturnsAlreadyAppliedWithoutChangingRowsOrTimestamps() {
-        val fixture = prepareCapturingAttempt("duplicate-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("duplicate-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         val before = fixture.sqlite.authoritySnapshot()
 
         assertEquals(
@@ -143,16 +138,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun exactDuplicateAfterDatabaseCloseAndReopenReturnsAlreadyApplied() {
-        var fixture = prepareCapturingAttempt("reopen-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        var fixture = prepareUnregisteredAttempt("reopen-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         val before = fixture.sqlite.authoritySnapshot()
         closeDatabase()
 
@@ -175,16 +162,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateFinalReceiptWithActiveSessionFailsLoudWithoutMutation() {
-        val fixture = prepareCapturingAttempt("final-active-token", poseCount = 1)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("final-active-token", poseCount = 1)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture, finalPose = true)
         fixture.sqlite.execSQL(
             "UPDATE shoot_sessions SET lifecycle_state = 'ACTIVE' WHERE session_id = ?",
             arrayOf<Any>(SESSION_ID),
@@ -198,16 +177,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateNonFinalReceiptWithRewoundSessionFailsLoudWithoutMutation() {
-        val fixture = prepareCapturingAttempt("rewound-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("rewound-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         fixture.sqlite.execSQL(
             "UPDATE shoot_sessions SET current_pose_index = 0 WHERE session_id = ?",
             arrayOf<Any>(SESSION_ID),
@@ -221,16 +192,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateNonFinalReceiptWithCompletedSessionButNoFinalReceiptFailsLoud() {
-        val fixture = prepareCapturingAttempt("missing-final-token", poseCount = 3)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("missing-final-token", poseCount = 3)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         fixture.sqlite.execSQL(
             "UPDATE shoot_sessions SET lifecycle_state = 'COMPLETED' WHERE session_id = ?",
             arrayOf<Any>(SESSION_ID),
@@ -244,18 +207,10 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateNonFinalReceiptAfterCoherentLaterAdvancementReturnsAlreadyApplied() {
-        val fixture = prepareCapturingAttempt("later-original-token", poseCount = 3)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
-        applyConfirmationAtCurrentPose(
-            fixture = fixture,
+        val fixture = prepareUnregisteredAttempt("later-original-token", poseCount = 3)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(
+            fixture,
             rawToken = "later-second-token",
             poseIndex = 1,
             attemptNumber = 1L,
@@ -277,16 +232,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateWithCorruptOutboxCreatedTimestampFailsLoudWithoutMutation() {
-        val fixture = prepareCapturingAttempt("outbox-created-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("outbox-created-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         fixture.sqlite.execSQL(
             "UPDATE capture_export_outboxes SET created_at_epoch_millis = 51 " +
                 "WHERE command_token = ?",
@@ -301,16 +248,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateWithCorruptExportOutputCreatedTimestampFailsLoudWithoutMutation() {
-        val fixture = prepareCapturingAttempt("export-created-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("export-created-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         fixture.sqlite.execSQL(
             "UPDATE capture_export_outputs SET created_at_epoch_millis = 51 " +
                 "WHERE command_token = ? AND burst_ordinal = 1",
@@ -325,16 +264,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateIgnoresPermittedMutableExportFieldsWithoutMutation() {
-        val fixture = prepareCapturingAttempt("mutable-export-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("mutable-export-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         fixture.sqlite.execSQL(
             "UPDATE capture_export_outboxes " +
                 "SET lifecycle_state = 'RETRY_PENDING', updated_at_epoch_millis = 700, " +
@@ -366,16 +297,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateWithChangedPrivateImmutableMetadataIsRejectedWithoutMutation() {
-        val fixture = prepareCapturingAttempt("private-conflict-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("private-conflict-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         val before = fixture.sqlite.authoritySnapshot()
         val changedPrivateOutputs = fixture.privateOutputs.mapIndexed { index, output ->
             if (index == 1) output.copy(relativePath = "private/retry/changed-1.jpg") else output
@@ -397,16 +320,8 @@ class CaptureConfirmationRepositoryAndroidTest {
 
     @Test
     fun duplicateWithChangedExportTargetMetadataIsRejectedWithoutMutation() {
-        val fixture = prepareCapturingAttempt("export-conflict-token", poseCount = 2)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            fixture.repository.confirmAndAdvance(
-                fixture.command,
-                fixture.privateOutputs,
-                fixture.exportTargets,
-                CONFIRMED_AT,
-            ),
-        )
+        val fixture = prepareUnregisteredAttempt("export-conflict-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
         val before = fixture.sqlite.authoritySnapshot()
         val changedExportTargets = fixture.exportTargets.mapIndexed { index, target ->
             if (index == 2) target.copy(intendedDisplayName = "changed-retry-name.jpg") else target
@@ -426,6 +341,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         assertEquals(before, fixture.sqlite.authoritySnapshot())
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun firstApplicationPersistsSingleCallerListSnapshotsDespiteLaterCallerMutation() {
         val fixture = prepareCapturingAttempt("mutable-input-token", poseCount = 2)
@@ -513,9 +429,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before WRONG_ATTEMPT_STATE; the
+        // journal-owned path re-establishes WRONG_ATTEMPT_STATE coverage in Task 14B.1C.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -534,9 +452,13 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before BlockedByDeletion; the
+        // journal-owned path re-establishes BlockedByDeletion coverage in Task 14B.1C.
         assertFirstApplicationResultWithoutMutation(
             fixture,
-            CaptureConfirmationResult.BlockedByDeletion,
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+            ),
         )
     }
 
@@ -555,9 +477,13 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before BlockedByDeletion; the
+        // journal-owned path re-establishes BlockedByDeletion coverage in Task 14B.1C.
         assertFirstApplicationResultWithoutMutation(
             fixture,
-            CaptureConfirmationResult.BlockedByDeletion,
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+            ),
         )
     }
 
@@ -574,9 +500,12 @@ class CaptureConfirmationRepositoryAndroidTest {
             arrayOf<Any>(fixture.command.token.value),
         )
 
-        assertFirstApplicationFailsLoudWithoutMutation(
+        // Task 3D: unfinished direct confirmation fail-closes before the invalid-deletion-
+        // generation fail-loud check; the journal-owned path re-establishes that coverage in
+        // Task 14B.1C.
+        assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            "capture confirmation deletion generation is invalid",
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -595,9 +524,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before INACTIVE_SESSION; the
+        // journal-owned path re-establishes INACTIVE_SESSION coverage in Task 14B.1C.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.INACTIVE_SESSION,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -616,9 +547,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before STALE_POSE; the
+        // journal-owned path re-establishes STALE_POSE coverage in Task 14B.1C.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.STALE_POSE,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -637,9 +570,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
 
-        assertFirstApplicationFailsLoudWithoutMutation(
+        // Task 3D: unfinished direct confirmation fail-closes before the pose-sequence-gap
+        // fail-loud check; the journal-owned path re-establishes that coverage in Task 14B.1C.
+        assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            "capture confirmation pose sequence has a gap",
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -651,9 +586,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             arrayOf<Any>(fixture.command.token.value),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before WRONG_ATTEMPT_STATE; the
+        // journal-owned path re-establishes WRONG_ATTEMPT_STATE coverage in Task 14B.1C.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -665,9 +602,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             arrayOf<Any>(fixture.command.token.value),
         )
 
+        // Task 3D: lifecycle remains authoritative even when a malformed row carries a
+        // confirmation timestamp. Unfinished direct confirmation remains unavailable.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
@@ -680,12 +619,15 @@ class CaptureConfirmationRepositoryAndroidTest {
             arrayOf<Any>(SHOOT_ID),
         )
 
+        // Task 3D: unfinished direct confirmation fail-closes before STALE_POSE; the
+        // journal-owned path re-establishes STALE_POSE coverage in Task 14B.1C.
         assertFirstApplicationRejectedWithoutMutation(
             fixture,
-            CaptureConfirmationRejectionReason.STALE_POSE,
+            CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun privateOutputInsertConstraintFailureRollsBackEntireConfirmationTransaction() {
         val fixture = prepareCapturingAttempt("late-private-insert-token", poseCount = 2)
@@ -705,6 +647,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun attemptCasFailureAfterPrivateOutputsRollsBackTriggerMutationAndWrites() {
         val fixture = prepareCapturingAttempt("late-attempt-cas-token", poseCount = 2)
@@ -730,6 +673,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun sessionCasFailureAfterAttemptConfirmationRollsBackTriggerMutationAndWrites() {
         val fixture = prepareCapturingAttempt("late-session-cas-token", poseCount = 2)
@@ -758,6 +702,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun receiptInsertConstraintFailureRollsBackPriorWritesAndCasTransitions() {
         val fixture = prepareCapturingAttempt("late-receipt-insert-token", poseCount = 2)
@@ -776,6 +721,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun outboxInsertConstraintFailureRollsBackReceiptAndEarlierWrites() {
         val fixture = prepareCapturingAttempt("late-outbox-insert-token", poseCount = 2)
@@ -794,6 +740,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun laterExportOutputInsertConstraintFailureRollsBackEntireConfirmationTransaction() {
         val fixture = prepareCapturingAttempt("late-export-insert-token", poseCount = 2)
@@ -813,6 +760,7 @@ class CaptureConfirmationRepositoryAndroidTest {
         )
     }
 
+    @Ignore("Deferred to Task 14B.1C: direct first-application confirmation is fail-closed unavailable after Task 3D")
     @Test
     fun exportCardinalityFailureAfterThreeInsertsRollsBackTriggerDeletionAndWrites() {
         val fixture = prepareCapturingAttempt("late-cardinality-token", poseCount = 2)
@@ -835,6 +783,218 @@ class CaptureConfirmationRepositoryAndroidTest {
                 CaptureConfirmationRejectionReason.TRANSACTION_CARDINALITY_FAILURE,
             ),
         )
+    }
+
+    // Task 3D journal gates. First-application through the journal-owned confirmation path and
+    // journal writer-fault cases are explicitly deferred to Task 14B.1C; these tests only pin
+    // the fail-closed gates (unfinished attempts are unavailable, residual journal authority
+    // rejects receipt-backed replay).
+    @Test
+    fun unfinishedConfirmationIsUnavailableWithoutMutation() {
+        // Scenario 1: REGISTERED attempt (registration journal rows present) confirmed with
+        // deliberately malformed caller metadata. The unavailable gate fires after exact attempt
+        // resolution but before even reading caller-list elements; the dedicated traversal test
+        // below pins that stronger boundary directly.
+        val registeredFixture = prepareRegisteredAttempt("journal-unavailable-registered-token", poseCount = 2)
+        assertEquals(
+            listOf(listOf("REGISTERED", null)),
+            registeredFixture.sqlite.rows(
+                "SELECT lifecycle_state, confirmed_at_epoch_millis FROM capture_attempts " +
+                    "WHERE command_token = ?",
+                registeredFixture.command.token.value,
+            ),
+        )
+        val malformedPrivateOutputs = registeredFixture.privateOutputs.map { output ->
+            output.copy(relativePath = "private/malformed/capture-${output.identity.ordinal}.jpg")
+        }
+        val malformedExportTargets = registeredFixture.exportTargets.map { target ->
+            target.copy(intendedDisplayName = "malformed-${target.identity.ordinal}.jpg")
+        }
+        assertJournalGateRejectsWithoutMutation(
+            fixture = registeredFixture,
+            privateOutputs = malformedPrivateOutputs,
+            exportTargets = malformedExportTargets,
+            reason = CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+        )
+        resetDatabaseForNextScenario()
+
+        // Scenario 2: CAPTURING attempt with zero journal rows (migrated-V3 shape).
+        val migratedFixture = prepareCapturingAttempt("journal-unavailable-migrated-token", poseCount = 2)
+        migratedFixture.sqlite.execSQL(
+            "DELETE FROM capture_file_operations WHERE command_token = ?",
+            arrayOf<Any>(migratedFixture.command.token.value),
+        )
+        assertEquals(
+            listOf(listOf(0L)),
+            migratedFixture.sqlite.rows(
+                "SELECT COUNT(*) FROM capture_file_operations WHERE command_token = ?",
+                migratedFixture.command.token.value,
+            ),
+        )
+        assertJournalGateRejectsWithoutMutation(
+            fixture = migratedFixture,
+            privateOutputs = migratedFixture.privateOutputs,
+            exportTargets = migratedFixture.exportTargets,
+            reason = CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+        )
+        resetDatabaseForNextScenario()
+
+        // Scenario 3: CAPTURING attempt with seeded EXPECTING_RESERVATION journal rows. The
+        // unavailable gate still fires (before the journal authority count is even consulted)
+        // and the seeded journal rows remain byte-identical.
+        val journaledFixture = prepareCapturingAttempt("journal-unavailable-journaled-token", poseCount = 2)
+        journaledFixture.sqlite.execSQL(
+            "DELETE FROM capture_file_operations WHERE command_token = ?",
+            arrayOf<Any>(journaledFixture.command.token.value),
+        )
+        journaledFixture.sqlite.seedExpectingReservationJournalRows(
+            commandToken = journaledFixture.command.token.value,
+            ordinals = listOf(0, 1, 2),
+            createdAtEpochMillis = 10L,
+            updatedAtEpochMillis = 20L,
+        )
+        assertJournalGateRejectsWithoutMutation(
+            fixture = journaledFixture,
+            privateOutputs = journaledFixture.privateOutputs,
+            exportTargets = journaledFixture.exportTargets,
+            reason = CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+        )
+    }
+
+    @Test
+    fun unfinishedConfirmationRejectsBeforeCallerListElementTraversal() {
+        val registeredFixture = prepareRegisteredAttempt(
+            "journal-no-traversal-registered-token",
+            poseCount = 2,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(registeredFixture)
+        resetDatabaseForNextScenario()
+
+        val capturingFixture = prepareCapturingAttempt(
+            "journal-no-traversal-capturing-token",
+            poseCount = 2,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(capturingFixture)
+        resetDatabaseForNextScenario()
+
+        val registeredWithReceiptFixture = prepareRegisteredAttempt(
+            "journal-no-traversal-registered-receipt-token",
+            poseCount = 2,
+        )
+        registeredWithReceiptFixture.sqlite.seedRawConfirmationReceipt(
+            registeredWithReceiptFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            registeredWithReceiptFixture,
+        )
+        resetDatabaseForNextScenario()
+
+        val capturingWithReceiptFixture = prepareCapturingAttempt(
+            "journal-no-traversal-capturing-receipt-token",
+            poseCount = 2,
+        )
+        capturingWithReceiptFixture.sqlite.seedRawConfirmationReceipt(
+            capturingWithReceiptFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            capturingWithReceiptFixture,
+        )
+        resetDatabaseForNextScenario()
+
+        val preconfirmedRegisteredFixture = prepareRegisteredAttempt(
+            "journal-no-traversal-preconfirmed-registered-token",
+            poseCount = 2,
+        )
+        preconfirmedRegisteredFixture.sqlite.seedMalformedConfirmationTimestamp(
+            preconfirmedRegisteredFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            preconfirmedRegisteredFixture,
+        )
+        resetDatabaseForNextScenario()
+
+        val preconfirmedCapturingFixture = prepareCapturingAttempt(
+            "journal-no-traversal-preconfirmed-capturing-token",
+            poseCount = 2,
+        )
+        preconfirmedCapturingFixture.sqlite.seedMalformedConfirmationTimestamp(
+            preconfirmedCapturingFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            preconfirmedCapturingFixture,
+        )
+        resetDatabaseForNextScenario()
+
+        val preconfirmedRegisteredWithReceiptFixture = prepareRegisteredAttempt(
+            "journal-no-traversal-preconfirmed-registered-receipt-token",
+            poseCount = 2,
+        )
+        preconfirmedRegisteredWithReceiptFixture.sqlite.seedMalformedConfirmationTimestamp(
+            preconfirmedRegisteredWithReceiptFixture.command.token.value,
+        )
+        preconfirmedRegisteredWithReceiptFixture.sqlite.seedRawConfirmationReceipt(
+            preconfirmedRegisteredWithReceiptFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            preconfirmedRegisteredWithReceiptFixture,
+        )
+        resetDatabaseForNextScenario()
+
+        val preconfirmedCapturingWithReceiptFixture = prepareCapturingAttempt(
+            "journal-no-traversal-preconfirmed-capturing-receipt-token",
+            poseCount = 2,
+        )
+        preconfirmedCapturingWithReceiptFixture.sqlite.seedMalformedConfirmationTimestamp(
+            preconfirmedCapturingWithReceiptFixture.command.token.value,
+        )
+        preconfirmedCapturingWithReceiptFixture.sqlite.seedRawConfirmationReceipt(
+            preconfirmedCapturingWithReceiptFixture.command.token.value,
+        )
+        assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+            preconfirmedCapturingWithReceiptFixture,
+        )
+    }
+
+    @Test
+    fun confirmedReplayRejectsResidualJournalAuthority() {
+        val fixture = prepareUnregisteredAttempt("residual-journal-token", poseCount = 2)
+        fixture.sqlite.seedCoherentConfirmedConfirmationGraph(fixture)
+
+        // Positive control: with zero journal rows the receipt-backed replay classification is
+        // unchanged and returns immutable AlreadyApplied evidence.
+        val beforeReplay = fixture.sqlite.journalAuthoritySnapshot()
+        assertEquals(
+            CaptureConfirmationResult.AlreadyApplied,
+            fixture.repository.confirmAndAdvance(
+                fixture.command,
+                fixture.privateOutputs,
+                fixture.exportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(beforeReplay, fixture.sqlite.journalAuthoritySnapshot())
+
+        // A single residual journal row for the same token fail-closes the replay before
+        // duplicate classification, without mutating anything — including the residual row.
+        fixture.sqlite.seedExpectingReservationJournalRows(
+            commandToken = fixture.command.token.value,
+            ordinals = listOf(0),
+            createdAtEpochMillis = 10L,
+            updatedAtEpochMillis = 20L,
+        )
+        val beforeRejectedReplay = fixture.sqlite.journalAuthoritySnapshot()
+        assertEquals(
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            ),
+            fixture.repository.confirmAndAdvance(
+                fixture.command,
+                fixture.privateOutputs,
+                fixture.exportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(beforeRejectedReplay, fixture.sqlite.journalAuthoritySnapshot())
     }
 
     private fun ConfirmationFixture.installAbortingTestTrigger(
@@ -1136,11 +1296,11 @@ class CaptureConfirmationRepositoryAndroidTest {
     ): ConfirmationFixture {
         val fixture = prepareRegisteredAttempt(rawToken, poseCount)
         assertEquals(
-            CaptureStartAuthorizationResult.Started,
-            fixture.repository.authorizeCaptureStart(
+            CaptureAttemptStartResult.Started,
+            fixture.repository.markCaptureAttemptStarted(
                 SESSION_ID,
                 fixture.command.token,
-                authorizedAtEpochMillis = 20L,
+                startedAtEpochMillis = 20L,
             ),
         )
         return fixture
@@ -1204,11 +1364,11 @@ class CaptureConfirmationRepositoryAndroidTest {
             ),
         )
         assertEquals(
-            CaptureStartAuthorizationResult.Started,
-            fixture.repository.authorizeCaptureStart(
+            CaptureAttemptStartResult.Started,
+            fixture.repository.markCaptureAttemptStarted(
                 SESSION_ID,
                 captureCommand.token,
-                authorizedAtEpochMillis = confirmedAtEpochMillis - 1L,
+                startedAtEpochMillis = confirmedAtEpochMillis - 1L,
             ),
         )
         val confirmationCommand = ShootEffect.ConfirmAndAdvanceCapture(
@@ -1360,6 +1520,232 @@ class CaptureConfirmationRepositoryAndroidTest {
         val exportTargets: List<CaptureExportTarget>,
     )
 
+    private fun resetDatabaseForNextScenario() {
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+    }
+
+    private fun assertUnfinishedConfirmationRejectsBeforeCallerListElementTraversal(
+        fixture: ConfirmationFixture,
+    ) {
+        val privateOutputs = ElementReadCountingList(fixture.privateOutputs)
+        val exportTargets = ElementReadCountingList(fixture.exportTargets)
+        val before = fixture.sqlite.journalAuthoritySnapshot()
+
+        val result = fixture.repository.confirmAndAdvance(
+            fixture.command,
+            privateOutputs,
+            exportTargets,
+            CONFIRMED_AT,
+        )
+
+        assertEquals(0, privateOutputs.elementReadCount)
+        assertEquals(0, exportTargets.elementReadCount)
+        assertEquals(
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+            ),
+            result,
+        )
+        assertEquals(before, fixture.sqlite.journalAuthoritySnapshot())
+    }
+
+    private fun assertJournalGateRejectsWithoutMutation(
+        fixture: ConfirmationFixture,
+        privateOutputs: List<DurablePrivateOutput>,
+        exportTargets: List<CaptureExportTarget>,
+        reason: CaptureConfirmationRejectionReason,
+    ) {
+        val before = fixture.sqlite.journalAuthoritySnapshot()
+
+        assertEquals(
+            CaptureConfirmationResult.Rejected(reason),
+            fixture.repository.confirmAndAdvance(
+                fixture.command,
+                privateOutputs,
+                exportTargets,
+                CONFIRMED_AT,
+            ),
+        )
+        assertEquals(before, fixture.sqlite.journalAuthoritySnapshot())
+        assertNoConfirmationRows(fixture)
+    }
+
+    private fun SupportSQLiteDatabase.seedRawConfirmationReceipt(commandToken: String) {
+        execSQL(
+            """
+            INSERT INTO capture_confirmation_receipts
+                (command_token, from_pose_index, to_pose_index,
+                 applied_deletion_generation, applied_at_epoch_millis)
+            VALUES (?, 0, 1, ?, ?)
+            """.trimIndent(),
+            arrayOf<Any>(commandToken, DELETION_GENERATION, CONFIRMED_AT),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.seedMalformedConfirmationTimestamp(commandToken: String) {
+        execSQL(
+            "UPDATE capture_attempts SET confirmed_at_epoch_millis = 49 WHERE command_token = ?",
+            arrayOf<Any>(commandToken),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.seedExpectingReservationJournalRows(
+        commandToken: String,
+        ordinals: List<Int>,
+        createdAtEpochMillis: Long,
+        updatedAtEpochMillis: Long,
+    ) {
+        ordinals.forEach { ordinal ->
+            val paths = CaptureFileOperationPaths.forIdentity(
+                PrivateOutputIdentity(CaptureToken(commandToken), ordinal),
+            )
+            execSQL(
+                """
+                INSERT INTO capture_file_operations
+                    (command_token, burst_ordinal, relative_final_path, relative_temp_path,
+                     relative_quarantine_path, stage, byte_count, sha256,
+                     captured_at_epoch_millis, last_failure_code, reconciliation_required,
+                     created_at_epoch_millis, updated_at_epoch_millis)
+                VALUES (?, ?, ?, ?, ?, 'EXPECTING_RESERVATION', NULL, NULL, NULL, NULL, 0, ?, ?)
+                """.trimIndent(),
+                arrayOf<Any>(
+                    commandToken,
+                    ordinal,
+                    paths.relativeFinalPath,
+                    paths.relativeTempPath,
+                    paths.relativeQuarantinePath,
+                    createdAtEpochMillis,
+                    updatedAtEpochMillis,
+                ),
+            )
+        }
+    }
+
+    private fun SupportSQLiteDatabase.seedCoherentConfirmedConfirmationGraph(
+        fixture: ConfirmationFixture,
+        rawToken: String = fixture.command.token.value,
+        poseIndex: Int = 0,
+        attemptNumber: Long = 0L,
+        confirmedAtEpochMillis: Long = CONFIRMED_AT,
+        finalPose: Boolean = false,
+    ) {
+        val token = CaptureToken(rawToken)
+        val commandToken = token.value
+        execSQL(
+            """
+            INSERT INTO capture_attempts
+                (command_token, session_id, pose_id, pose_index, attempt_number, trigger_type,
+                 lifecycle_state, reconciliation_required, captured_deletion_generation,
+                 created_at_epoch_millis, updated_at_epoch_millis, confirmed_at_epoch_millis)
+            VALUES (?, ?, ?, ?, ?, 'MANUAL', 'CONFIRMED', 0, ?, 10, ?, ?)
+            """.trimIndent(),
+            arrayOf<Any>(
+                commandToken,
+                SESSION_ID,
+                "pose-$poseIndex",
+                poseIndex,
+                attemptNumber,
+                DELETION_GENERATION,
+                confirmedAtEpochMillis,
+                confirmedAtEpochMillis,
+            ),
+        )
+        privateOutputs(token).forEach { output ->
+            execSQL(
+                """
+                INSERT INTO private_capture_outputs
+                    (command_token, burst_ordinal, relative_path, byte_count, durability_state,
+                     captured_at_epoch_millis, integrity_metadata)
+                VALUES (?, ?, ?, ?, 'DURABLE', ?, ?)
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    commandToken,
+                    output.identity.ordinal,
+                    output.relativePath,
+                    output.byteCount,
+                    output.capturedAtEpochMillis,
+                    output.integrityMetadata,
+                ),
+            )
+        }
+        execSQL(
+            """
+            INSERT INTO capture_confirmation_receipts
+                (command_token, from_pose_index, to_pose_index,
+                 applied_deletion_generation, applied_at_epoch_millis)
+            VALUES (?, ?, ?, ?, ?)
+            """.trimIndent(),
+            arrayOf<Any?>(
+                commandToken,
+                poseIndex,
+                if (finalPose) null else poseIndex + 1,
+                DELETION_GENERATION,
+                confirmedAtEpochMillis,
+            ),
+        )
+        execSQL(
+            """
+            INSERT INTO capture_export_outboxes
+                (command_token, lifecycle_state, created_at_epoch_millis,
+                 updated_at_epoch_millis, retry_metadata)
+            VALUES (?, 'PENDING', ?, ?, NULL)
+            """.trimIndent(),
+            arrayOf<Any>(commandToken, confirmedAtEpochMillis, confirmedAtEpochMillis),
+        )
+        exportTargets(token).forEach { target ->
+            execSQL(
+                """
+                INSERT INTO capture_export_outputs
+                    (command_token, burst_ordinal, target_collection_uri, target_volume,
+                     intended_display_name, intended_relative_path, intended_mime_type,
+                     lifecycle_state, claim_token, media_uri_string, ambiguity_state,
+                     deletion_generation, created_at_epoch_millis, updated_at_epoch_millis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, 'NONE', ?, ?, ?)
+                """.trimIndent(),
+                arrayOf<Any>(
+                    commandToken,
+                    target.identity.ordinal,
+                    target.targetCollectionUri,
+                    target.targetVolume,
+                    target.intendedDisplayName,
+                    target.intendedRelativePath,
+                    target.intendedMimeType,
+                    DELETION_GENERATION,
+                    confirmedAtEpochMillis,
+                    confirmedAtEpochMillis,
+                ),
+            )
+        }
+        if (finalPose) {
+            execSQL(
+                "UPDATE shoot_sessions SET current_pose_index = ?, next_attempt_number = ?, " +
+                    "lifecycle_state = 'COMPLETED', updated_at_epoch_millis = ? " +
+                    "WHERE session_id = ?",
+                arrayOf<Any>(poseIndex, attemptNumber + 1L, confirmedAtEpochMillis, SESSION_ID),
+            )
+        } else {
+            execSQL(
+                "UPDATE shoot_sessions SET current_pose_index = ?, next_attempt_number = ?, " +
+                    "updated_at_epoch_millis = ? WHERE session_id = ?",
+                arrayOf<Any>(poseIndex + 1, attemptNumber + 1L, confirmedAtEpochMillis, SESSION_ID),
+            )
+        }
+    }
+
+    private fun SupportSQLiteDatabase.journalAuthoritySnapshot(): JournalAuthoritySnapshot =
+        JournalAuthoritySnapshot(
+            authority = authoritySnapshot(),
+            fileOperations = rows(
+                "SELECT * FROM capture_file_operations ORDER BY command_token, burst_ordinal",
+            ),
+        )
+
+    private data class JournalAuthoritySnapshot(
+        val authority: AuthoritySnapshot,
+        val fileOperations: List<List<Any?>>,
+    )
+
     private data class AuthoritySnapshot(
         val shoots: List<List<Any?>>,
         val poses: List<List<Any?>>,
@@ -1401,6 +1787,21 @@ class CaptureConfirmationRepositoryAndroidTest {
 
         fun currentValues(): List<T> =
             if (firstTraversalComplete) laterValues else firstTraversalValues
+    }
+
+    private class ElementReadCountingList<T>(
+        private val values: List<T>,
+    ) : AbstractList<T>() {
+        var elementReadCount: Int = 0
+            private set
+
+        override val size: Int
+            get() = values.size
+
+        override fun get(index: Int): T {
+            elementReadCount += 1
+            return values[index]
+        }
     }
 
     companion object {

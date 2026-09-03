@@ -4,7 +4,10 @@ import com.tonyisup.poseguidesnap.data.db.CaptureAttemptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureConfirmationReceiptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutboxEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutputEntity
+import com.tonyisup.poseguidesnap.data.db.CaptureFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.PrivateCaptureOutputEntity
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
+import com.tonyisup.poseguidesnap.domain.session.PrivateOutputIdentity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportIntentEntity
 import com.tonyisup.poseguidesnap.data.db.ShootEntity
@@ -30,6 +33,16 @@ class AuthorityEntityToStringTest {
             fileOperationPaths.relativeTempPath,
             fileOperationPaths.relativeQuarantinePath,
             fileOperationSha256,
+        )
+        val captureFileToken = sensitive("capture-file-operation.command-token", "tokens/")
+        val captureFileIdentity = PrivateOutputIdentity(CaptureToken(captureFileToken), 1)
+        val captureFilePaths = CaptureFileOperationPaths.forIdentity(captureFileIdentity)
+        val captureFileSha256 = "cd".repeat(32)
+        sensitiveMarkers += listOf(
+            captureFilePaths.relativeFinalPath,
+            captureFilePaths.relativeTempPath,
+            captureFilePaths.relativeQuarantinePath,
+            captureFileSha256,
         )
 
         val entities = listOf(
@@ -82,6 +95,21 @@ class AuthorityEntityToStringTest {
                 createdAtEpochMillis = 211L,
                 updatedAtEpochMillis = 212L,
             ) to "ReferenceImportFileOperationEntity(redacted)",
+            CaptureFileOperationEntity(
+                commandToken = captureFileToken,
+                burstOrdinal = captureFileIdentity.ordinal,
+                relativeFinalPath = captureFilePaths.relativeFinalPath,
+                relativeTempPath = captureFilePaths.relativeTempPath,
+                relativeQuarantinePath = captureFilePaths.relativeQuarantinePath,
+                stage = CaptureFileOperationStage.TEMP_SYNCED,
+                byteCount = 220L,
+                sha256 = captureFileSha256,
+                capturedAtEpochMillis = 221L,
+                lastFailureCode = CaptureFileFailureCode.FILE_SYNC_FAILED,
+                reconciliationRequired = true,
+                createdAtEpochMillis = 219L,
+                updatedAtEpochMillis = 222L,
+            ) to "CaptureFileOperationEntity(redacted)",
             ShootSessionEntity(
                 sessionId = sensitive("shoot-session.session-id", "sessions/"),
                 shootId = sensitive("shoot-session.shoot-id", "shoots/"),
@@ -155,9 +183,9 @@ class AuthorityEntityToStringTest {
             ) to "CaptureExportOutputEntity(redacted)",
         )
 
-        assertEquals("all ten V2 Room entity types must be covered", 10, entities.size)
-        assertEquals("every String/String? constructor field needs its own marker", 49, sensitiveMarkers.size)
-        assertEquals("sensitive markers must be distinctive", 49, sensitiveMarkers.toSet().size)
+        assertEquals("all eleven V4 Room entity types must be covered", 11, entities.size)
+        assertEquals("every String/String? constructor field needs its own marker", 54, sensitiveMarkers.size)
+        assertEquals("sensitive markers must be distinctive", 54, sensitiveMarkers.toSet().size)
 
         entities.forEach { (entity, expected) ->
             val rendered = entity.toString()

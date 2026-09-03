@@ -19,8 +19,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CaptureExportOutputEntity::class,
         ReferenceImportIntentEntity::class,
         ReferenceImportFileOperationEntity::class,
+        CaptureFileOperationEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +36,8 @@ abstract class AppDatabase : RoomDatabase() {
     internal abstract fun referenceImportDao(): ReferenceImportDao
 
     internal abstract fun referenceImportFileOperationDao(): ReferenceImportFileOperationDao
+
+    internal abstract fun captureFileOperationDao(): CaptureFileOperationDao
 
     internal abstract fun shootPreparationDao(): ShootPreparationDao
 
@@ -281,15 +284,53 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `capture_file_operations` (
+                        `command_token` TEXT NOT NULL,
+                        `burst_ordinal` INTEGER NOT NULL,
+                        `relative_final_path` TEXT NOT NULL,
+                        `relative_temp_path` TEXT NOT NULL,
+                        `relative_quarantine_path` TEXT NOT NULL,
+                        `stage` TEXT NOT NULL,
+                        `byte_count` INTEGER,
+                        `sha256` TEXT,
+                        `captured_at_epoch_millis` INTEGER,
+                        `last_failure_code` TEXT,
+                        `reconciliation_required` INTEGER NOT NULL,
+                        `created_at_epoch_millis` INTEGER NOT NULL,
+                        `updated_at_epoch_millis` INTEGER NOT NULL,
+                        PRIMARY KEY(`command_token`, `burst_ordinal`),
+                        FOREIGN KEY(`command_token`) REFERENCES `capture_attempts`(`command_token`)
+                            ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_capture_file_operations_stage` " +
+                        "ON `capture_file_operations` (`stage`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_capture_file_operations_reconciliation_required` ON " +
+                        "`capture_file_operations` (`reconciliation_required`)",
+                )
+            }
+        }
+
         private val AUTHORITY_SCHEMA_CALLBACK = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 AuthorityOrdinalTriggers.install(db)
                 ActiveSessionAuthorityTriggers.install(db)
+                CaptureFileOperationStateTriggers.install(db)
             }
 
             override fun onOpen(db: SupportSQLiteDatabase) {
                 AuthorityOrdinalTriggers.install(db)
                 ActiveSessionAuthorityTriggers.install(db)
+                CaptureFileOperationStateTriggers.install(db)
             }
         }
 
@@ -303,7 +344,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 databaseName,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(AUTHORITY_SCHEMA_CALLBACK)
                 .build()
     }

@@ -130,6 +130,7 @@ internal class RoomStartedSessionBootstrapWorkflow(
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_SESSION_AUTHORITY,
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_POSE_AUTHORITY,
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_ATTEMPT_AUTHORITY,
+            com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_PRIVATE_OUTPUT_AUTHORITY,
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_RECEIPT_AUTHORITY,
             com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason.INVALID_OUTBOX_AUTHORITY,

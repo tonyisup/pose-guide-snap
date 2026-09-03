@@ -4,6 +4,7 @@ import com.tonyisup.poseguidesnap.data.db.CaptureAttemptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureConfirmationReceiptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutboxEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutputEntity
+import com.tonyisup.poseguidesnap.data.db.CaptureFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.PrivateCaptureOutputEntity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportIntentEntity
@@ -15,7 +16,7 @@ import org.junit.Test
 
 class AuthorityEntityCounterTypeTest {
     @Test
-    fun persistedNumericFieldsExposeTheCompleteV3GetterWidths() {
+    fun persistedNumericFieldsExposeTheCompleteV4GetterWidths() {
         val actual = mapOf(
             "ShootEntity.createdAtEpochMillis" to
                 ShootEntity::class.java.getMethod("getCreatedAtEpochMillis").returnType,
@@ -45,6 +46,19 @@ class AuthorityEntityCounterTypeTest {
                     .getMethod("getCreatedAtEpochMillis").returnType,
             "ReferenceImportFileOperationEntity.updatedAtEpochMillis" to
                 ReferenceImportFileOperationEntity::class.java
+                    .getMethod("getUpdatedAtEpochMillis").returnType,
+            "CaptureFileOperationEntity.burstOrdinal" to
+                CaptureFileOperationEntity::class.java.getMethod("getBurstOrdinal").returnType,
+            "CaptureFileOperationEntity.byteCount" to
+                CaptureFileOperationEntity::class.java.getMethod("getByteCount").returnType,
+            "CaptureFileOperationEntity.capturedAtEpochMillis" to
+                CaptureFileOperationEntity::class.java
+                    .getMethod("getCapturedAtEpochMillis").returnType,
+            "CaptureFileOperationEntity.createdAtEpochMillis" to
+                CaptureFileOperationEntity::class.java
+                    .getMethod("getCreatedAtEpochMillis").returnType,
+            "CaptureFileOperationEntity.updatedAtEpochMillis" to
+                CaptureFileOperationEntity::class.java
                     .getMethod("getUpdatedAtEpochMillis").returnType,
             "ShootSessionEntity.currentPoseIndex" to
                 ShootSessionEntity::class.java.getMethod("getCurrentPoseIndex").returnType,
@@ -114,6 +128,11 @@ class AuthorityEntityCounterTypeTest {
             "ReferenceImportFileOperationEntity.byteCount" to boxedLong,
             "ReferenceImportFileOperationEntity.createdAtEpochMillis" to primitiveLong,
             "ReferenceImportFileOperationEntity.updatedAtEpochMillis" to primitiveLong,
+            "CaptureFileOperationEntity.burstOrdinal" to primitiveInt,
+            "CaptureFileOperationEntity.byteCount" to boxedLong,
+            "CaptureFileOperationEntity.capturedAtEpochMillis" to boxedLong,
+            "CaptureFileOperationEntity.createdAtEpochMillis" to primitiveLong,
+            "CaptureFileOperationEntity.updatedAtEpochMillis" to primitiveLong,
             "ShootSessionEntity.currentPoseIndex" to primitiveInt,
             "ShootSessionEntity.nextAttemptNumber" to primitiveLong,
             "ShootSessionEntity.createdAtEpochMillis" to primitiveLong,

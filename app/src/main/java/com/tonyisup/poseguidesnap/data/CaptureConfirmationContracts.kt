@@ -81,6 +81,8 @@ enum class CaptureConfirmationRejectionReason {
     STALE_POSE,
     TRANSACTION_CAS_FAILED,
     TRANSACTION_CARDINALITY_FAILURE,
+    JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+    JOURNAL_AUTHORITY_INVALID,
 }
 
 internal object CaptureConfirmationPolicy {
@@ -110,7 +112,7 @@ internal object CaptureConfirmationPolicy {
     }
 }
 
-private fun isNormalizedPrivateRelativePath(value: String): Boolean {
+internal fun isNormalizedPrivateRelativePath(value: String): Boolean {
     if (value.isBlank() || value.indexOf('\u0000') >= 0 || hasDrivePrefix(value)) return false
     if (value.startsWith('/') || value.startsWith('\\')) return false
     return value.split('/', '\\').all { segment ->

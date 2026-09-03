@@ -28,6 +28,16 @@ internal object AuthorityOrdinalTriggers {
             table = "capture_export_outputs",
             event = Event.UPDATE,
         ),
+        definition(
+            name = "trigger_capture_file_operations_burst_ordinal_insert",
+            table = "capture_file_operations",
+            event = Event.INSERT,
+        ),
+        definition(
+            name = "trigger_capture_file_operations_burst_ordinal_update",
+            table = "capture_file_operations",
+            event = Event.UPDATE,
+        ),
     )
 
     fun install(database: SupportSQLiteDatabase) {

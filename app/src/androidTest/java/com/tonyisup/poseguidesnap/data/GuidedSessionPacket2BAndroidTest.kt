@@ -14,6 +14,7 @@ import com.tonyisup.poseguidesnap.data.db.CaptureAttemptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureConfirmationReceiptEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutboxEntity
 import com.tonyisup.poseguidesnap.data.db.CaptureExportOutputEntity
+import com.tonyisup.poseguidesnap.data.db.CaptureFileOperationEntity
 import com.tonyisup.poseguidesnap.data.db.GuidedSessionDao
 import com.tonyisup.poseguidesnap.data.db.PrivateCaptureOutputEntity
 import com.tonyisup.poseguidesnap.data.db.ReferenceImportFileOperationEntity
@@ -61,8 +62,9 @@ import org.junit.runner.RunWith
         CaptureExportOutputEntity::class,
         ReferenceImportIntentEntity::class,
         ReferenceImportFileOperationEntity::class,
+        CaptureFileOperationEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 internal abstract class GuidedSessionPacket2BDatabase : RoomDatabase() {
@@ -90,7 +92,8 @@ class GuidedSessionPacket2BAndroidTest {
         shootId = "shoot-$suffix"
         sessionId = "session-$suffix"
         commandTokenValue = "command-$suffix"
-        context.deleteDatabase(databaseName)
+        context.deleteRoomTestDatabase(databaseName)
+        assertNoTestDatabaseResidue()
     }
 
     @After
@@ -101,31 +104,27 @@ class GuidedSessionPacket2BAndroidTest {
         readerDatabase = null
         writerDatabase?.close()
         writerDatabase = null
-        context.deleteDatabase(databaseName)
-        assertFalse(context.databaseList().contains(databaseName))
+        context.deleteRoomTestDatabase(databaseName)
+        assertNoTestDatabaseResidue()
     }
 
     @Test
     fun immediateBootstrapBlocksConfirmationWriterAndReturnsCompletePreThenPostState() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        val confirmation = prepareCapturingAttempt(writer)
+        prepareCapturingAttempt(writer)
         val gate = SecondBootstrapSelectGate()
         val reader = openReader(gate)
         val expectedPre = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         assertTrue(GuidedSessionBootstrapMapper.map(expectedPre) is GuidedSessionBootstrapResult.ReconciliationRequired)
 
+        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
+        // seeded directly (journal-owned path lands in 14B.1C).
         val exclusion = proveImmediateWriterExclusion(gate) {
-            RoomShootRepository(writer).confirmAndAdvance(
-                command = confirmation,
-                privateOutputs = durableOutputs(commandToken),
-                exportTargets = exportTargets(commandToken),
-                confirmedAtEpochMillis = 30L,
-            )
+            writer.openHelper.writableDatabase.commitConfirmedAuthorityInTransaction()
         }
 
         assertCompleteRowsEqual(expectedPre, exclusion.readerRows)
-        assertEquals(CaptureConfirmationResult.Applied, exclusion.writerResult)
 
         val postRows = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         val post = GuidedSessionBootstrapMapper.map(postRows)
@@ -147,7 +146,9 @@ class GuidedSessionPacket2BAndroidTest {
     fun immediateBootstrapBlocksDeletionWriterAndReturnsCompletePreThenPostState() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        confirmPreparedAttempt(writer)
+        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
+        // seeded directly (journal-owned path lands in 14B.1C).
+        writer.openHelper.writableDatabase.seedConfirmedAuthorityGraph()
         val gate = SecondBootstrapSelectGate()
         val reader = openReader(gate)
         val expectedPre = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
@@ -177,18 +178,12 @@ class GuidedSessionPacket2BAndroidTest {
         val writer = openWriter()
         val sqlite = writer.openHelper.writableDatabase
         sqlite.seedBaseAuthority()
-        val confirmation = prepareCapturingAttempt(writer)
+        prepareCapturingAttempt(writer)
         val preSession = sqlite.safeSessionFacts()
 
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            RoomShootRepository(writer).confirmAndAdvance(
-                command = confirmation,
-                privateOutputs = durableOutputs(commandToken),
-                exportTargets = exportTargets(commandToken),
-                confirmedAtEpochMillis = 30L,
-            ),
-        )
+        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
+        // seeded directly (journal-owned path lands in 14B.1C).
+        sqlite.commitConfirmedAuthorityInTransaction()
         val postReceipt = sqlite.safeReceiptFacts()
 
         assertEquals(SafeSessionFacts(0, 1L, "ACTIVE"), preSession)
@@ -201,7 +196,9 @@ class GuidedSessionPacket2BAndroidTest {
         val writer = openWriter()
         val sqlite = writer.openHelper.writableDatabase
         sqlite.seedBaseAuthority()
-        confirmPreparedAttempt(writer)
+        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
+        // seeded directly (journal-owned path lands in 14B.1C).
+        sqlite.seedConfirmedAuthorityGraph()
         val preSession = sqlite.safeSessionFacts()
         val preShoot = sqlite.safeShootFacts()
 
@@ -220,7 +217,9 @@ class GuidedSessionPacket2BAndroidTest {
     fun repeatedBootstrapsAreReadOnlyAcrossEveryV3AuthorityTableAndSchema() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        confirmPreparedAttempt(writer)
+        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
+        // seeded directly (journal-owned path lands in 14B.1C).
+        writer.openHelper.writableDatabase.seedConfirmedAuthorityGraph()
         val reader = openReader(SecondBootstrapSelectGate())
         val sqlite = reader.openHelper.writableDatabase
         val expected = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
@@ -245,6 +244,49 @@ class GuidedSessionPacket2BAndroidTest {
         assertArrayEquals("bootstrap changed sqlite_master", before.schemaDigest, after.schemaDigest)
         assertEquals(before.totalChanges, after.totalChanges)
         assertEquals(before.dataVersion, after.dataVersion)
+    }
+
+    @Test
+    fun packet2BSnapshotIncludesEmptyJournalFamilyDigest() {
+        val writer = openWriter()
+        val sqlite = writer.openHelper.writableDatabase
+        sqlite.seedBaseAuthority()
+        // Seed a minimal REGISTERED attempt via raw SQL so no journal rows exist yet: API
+        // registration inserts burst ordinals 0..2 and would collide with the manual insert below.
+        sqlite.seedRegisteredAttemptWithoutJournalRows()
+        val before = sqlite.readOnlyEvidence()
+        assertTrue(before.tableDigests.containsKey("capture_file_operations"))
+
+        sqlite.execSQL(
+            """
+            INSERT INTO capture_file_operations
+                (command_token, burst_ordinal, relative_final_path, relative_temp_path,
+                 relative_quarantine_path, stage, byte_count, sha256,
+                 captured_at_epoch_millis, last_failure_code, reconciliation_required,
+                 created_at_epoch_millis, updated_at_epoch_millis)
+            VALUES (?, 0, ?, ?, ?, 'EXPECTING_RESERVATION', NULL, NULL, NULL, NULL, 0, 25, 25)
+            """.trimIndent(),
+            arrayOf<Any>(
+                commandTokenValue,
+                "final/$commandTokenValue/0.jpg",
+                "temp/$commandTokenValue/0.tmp",
+                "quarantine/$commandTokenValue/0.bin",
+            ),
+        )
+        val after = sqlite.readOnlyEvidence()
+
+        assertFalse(
+            "journal insert did not change the capture_file_operations digest",
+            before.tableDigests.getValue("capture_file_operations")
+                .contentEquals(after.tableDigests.getValue("capture_file_operations")),
+        )
+        AUTHORITY_TABLES.filter { it != "capture_file_operations" }.forEach { table ->
+            assertArrayEquals(
+                "journal insert changed unrelated authority table $table",
+                before.tableDigests.getValue(table),
+                after.tableDigests.getValue(table),
+            )
+        }
     }
 
     private fun openWriter(): AppDatabase = AppDatabase.create(context, databaseName).also { database ->
@@ -336,8 +378,8 @@ class GuidedSessionPacket2BAndroidTest {
             repository.registerCaptureAttempt(sessionId, capture, 10L),
         )
         assertEquals(
-            CaptureStartAuthorizationResult.Started,
-            repository.authorizeCaptureStart(sessionId, commandToken, 20L),
+            CaptureAttemptStartResult.Started,
+            repository.markCaptureAttemptStarted(sessionId, commandToken, 20L),
         )
         return ShootEffect.ConfirmAndAdvanceCapture(
             token = commandToken,
@@ -426,6 +468,123 @@ class GuidedSessionPacket2BAndroidTest {
             """.trimIndent(),
             arrayOf<Any>(sessionId, shootId),
         )
+    }
+
+    private fun SupportSQLiteDatabase.seedRegisteredAttemptWithoutJournalRows() {
+        execSQL(
+            """
+            INSERT INTO capture_attempts
+                (command_token, session_id, pose_id, pose_index, attempt_number, trigger_type,
+                 lifecycle_state, reconciliation_required, captured_deletion_generation,
+                 created_at_epoch_millis, updated_at_epoch_millis, confirmed_at_epoch_millis)
+            VALUES (?, ?, ?, 0, 0, 'MANUAL', 'REGISTERED', 0, 0, 10, 10, NULL)
+            """.trimIndent(),
+            arrayOf<Any>(commandTokenValue, sessionId, poseId(0)),
+        )
+        execSQL(
+            """
+            UPDATE shoot_sessions
+            SET next_attempt_number = 1, updated_at_epoch_millis = 10
+            WHERE session_id = ?
+            """.trimIndent(),
+            arrayOf<Any>(sessionId),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.seedConfirmedAuthorityGraph() {
+        execSQL(
+            """
+            INSERT INTO capture_attempts
+                (command_token, session_id, pose_id, pose_index, attempt_number, trigger_type,
+                 lifecycle_state, reconciliation_required, captured_deletion_generation,
+                 created_at_epoch_millis, updated_at_epoch_millis, confirmed_at_epoch_millis)
+            VALUES (?, ?, ?, 0, 0, 'MANUAL', 'CONFIRMED', 0, 0, 10, 30, 30)
+            """.trimIndent(),
+            arrayOf<Any>(commandTokenValue, sessionId, poseId(0)),
+        )
+        durableOutputs(commandToken).forEach { output ->
+            execSQL(
+                """
+                INSERT INTO private_capture_outputs
+                    (command_token, burst_ordinal, relative_path, byte_count, durability_state,
+                     captured_at_epoch_millis, integrity_metadata)
+                VALUES (?, ?, ?, ?, 'DURABLE', ?, ?)
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    commandTokenValue,
+                    output.identity.ordinal,
+                    output.relativePath,
+                    output.byteCount,
+                    output.capturedAtEpochMillis,
+                    output.integrityMetadata,
+                ),
+            )
+        }
+        execSQL(
+            """
+            INSERT INTO capture_confirmation_receipts
+                (command_token, from_pose_index, to_pose_index,
+                 applied_deletion_generation, applied_at_epoch_millis)
+            VALUES (?, 0, 1, 0, 30)
+            """.trimIndent(),
+            arrayOf<Any>(commandTokenValue),
+        )
+        execSQL(
+            """
+            INSERT INTO capture_export_outboxes
+                (command_token, lifecycle_state, created_at_epoch_millis,
+                 updated_at_epoch_millis, retry_metadata)
+            VALUES (?, 'PENDING', 30, 30, NULL)
+            """.trimIndent(),
+            arrayOf<Any>(commandTokenValue),
+        )
+        exportTargets(commandToken).forEach { target ->
+            execSQL(
+                """
+                INSERT INTO capture_export_outputs
+                    (command_token, burst_ordinal, target_collection_uri, target_volume,
+                     intended_display_name, intended_relative_path, intended_mime_type,
+                     lifecycle_state, claim_token, media_uri_string, ambiguity_state,
+                     deletion_generation, created_at_epoch_millis, updated_at_epoch_millis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, 'NONE', 0, 30, 30)
+                """.trimIndent(),
+                arrayOf<Any>(
+                    commandTokenValue,
+                    target.identity.ordinal,
+                    target.targetCollectionUri,
+                    target.targetVolume,
+                    target.intendedDisplayName,
+                    target.intendedRelativePath,
+                    target.intendedMimeType,
+                ),
+            )
+        }
+        execSQL(
+            """
+            UPDATE shoot_sessions
+            SET current_pose_index = 1, next_attempt_number = 1, updated_at_epoch_millis = 30
+            WHERE session_id = ?
+            """.trimIndent(),
+            arrayOf<Any>(sessionId),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.commitConfirmedAuthorityInTransaction() {
+        beginTransaction()
+        try {
+            execSQL(
+                "DELETE FROM capture_file_operations WHERE command_token = ?",
+                arrayOf<Any>(commandTokenValue),
+            )
+            execSQL(
+                "DELETE FROM capture_attempts WHERE command_token = ?",
+                arrayOf<Any>(commandTokenValue),
+            )
+            seedConfirmedAuthorityGraph()
+            setTransactionSuccessful()
+        } finally {
+            endTransaction()
+        }
     }
 
     private fun SupportSQLiteDatabase.safeSessionFacts(): SafeSessionFacts =
@@ -556,6 +715,13 @@ class GuidedSessionPacket2BAndroidTest {
         assertEquals(expected.receipts, actual.receipts)
         assertEquals(expected.outboxes, actual.outboxes)
         assertEquals(expected.exportOutputs, actual.exportOutputs)
+        assertEquals(expected.captureFileOperations, actual.captureFileOperations)
+    }
+
+    private fun assertNoTestDatabaseResidue() {
+        assertFalse(context.databaseList().contains(databaseName))
+        val residue = context.roomTestDatabaseResidue(databaseName)
+        assertTrue("test database residue remains: ${residue.map { it.name }}", residue.isEmpty())
     }
 
     private fun MessageDigest.putByte(value: Byte) {
@@ -616,7 +782,7 @@ class GuidedSessionPacket2BAndroidTest {
     private companion object {
         const val SHORT_BLOCK_MILLIS = 300L
         const val LONG_TIMEOUT_SECONDS = 10L
-        const val EXPECTED_BOOTSTRAP_SELECT_COUNT = 8
+        const val EXPECTED_BOOTSTRAP_SELECT_COUNT = 9
         const val ROW_MARKER: Byte = 1
 
         val DIRECT_EXECUTOR = Executor { command -> command.run() }
@@ -631,6 +797,7 @@ class GuidedSessionPacket2BAndroidTest {
             "capture_export_outputs",
             "reference_import_intents",
             "reference_import_file_operations",
+            "capture_file_operations",
         )
     }
 }
@@ -684,4 +851,5 @@ private val BOOTSTRAP_FROM_MARKERS = listOf(
     " from capture_confirmation_receipts as receipt ",
     " from capture_export_outboxes as outbox ",
     " from capture_export_outputs as output ",
+    " from capture_file_operations as operation ",
 )

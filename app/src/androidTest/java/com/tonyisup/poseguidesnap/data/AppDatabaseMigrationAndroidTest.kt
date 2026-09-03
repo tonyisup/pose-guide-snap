@@ -1,12 +1,17 @@
 package com.tonyisup.poseguidesnap.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.data.db.AuthorityOrdinalTriggers
+import com.tonyisup.poseguidesnap.domain.session.CaptureAttempt
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
+import com.tonyisup.poseguidesnap.domain.session.CaptureTrigger
+import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -47,12 +52,34 @@ class AppDatabaseMigrationAndroidTest {
     }
 
     @Test
+    fun valueSnapshotDistinguishesTextValuesAfterEmbeddedNul() {
+        migrationHelper.createDatabase(databaseName, 3).use { database ->
+            database.execSQL("CREATE TEMP TABLE `snapshot_text_probe` (`value` TEXT NOT NULL)")
+            database.execSQL(
+                "INSERT INTO `snapshot_text_probe` (`value`) VALUES (?)",
+                arrayOf<Any?>("alpha\u0000one"),
+            )
+            database.execSQL(
+                "INSERT INTO `snapshot_text_probe` (`value`) VALUES (?)",
+                arrayOf<Any?>("alpha\u0000two"),
+            )
+
+            val rows = database.captureValueSnapshot(listOf("snapshot_text_probe"))
+                .tables.single().rows
+            assertEquals(2, rows.size)
+            assertEquals("text", rows[0].cells.single().storageClass)
+            assertEquals("text", rows[1].cells.single().storageClass)
+            assertEquals("616C706861006F6E65", rows[0].cells.single().encodedValue)
+            assertEquals("616C7068610074776F", rows[1].cells.single().encodedValue)
+            assertFalse(rows[0].cells.single() == rows[1].cells.single())
+        }
+    }
+
+    @Test
     fun migrationFromV1ThroughV2ToV3PreservesLegacyCaptureAuthorityAndInstallsExactV3Contract() {
         migrationHelper.createDatabase(databaseName, 1).use { v1 ->
             seedLegacyShootAndPose(v1)
             seedCaptureAuthority(v1)
-            AuthorityOrdinalTriggers.install(v1)
-            assertExactOrdinalTriggers(v1)
         }
 
         migrationHelper.runMigrationsAndValidate(
@@ -68,9 +95,9 @@ class AppDatabaseMigrationAndroidTest {
             assertReferenceImportFileOperationContract(migrated)
             assertCanonicalImportTablesOnly(migrated)
             assertForeignKeyCheckEmpty(migrated)
-            assertExactOrdinalTriggers(migrated)
         }
 
+        // Ordinal triggers are a V4-installed contract; installing the current trigger set on V1/V3 would reference capture_file_operations before that table exists.
         appDatabase = AppDatabase.create(context, databaseName)
         val reopened = checkNotNull(appDatabase).openHelper.writableDatabase
         assertV3ReferenceImportIntentContract(reopened)
@@ -98,6 +125,330 @@ class AppDatabaseMigrationAndroidTest {
             assertCanonicalImportTablesOnly(migrated)
             assertForeignKeyCheckEmpty(migrated)
         }
+    }
+
+    @Test
+    fun migrationFromV3ToV4CreatesEmptyJournalTableAndPreservesEveryV3Value() {
+        val v3Snapshot = migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedCaptureAuthority(v3)
+            seedV3ReferenceImportFixture(v3)
+            v3.captureValueSnapshot(V3_AUTHORITY_TABLES)
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertExactValueSnapshot(v3Snapshot, migrated)
+            assertLegacyPoseSurvived(migrated)
+            assertCaptureAuthoritySurvived(migrated)
+            assertMigratedIntentValues(migrated)
+            assertMigratedFileOperationValues(migrated)
+            assertV3ReferenceImportIntentContract(migrated)
+            assertReferenceImportFileOperationContract(migrated)
+            assertCanonicalImportTablesOnly(migrated)
+            assertCaptureFileOperationJournalEmpty(migrated)
+            assertCaptureFileOperationJournalContract(migrated)
+            assertForeignKeyCheckEmpty(migrated)
+        }
+    }
+
+    @Test
+    fun migratedV3RegisteredAttemptWithoutJournalRejectsBeforeCallerContentTraversalWithoutMutation() {
+        migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedUnfinishedCaptureAuthority(
+                v3,
+                lifecycleState = "REGISTERED",
+                updatedAtEpochMillis = CAPTURE_CREATED_AT,
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertCaptureFileOperationJournalEmpty(migrated)
+            assertForeignKeyCheckEmpty(migrated)
+        }
+
+        appDatabase = AppDatabase.create(context, databaseName)
+        val reopened = checkNotNull(appDatabase).openHelper.writableDatabase
+        val fixture = captureConfirmationFixture()
+        assertEquals(
+            listOf(
+                "REGISTERED",
+                CAPTURE_CREATED_AT.toString(),
+                CAPTURE_CREATED_AT.toString(),
+                null,
+            ),
+            reopened.singleTextRow(
+                "SELECT lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "confirmed_at_epoch_millis FROM capture_attempts WHERE command_token = ?",
+                CAPTURE_COMMAND_TOKEN,
+            ),
+        )
+        val malformedPrivateOutputs = fixture.privateOutputs.map { output ->
+            output.copy(relativePath = "private/malformed/capture-${output.identity.ordinal}.jpg")
+        }
+        val malformedExportTargets = fixture.exportTargets.map { target ->
+            target.copy(intendedDisplayName = "malformed-${target.identity.ordinal}.jpg")
+        }
+        assertEquals(
+            fixture.command.outputs,
+            malformedPrivateOutputs.map(DurablePrivateOutput::identity),
+        )
+        assertEquals(
+            fixture.command.outputs,
+            malformedExportTargets.map(CaptureExportTarget::identity),
+        )
+        val before = reopened.captureValueSnapshot(V4_AUTHORITY_TABLES)
+
+        assertEquals(
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+            ),
+            RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
+                fixture.command,
+                malformedPrivateOutputs,
+                malformedExportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(before, reopened.captureValueSnapshot(V4_AUTHORITY_TABLES))
+        assertCaptureFileOperationJournalEmpty(reopened)
+        assertForeignKeyCheckEmpty(reopened)
+    }
+
+    @Test
+    fun migratedV3CapturingAttemptWithoutJournalRejectsConfirmationWithoutMutation() {
+        migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedUnfinishedCaptureAuthority(
+                v3,
+                lifecycleState = "CAPTURING",
+                updatedAtEpochMillis = CAPTURE_UPDATED_AT,
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertCaptureFileOperationJournalEmpty(migrated)
+            assertForeignKeyCheckEmpty(migrated)
+        }
+
+        appDatabase = AppDatabase.create(context, databaseName)
+        val reopened = checkNotNull(appDatabase).openHelper.writableDatabase
+        val fixture = captureConfirmationFixture()
+        assertEquals(
+            listOf(
+                "CAPTURING",
+                CAPTURE_CREATED_AT.toString(),
+                CAPTURE_UPDATED_AT.toString(),
+                null,
+            ),
+            reopened.singleTextRow(
+                "SELECT lifecycle_state, created_at_epoch_millis, updated_at_epoch_millis, " +
+                    "confirmed_at_epoch_millis FROM capture_attempts WHERE command_token = ?",
+                CAPTURE_COMMAND_TOKEN,
+            ),
+        )
+        val before = reopened.captureValueSnapshot(V4_AUTHORITY_TABLES)
+
+        assertEquals(
+            CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+            ),
+            RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
+                fixture.command,
+                fixture.privateOutputs,
+                fixture.exportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(before, reopened.captureValueSnapshot(V4_AUTHORITY_TABLES))
+        assertCaptureFileOperationJournalEmpty(reopened)
+        assertForeignKeyCheckEmpty(reopened)
+    }
+
+    @Test
+    fun migratedV3CoherentConfirmedGraphWithoutJournalReplaysWithoutMutation() {
+        migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedCaptureAuthority(
+                v3,
+                intendedRelativePath = COHERENT_CAPTURE_INTENDED_RELATIVE_PATH,
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertCaptureFileOperationJournalEmpty(migrated)
+            assertForeignKeyCheckEmpty(migrated)
+        }
+
+        appDatabase = AppDatabase.create(context, databaseName)
+        val reopened = checkNotNull(appDatabase).openHelper.writableDatabase
+        val fixture = captureConfirmationFixture()
+        val before = reopened.captureValueSnapshot(V4_AUTHORITY_TABLES)
+
+        assertEquals(
+            CaptureConfirmationResult.AlreadyApplied,
+            RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
+                fixture.command,
+                fixture.privateOutputs,
+                fixture.exportTargets,
+                confirmedAtEpochMillis = 999L,
+            ),
+        )
+        assertEquals(before, reopened.captureValueSnapshot(V4_AUTHORITY_TABLES))
+        assertCaptureFileOperationJournalEmpty(reopened)
+        assertForeignKeyCheckEmpty(reopened)
+    }
+
+    @Test
+    fun migrationFromV1ThroughV4PreservesLegacyAuthorityAndInstallsExactV4Contract() {
+        val v1Snapshot = migrationHelper.createDatabase(databaseName, 1).use { v1 ->
+            seedLegacyShootAndPose(v1)
+            seedCaptureAuthority(v1)
+            v1.captureValueSnapshot(V1_AUTHORITY_TABLES)
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_1_2,
+            AppDatabase.MIGRATION_2_3,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertValueSnapshotSubset(v1Snapshot, migrated)
+            assertLegacyPoseSurvived(migrated)
+            assertCaptureAuthoritySurvived(migrated)
+            assertV3ReferenceImportIntentContract(migrated)
+            assertReferenceImportFileOperationContract(migrated)
+            assertCanonicalImportTablesOnly(migrated)
+            assertCaptureFileOperationJournalEmpty(migrated)
+            assertCaptureFileOperationJournalContract(migrated)
+            assertForeignKeyCheckEmpty(migrated)
+        }
+    }
+
+    @Test
+    fun journalTriggersRejectMalformedRowsAfterMigrationAndAfterReopen() {
+        migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedCaptureAuthority(v3)
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertCaptureFileOperationJournalEmpty(migrated)
+        }
+
+        appDatabase = AppDatabase.create(context, databaseName)
+        val migrated = checkNotNull(appDatabase).openHelper.writableDatabase
+        assertJournalWriteAborts(migrated, journalInsertSql(stage = "BOGUS", byteCountLiteral = "NULL"))
+        assertJournalWriteAborts(
+            migrated,
+            journalInsertSql(stage = JOURNAL_VALID_STAGE, byteCountLiteral = "'twelve'"),
+        )
+        assertEquals(0L, migrated.journalRowCount())
+        migrated.execSQL(journalInsertSql(stage = JOURNAL_VALID_STAGE, byteCountLiteral = "NULL"))
+        assertEquals(1L, migrated.journalRowCount())
+
+        checkNotNull(appDatabase).close()
+        appDatabase = AppDatabase.create(context, databaseName)
+        val reopened = checkNotNull(appDatabase).openHelper.writableDatabase
+        assertEquals(1L, reopened.journalRowCount())
+        val beforeReopenProbes = reopened.captureValueSnapshot(listOf("capture_file_operations"))
+        assertJournalWriteAborts(
+            reopened,
+            "UPDATE `capture_file_operations` " +
+                "SET `stage` = 'TEMP_SYNCED', `byte_count` = 'twelve', " +
+                "`sha256` = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', " +
+                "`captured_at_epoch_millis` = $JOURNAL_CREATED_AT, " +
+                "`updated_at_epoch_millis` = ${JOURNAL_CREATED_AT + 1} " +
+                "WHERE `command_token` = '$CAPTURE_COMMAND_TOKEN' AND `burst_ordinal` = 0",
+        )
+        assertJournalWriteAborts(
+            reopened,
+            "UPDATE `capture_file_operations` " +
+                "SET `updated_at_epoch_millis` = `updated_at_epoch_millis` " +
+                "WHERE `command_token` = '$CAPTURE_COMMAND_TOKEN' AND `burst_ordinal` = 0",
+        )
+        assertExactValueSnapshot(beforeReopenProbes, reopened)
+        assertEquals(1L, reopened.journalRowCount())
+        assertForeignKeyCheckEmpty(reopened)
+    }
+
+    @Test
+    fun journalChildrenRestrictAttemptDeletionAfterMigration() {
+        migrationHelper.createDatabase(databaseName, 3).use { v3 ->
+            seedLegacyShootAndPose(v3)
+            seedUnfinishedCaptureAuthority(
+                v3,
+                lifecycleState = "REGISTERED",
+                updatedAtEpochMillis = CAPTURE_CREATED_AT,
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            4,
+            true,
+            AppDatabase.MIGRATION_3_4,
+        ).use { migrated ->
+            assertForeignKeyCheckEmpty(migrated)
+        }
+
+        appDatabase = AppDatabase.create(context, databaseName)
+        val migrated = checkNotNull(appDatabase).openHelper.writableDatabase
+        listOf(
+            "private_capture_outputs",
+            "capture_confirmation_receipts",
+            "capture_export_outboxes",
+            "capture_export_outputs",
+        ).forEach { table -> assertEquals(0L, migrated.commandTokenRowCount(table)) }
+        migrated.execSQL(journalInsertSql(stage = JOURNAL_VALID_STAGE, byteCountLiteral = "NULL"))
+        assertEquals(1L, migrated.journalRowCount())
+
+        val failure = runCatching {
+            migrated.execSQL(
+                "DELETE FROM `capture_attempts` WHERE `command_token` = ?",
+                arrayOf<Any?>(CAPTURE_COMMAND_TOKEN),
+            )
+        }.exceptionOrNull()
+        assertTrue(
+            "journal children must RESTRICT attempt deletion, was: $failure",
+            failure is SQLiteConstraintException,
+        )
+        assertEquals(1L, migrated.commandTokenRowCount("capture_attempts"))
+        assertEquals(1L, migrated.commandTokenRowCount("capture_file_operations"))
+        listOf(
+            "private_capture_outputs",
+            "capture_confirmation_receipts",
+            "capture_export_outboxes",
+            "capture_export_outputs",
+        ).forEach { table -> assertEquals(0L, migrated.commandTokenRowCount(table)) }
+        assertForeignKeyCheckEmpty(migrated)
     }
 
     private fun seedLegacyShootAndPose(v1: SupportSQLiteDatabase) {
@@ -219,7 +570,10 @@ class AppDatabaseMigrationAndroidTest {
     }
 
 
-    private fun seedCaptureAuthority(db: SupportSQLiteDatabase) {
+    private fun seedCaptureAuthority(
+        db: SupportSQLiteDatabase,
+        intendedRelativePath: String = CAPTURE_INTENDED_RELATIVE_PATH,
+    ) {
         db.execSQL(
             """
             INSERT INTO `shoot_sessions` (
@@ -324,7 +678,7 @@ class AppDatabaseMigrationAndroidTest {
                     CAPTURE_TARGET_COLLECTION_URI,
                     CAPTURE_TARGET_VOLUME,
                     "migration-$ordinal.jpg",
-                    CAPTURE_INTENDED_RELATIVE_PATH,
+                    intendedRelativePath,
                     CAPTURE_MIME_TYPE,
                     CAPTURE_EXPORT_LIFECYCLE,
                     CAPTURE_AMBIGUITY_STATE,
@@ -334,6 +688,91 @@ class AppDatabaseMigrationAndroidTest {
                 ),
             )
         }
+    }
+
+    private fun seedUnfinishedCaptureAuthority(
+        db: SupportSQLiteDatabase,
+        lifecycleState: String,
+        updatedAtEpochMillis: Long,
+    ) {
+        require(lifecycleState == "REGISTERED" || lifecycleState == "CAPTURING")
+        db.execSQL(
+            """
+            INSERT INTO `shoot_sessions` (
+                `session_id`, `shoot_id`, `current_pose_index`, `next_attempt_number`,
+                `lifecycle_state`, `created_at_epoch_millis`, `updated_at_epoch_millis`
+            ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)
+            """.trimIndent(),
+            arrayOf<Any?>(
+                CAPTURE_SESSION_ID,
+                SHOOT_ID,
+                POSE_INDEX,
+                CAPTURE_NEXT_ATTEMPT_NUMBER,
+                CAPTURE_CREATED_AT,
+                CAPTURE_CREATED_AT,
+            ),
+        )
+        db.execSQL(
+            """
+            INSERT INTO `capture_attempts` (
+                `command_token`, `session_id`, `pose_id`, `pose_index`, `attempt_number`,
+                `trigger_type`, `lifecycle_state`, `reconciliation_required`,
+                `captured_deletion_generation`, `created_at_epoch_millis`,
+                `updated_at_epoch_millis`, `confirmed_at_epoch_millis`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            """.trimIndent(),
+            arrayOf<Any?>(
+                CAPTURE_COMMAND_TOKEN,
+                CAPTURE_SESSION_ID,
+                POSE_ID,
+                POSE_INDEX,
+                CAPTURE_ATTEMPT_NUMBER,
+                CAPTURE_TRIGGER_TYPE,
+                lifecycleState,
+                CAPTURE_RECONCILIATION_REQUIRED,
+                DELETION_GENERATION,
+                CAPTURE_CREATED_AT,
+                updatedAtEpochMillis,
+            ),
+        )
+    }
+
+    private fun captureConfirmationFixture(): MigrationConfirmationFixture {
+        val captureCommand = ShootEffect.CaptureCommand(
+            CaptureAttempt.create(
+                token = CaptureToken(CAPTURE_COMMAND_TOKEN),
+                trigger = CaptureTrigger.MANUAL,
+                poseId = POSE_ID,
+                poseIndex = POSE_INDEX,
+                attemptNumber = CAPTURE_ATTEMPT_NUMBER,
+            ),
+        )
+        val command = ShootEffect.ConfirmAndAdvanceCapture(
+            token = captureCommand.token,
+            poseId = captureCommand.poseId,
+            poseIndex = captureCommand.poseIndex,
+            outputs = captureCommand.outputs,
+        )
+        val privateOutputs = command.outputs.map { identity ->
+            DurablePrivateOutput(
+                identity = identity,
+                relativePath = "$CAPTURE_RELATIVE_PATH_PREFIX${identity.ordinal}.jpg",
+                byteCount = CAPTURE_BYTE_COUNT + identity.ordinal,
+                capturedAtEpochMillis = CAPTURE_CAPTURED_AT + identity.ordinal,
+                integrityMetadata = "$CAPTURE_INTEGRITY_METADATA_PREFIX${identity.ordinal}",
+            )
+        }
+        val exportTargets = command.outputs.map { identity ->
+            CaptureExportTarget(
+                identity = identity,
+                targetCollectionUri = CAPTURE_TARGET_COLLECTION_URI,
+                targetVolume = CAPTURE_TARGET_VOLUME,
+                intendedDisplayName = "migration-${identity.ordinal}.jpg",
+                intendedRelativePath = COHERENT_CAPTURE_INTENDED_RELATIVE_PATH,
+                intendedMimeType = CAPTURE_MIME_TYPE,
+            )
+        }
+        return MigrationConfirmationFixture(command, privateOutputs, exportTargets)
     }
 
     private fun assertLegacyPoseSurvived(migrated: SupportSQLiteDatabase) {
@@ -609,6 +1048,119 @@ class AppDatabaseMigrationAndroidTest {
         }
     }
 
+    private fun seedV3ReferenceImportFixture(v3: SupportSQLiteDatabase) {
+        IMPORT_FIXTURES.forEach { fixture ->
+            v3.execSQL(
+                """
+                INSERT INTO `reference_import_intents` (
+                    `import_token`,
+                    `shoot_id`,
+                    `pose_id`,
+                    `relative_asset_path`,
+                    `lifecycle_state`,
+                    `created_at_epoch_millis`,
+                    `updated_at_epoch_millis`,
+                    `asset_ready_at_epoch_millis`,
+                    `terminal_at_epoch_millis`
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    fixture.importToken,
+                    SHOOT_ID,
+                    fixture.poseId,
+                    fixture.relativeAssetPath,
+                    fixture.lifecycleState,
+                    fixture.createdAtEpochMillis,
+                    fixture.updatedAtEpochMillis,
+                    fixture.assetReadyAtEpochMillis,
+                    fixture.terminalAtEpochMillis,
+                ),
+            )
+        }
+        FILE_OPERATION_FIXTURES.forEach { fixture ->
+            v3.execSQL(
+                """
+                INSERT INTO `reference_import_file_operations` (
+                    `import_token`,
+                    `relative_asset_path`,
+                    `relative_temp_path`,
+                    `relative_quarantine_path`,
+                    `stage`,
+                    `byte_count`,
+                    `sha256`,
+                    `last_failure_code`,
+                    `reconciliation_required`,
+                    `created_at_epoch_millis`,
+                    `updated_at_epoch_millis`
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    fixture.importToken,
+                    fixture.relativeAssetPath,
+                    fixture.relativeTempPath,
+                    fixture.relativeQuarantinePath,
+                    fixture.stage,
+                    fixture.byteCount,
+                    fixture.sha256,
+                    fixture.lastFailureCode,
+                    fixture.reconciliationRequired,
+                    fixture.createdAtEpochMillis,
+                    fixture.updatedAtEpochMillis,
+                ),
+            )
+        }
+    }
+
+    private fun assertCaptureFileOperationJournalEmpty(migrated: SupportSQLiteDatabase) {
+        migrated.query("SELECT COUNT(*) FROM `capture_file_operations`").use { cursor ->
+            assertTrue("journal count query must return a row", cursor.moveToFirst())
+            assertEquals("migration must create an empty journal table", 0L, cursor.getLong(0))
+        }
+    }
+
+    private fun assertCaptureFileOperationJournalContract(migrated: SupportSQLiteDatabase) {
+        assertEquals(EXPECTED_JOURNAL_COLUMNS, migrated.tableColumns("capture_file_operations"))
+        assertEquals(EXPECTED_JOURNAL_FOREIGN_KEYS, migrated.tableForeignKeys("capture_file_operations"))
+        assertEquals(EXPECTED_JOURNAL_INDEXES, migrated.tableIndexes("capture_file_operations"))
+    }
+
+    private fun journalInsertSql(stage: String, byteCountLiteral: String): String =
+        "INSERT INTO `capture_file_operations` (" +
+            "`command_token`, `burst_ordinal`, `relative_final_path`, `relative_temp_path`, " +
+            "`relative_quarantine_path`, `stage`, `byte_count`, `sha256`, " +
+            "`captured_at_epoch_millis`, `last_failure_code`, `reconciliation_required`, " +
+            "`created_at_epoch_millis`, `updated_at_epoch_millis`" +
+            ") VALUES (" +
+            "'$CAPTURE_COMMAND_TOKEN', 0, '$JOURNAL_RELATIVE_FINAL_PATH', " +
+            "'$JOURNAL_RELATIVE_TEMP_PATH', '$JOURNAL_RELATIVE_QUARANTINE_PATH', " +
+            "'$stage', $byteCountLiteral, NULL, NULL, NULL, 0, " +
+            "$JOURNAL_CREATED_AT, $JOURNAL_CREATED_AT)"
+
+    private fun assertJournalWriteAborts(database: SupportSQLiteDatabase, sql: String) {
+        val failure = runCatching { database.execSQL(sql) }.exceptionOrNull()
+        assertTrue(
+            "malformed journal write must abort with a constraint violation, was: $failure",
+            failure is SQLiteConstraintException,
+        )
+        assertTrue(
+            "journal trigger must raise the canonical message, was: ${failure?.message}",
+            checkNotNull(failure).message.orEmpty()
+                .contains("capture file operation state is invalid"),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.journalRowCount(): Long =
+        commandTokenRowCount("capture_file_operations")
+
+    private fun SupportSQLiteDatabase.commandTokenRowCount(tableName: String): Long =
+        query(
+            "SELECT COUNT(*) FROM `$tableName` WHERE `command_token` = ?",
+            arrayOf<Any?>(CAPTURE_COMMAND_TOKEN),
+        ).use { cursor ->
+            assertTrue("count query must return a row", cursor.moveToFirst())
+            cursor.getLong(0)
+        }
+
     private fun SupportSQLiteDatabase.singleTextRow(sql: String, argument: String): List<String?> =
         query(sql, arrayOf<Any?>(argument)).use { cursor ->
             assertTrue("expected one authority row", cursor.moveToFirst())
@@ -631,6 +1183,123 @@ class AppDatabaseMigrationAndroidTest {
                 }
             }
         }
+
+    private fun SupportSQLiteDatabase.captureValueSnapshot(
+        tableNames: List<String>,
+    ): DatabaseValueSnapshot = DatabaseValueSnapshot(
+        tables = tableNames.map { tableName ->
+            captureTableValueSnapshot(tableName, tableColumnNames(tableName))
+        },
+    )
+
+    private fun SupportSQLiteDatabase.captureTableValueSnapshot(
+        tableName: String,
+        columns: List<String>,
+    ): TableValueSnapshot {
+        val projection = columns.joinToString(", ") { column ->
+            val identifier = column.sqlIdentifier()
+            "typeof($identifier), " +
+                "CASE WHEN typeof($identifier) IN ('text', 'blob') " +
+                "THEN hex($identifier) ELSE quote($identifier) END"
+        }
+        val rows = query(
+            "SELECT $projection FROM ${tableName.sqlIdentifier()} ORDER BY rowid",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        RowValueSnapshot(
+                            cells = columns.indices.map { columnIndex ->
+                                val resultIndex = columnIndex * 2
+                                CellValueSnapshot(
+                                    storageClass = cursor.getString(resultIndex),
+                                    encodedValue = cursor.getString(resultIndex + 1),
+                                )
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+        return TableValueSnapshot(
+            name = tableName,
+            columns = columns,
+            rowCount = rows.size.toLong(),
+            rows = rows,
+        )
+    }
+
+    private fun SupportSQLiteDatabase.tableColumnNames(tableName: String): List<String> =
+        buildList {
+            query("PRAGMA table_info(${tableName.sqlIdentifier()})").use { cursor ->
+                while (cursor.moveToNext()) {
+                    add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                }
+            }
+        }
+
+    private fun assertExactValueSnapshot(
+        expected: DatabaseValueSnapshot,
+        migrated: SupportSQLiteDatabase,
+    ) {
+        expected.tables.forEach { expectedTable ->
+            val actualColumns = migrated.tableColumnNames(expectedTable.name)
+            assertEquals(
+                "${expectedTable.name} column names/order changed",
+                expectedTable.columns,
+                actualColumns,
+            )
+            assertTableValuesEqual(
+                expectedTable,
+                migrated.captureTableValueSnapshot(expectedTable.name, actualColumns),
+            )
+        }
+    }
+
+    private fun assertValueSnapshotSubset(
+        expected: DatabaseValueSnapshot,
+        migrated: SupportSQLiteDatabase,
+    ) {
+        expected.tables.forEach { expectedTable ->
+            val expectedColumnSet = expectedTable.columns.toSet()
+            val migratedOriginalColumns = migrated.tableColumnNames(expectedTable.name)
+                .filter { column -> column in expectedColumnSet }
+            assertEquals(
+                "${expectedTable.name} original column names/order changed",
+                expectedTable.columns,
+                migratedOriginalColumns,
+            )
+            assertTableValuesEqual(
+                expectedTable,
+                migrated.captureTableValueSnapshot(expectedTable.name, expectedTable.columns),
+            )
+        }
+    }
+
+    private fun assertTableValuesEqual(
+        expected: TableValueSnapshot,
+        actual: TableValueSnapshot,
+    ) {
+        assertEquals("${expected.name} row cardinality changed", expected.rowCount, actual.rowCount)
+        expected.rows.zip(actual.rows).forEachIndexed { rowIndex, (expectedRow, actualRow) ->
+            expectedRow.cells.zip(actualRow.cells).forEachIndexed { columnIndex, cells ->
+                val (expectedCell, actualCell) = cells
+                val location = "${expected.name} row $rowIndex column ${expected.columns[columnIndex]}"
+                assertEquals(
+                    "$location SQLite storage class changed",
+                    expectedCell.storageClass,
+                    actualCell.storageClass,
+                )
+                assertEquals(
+                    "$location exact value changed",
+                    expectedCell.encodedValue,
+                    actualCell.encodedValue,
+                )
+            }
+        }
+    }
+
+    private fun String.sqlIdentifier(): String = "`${replace("`", "``")}`"
 
     private fun android.database.Cursor.longOrNull(column: Int): Long? =
         if (isNull(column)) null else getLong(column)
@@ -728,6 +1397,10 @@ class AppDatabaseMigrationAndroidTest {
                 "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'",
             ).use { cursor ->
                 while (cursor.moveToNext()) {
+                    val name = cursor.getString(cursor.getColumnIndexOrThrow("name"))
+                    if (name !in EXPECTED_ORDINAL_TRIGGERS.map(TriggerContract::name)) {
+                        continue
+                    }
                     val normalizedSql = cursor.getString(cursor.getColumnIndexOrThrow("sql"))
                         .replace(Regex("\\s+"), " ")
                         .uppercase()
@@ -741,7 +1414,7 @@ class AppDatabaseMigrationAndroidTest {
                     )
                     add(
                         TriggerContract(
-                            name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                            name = name,
                             table = cursor.getString(cursor.getColumnIndexOrThrow("tbl_name")),
                             event = when {
                                 normalizedSql.contains("BEFORE INSERT ON") -> "INSERT"
@@ -817,6 +1490,32 @@ class AppDatabaseMigrationAndroidTest {
         val event: String,
     )
 
+    private data class DatabaseValueSnapshot(
+        val tables: List<TableValueSnapshot>,
+    )
+
+    private data class TableValueSnapshot(
+        val name: String,
+        val columns: List<String>,
+        val rowCount: Long,
+        val rows: List<RowValueSnapshot>,
+    )
+
+    private data class RowValueSnapshot(
+        val cells: List<CellValueSnapshot>,
+    )
+
+    private data class CellValueSnapshot(
+        val storageClass: String,
+        val encodedValue: String,
+    )
+
+    private data class MigrationConfirmationFixture(
+        val command: ShootEffect.ConfirmAndAdvanceCapture,
+        val privateOutputs: List<DurablePrivateOutput>,
+        val exportTargets: List<CaptureExportTarget>,
+    )
+
     companion object {
         private const val SHOOT_ID = "migration-test-shoot"
         private const val TEST_SHOOT_NAME = "Migration test shoot"
@@ -853,9 +1552,17 @@ class AppDatabaseMigrationAndroidTest {
         private const val CAPTURE_TARGET_COLLECTION_URI = "content://media/external_primary/images/media"
         private const val CAPTURE_TARGET_VOLUME = "external_primary"
         private const val CAPTURE_INTENDED_RELATIVE_PATH = "Pictures/PoseGuideSnap"
+        private const val COHERENT_CAPTURE_INTENDED_RELATIVE_PATH = "Pictures/PoseGuideSnap/"
         private const val CAPTURE_MIME_TYPE = "image/jpeg"
         private const val CAPTURE_EXPORT_LIFECYCLE = "PENDING"
         private const val CAPTURE_AMBIGUITY_STATE = "NONE"
+
+        private const val JOURNAL_VALID_STAGE = "EXPECTING_RESERVATION"
+        private const val JOURNAL_RELATIVE_FINAL_PATH = "capture/journal-final-0.jpg"
+        private const val JOURNAL_RELATIVE_TEMP_PATH = "capture/.journal-temp-0.pending"
+        private const val JOURNAL_RELATIVE_QUARANTINE_PATH =
+            "capture/quarantine/journal-0.quarantined"
+        private const val JOURNAL_CREATED_AT = 70L
 
         private val IMPORT_FIXTURES = listOf(
             IntentFixture(
@@ -1011,6 +1718,47 @@ class AppDatabaseMigrationAndroidTest {
             ),
         )
 
+        private val EXPECTED_JOURNAL_COLUMNS = listOf(
+            ColumnContract("command_token", "TEXT", true, null, 1),
+            ColumnContract("burst_ordinal", "INTEGER", true, null, 2),
+            ColumnContract("relative_final_path", "TEXT", true, null, 0),
+            ColumnContract("relative_temp_path", "TEXT", true, null, 0),
+            ColumnContract("relative_quarantine_path", "TEXT", true, null, 0),
+            ColumnContract("stage", "TEXT", true, null, 0),
+            ColumnContract("byte_count", "INTEGER", false, null, 0),
+            ColumnContract("sha256", "TEXT", false, null, 0),
+            ColumnContract("captured_at_epoch_millis", "INTEGER", false, null, 0),
+            ColumnContract("last_failure_code", "TEXT", false, null, 0),
+            ColumnContract("reconciliation_required", "INTEGER", true, null, 0),
+            ColumnContract("created_at_epoch_millis", "INTEGER", true, null, 0),
+            ColumnContract("updated_at_epoch_millis", "INTEGER", true, null, 0),
+        )
+
+        private val EXPECTED_JOURNAL_FOREIGN_KEYS = setOf(
+            ForeignKeyContract(
+                table = "capture_attempts",
+                from = "command_token",
+                to = "command_token",
+                onUpdate = "NO ACTION",
+                onDelete = "RESTRICT",
+            ),
+        )
+
+        private val EXPECTED_JOURNAL_INDEXES = setOf(
+            IndexContract(
+                name = "index_capture_file_operations_stage",
+                columns = listOf("stage"),
+                unique = false,
+                partial = false,
+            ),
+            IndexContract(
+                name = "index_capture_file_operations_reconciliation_required",
+                columns = listOf("reconciliation_required"),
+                unique = false,
+                partial = false,
+            ),
+        )
+
         private val EXPECTED_ORDINAL_TRIGGERS = setOf(
             TriggerContract(
                 name = "trigger_private_capture_outputs_burst_ordinal_insert",
@@ -1032,6 +1780,42 @@ class AppDatabaseMigrationAndroidTest {
                 table = "capture_export_outputs",
                 event = "UPDATE",
             ),
+            TriggerContract(
+                name = "trigger_capture_file_operations_burst_ordinal_insert",
+                table = "capture_file_operations",
+                event = "INSERT",
+            ),
+            TriggerContract(
+                name = "trigger_capture_file_operations_burst_ordinal_update",
+                table = "capture_file_operations",
+                event = "UPDATE",
+            ),
+        )
+
+        private val V3_AUTHORITY_TABLES = listOf(
+            "shoots",
+            "shoot_poses",
+            "shoot_sessions",
+            "capture_attempts",
+            "private_capture_outputs",
+            "capture_confirmation_receipts",
+            "capture_export_outboxes",
+            "capture_export_outputs",
+            "reference_import_intents",
+            "reference_import_file_operations",
+        )
+
+        private val V4_AUTHORITY_TABLES = V3_AUTHORITY_TABLES + "capture_file_operations"
+
+        private val V1_AUTHORITY_TABLES = listOf(
+            "shoots",
+            "shoot_poses",
+            "shoot_sessions",
+            "capture_attempts",
+            "private_capture_outputs",
+            "capture_confirmation_receipts",
+            "capture_export_outboxes",
+            "capture_export_outputs",
         )
     }
 }

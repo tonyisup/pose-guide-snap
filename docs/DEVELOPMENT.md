@@ -1,6 +1,6 @@
 # Development Environment
 
-> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented, host-verified, and boundedly Pixel-exercised.** This document records the command-line Android toolchain and commands used to verify the current prototype. Current HEAD includes rear CameraX preview/analysis, direct on-device MoveNet, durable Room capture/deletion/claim authority, transactional reference import, Room V3 preparation, atomic session bootstrap/discovery, editor-scoped stale-safe Resume, and one retained bootstrap-before-camera owner. Gate 2 remains incomplete because the camera/filesystem path is not yet connected to Room confirmation or MediaStore I/O.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. An uncommitted, unshipped Task 14B.1A candidate adds the local Room V4 capture-file journal foundation.** This document records the command-line Android toolchain and commands used to verify the current prototype. The candidate adds durable intent, migration, bootstrap, logical-start, confirmation guard, and deletion-clock behavior only. Gate 2 remains incomplete because no production per-file effect-admission or journal-transition API connects the camera/filesystem path to Room confirmation or MediaStore I/O.
 
 ## Verified host
 
@@ -129,8 +129,38 @@ Do not use `apkanalyzer` on this verified split Homebrew/SDK layout. Inspect the
   --file res/xml/data_extraction_rules.xml
 ```
 
+## Room schema and migration workflow
+
+Room schema changes must update the annotated database version, add an explicit migration, register it in the database builder, and export the new schema artifact under `app/schemas/com.tonyisup.poseguidesnap.data.db.AppDatabase/`. Historical schema artifacts are immutable evidence: a V4 change must leave `1.json`, `2.json`, and `3.json` byte-identical and add or reproduce the exact `4.json` contract.
+
+For the Task 14B.1A candidate, `MIGRATION_3_4` creates only the empty `capture_file_operations` table and its indexes. Callback installation owns the ordinal and row-shape triggers on create/open. Migration tests must compare every preexisting value, null, cardinality, and SQLite storage class, verify no journal rows were synthesized for migrated attempts, exercise both direct V3→V4 and chained V1→V2→V3→V4 paths, and reject malformed rows after reopen.
+
+The focused host commands for this candidate are:
+
+```sh
+./gradlew :app:testDebugUnitTest
+./gradlew :app:compileDebugAndroidTestKotlin
+```
+
+Before landing, rerun the cumulative build gates rather than treating compilation alone as release evidence:
+
+```sh
+./gradlew :app:lintDebug \
+  :app:assembleDebug \
+  :app:assembleRelease \
+  :app:assembleDebugAndroidTest
+```
+
+Then verify that historical schemas did not drift, V4 reproduces exactly, no Room compiler leaks onto runtime/package classpaths, the APK still requests no `INTERNET` permission, no old `authorizeCaptureStart` API remains, and no production per-file journal transition or physical capture-file path was introduced.
+
 At the historical Task 3 checkpoint, the JVM suite checked the provisional package/version configuration and structurally parsed the source manifest and both backup-rule resources. Its Android instrumentation test checked that the installed package requested only AndroidX's app-signature permission `com.tonyisup.poseguidesnap.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` and that `FLAG_ALLOW_BACKUP` was clear; that Task 3 bootstrap verification compiled the test without running a device or emulator. Later Task 9/10 authorization ran the relevant instrumentation on the Pixel 6 against the committed camera slice. The AndroidX permission protects non-exported dynamic receivers and grants no camera, storage, or network capability.
 
 ## Current boundary
 
-The command-line build remains GREEN: 618/618 JVM tests pass, and lint plus debug, release, and instrumentation APK assembly succeed. Current HEAD includes Tasks 14A.1–14A.3 exact-session bootstrap, active-session discovery, stale-safe editor Resume, Ready-only camera admission, and scroll-reachable recovery controls at compact height and large font scale. The final Task 14A.3 APK pair passed 11/11 bounded Pixel 6 methods across two successful invocations after the device was awake/unlocked. This is not a completed guided-capture product: it has no user-facing shutter or auto-capture, camera/filesystem-to-Room confirmation integration, MediaStore I/O, TTS/audio, physical deletion flow, or full Pixel acceptance evidence.
+The exact three-file Task 4 Android-test candidate v5 patch has SHA-256 `377dc02c781ece2cf78e48f93c727d02ea9d41082a12229ff22803e97a306491`; specification review returned `PASS` and engineering/security review returned `APPROVED` on those exact bytes. Its verified evidence is 635/635 JVM tests, Android-test compilation, Pixel 6 migration 10/10, focused NUL oracle plus direct migration 2/2, and an integrated five-class Pixel 6 run of 105 tests with 0 failures, 0 errors, and 10 expected `@Ignore` skips. The skipped direct first-application tests remain deferred to Task 14B.1C and are not passing evidence. This digest does not identify the complete uncommitted Task 14B.1A landing candidate, which still requires final same-digest reviews.
+
+Documentation candidate v1 exposed caller-list traversal before the unfinished-confirmation guard. Repair v1 was specification-rejected for a receipt-first bypass; repair v2 was specification-rejected because its nullable-timestamp guard did not enforce unfinished lifecycle authority. The final eight-scenario Pixel 6 method covers REGISTERED and CAPTURING with null or malformed non-null timestamps, each with and without a raw receipt. It failed on v2 with 3 reads and passed 1/1 after v3 moved the unavailable guard to explicit lifecycle state. Repair v3, SHA-256 `ed29acd613a890d213e398aaacf4a2d79512662ac0dbf88c411404fcfdb3bd3a`, received exact-byte specification `PASS` and engineering/security `APPROVED`; that approval covers only the two-file repair, not the complete landing candidate. The current-byte integrated five-class Pixel 6 run executed 106 tests with 0 failures, 0 errors, and 10 expected skips, and left no matching test-database residue.
+
+The cumulative Task 5 host command passed again after that repair: 635/635 JVM tests, lint with zero errors, and debug, release, and Android-test assembly. Post-build checks confirmed byte-identical Room V1–V3 schemas and frozen-versus-regenerated V4, zero Room compiler markers on runtime classpaths or in packaged dex, and no `INTERNET` permission in the emitted debug, release, or Android-test manifest.
+
+This is not a completed guided-capture product. Room V4 can persist and validate initial capture-file intent, but `Started` grants only logical Room state, unfinished confirmation remains blocked, and no production API can admit or transition a per-file effect. There is no new camera/filesystem capture path, physical file operation, personal-media access, MediaStore I/O, network, analytics, TTS/audio, physical deletion flow, or full Pixel acceptance evidence.

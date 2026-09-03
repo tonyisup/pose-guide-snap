@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented, host-verified, and boundedly Pixel-exercised.** Room V3 owns preparation, exact guided-session bootstrap, and active-session discovery. The selected shoot's editor now re-discovers Resume authority at click time, and one retained started-route owner gates camera construction on a fresh exact `Ready` bootstrap for both Start and Resume. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Standalone speech is deferred until the guided-session coordinator exists.
+> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. An uncommitted, unshipped Task 14B.1A candidate adds the local Room V4 capture-file journal foundation.** New attempts receive exactly three initial journal rows atomically, but logical `Started` state grants no camera, filesystem, or per-file effect authority. Unfinished confirmation is intentionally unavailable until Task 14B.1C. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow.
 
 ## Product goal
 
@@ -57,6 +57,12 @@ References captured from a substantially different viewpoint than the live camer
 
 Production thresholds cannot be accepted because they merely look reasonable. They remain development defaults until deterministic fixtures and authorized real-device calibration produce a documented separation report for positive and negative examples. No publication or store claim may be made before the real-device acceptance gate passes.
 
+## Current user-visible and shipping boundary
+
+Task 14B.1A changes local persistence and fail-closed recovery authority only. It adds no shutter, automatic capture, camera-to-file path, file publication, MediaStore behavior, guidance, or new user control. No production per-file effect-admission or journal-transition API exists, so a logically started attempt cannot authorize a physical effect. Confirmation of unfinished `REGISTERED` or `CAPTURING` attempts is blocked before caller-provided output/export metadata can be consumed; journal-owned first application remains deferred to Task 14B.1C.
+
+The candidate therefore is not a shippable guided-capture slice and does not advance Gate 2. It was verified against generated data and bounded Room/instrumentation scenarios without enabling camera/filesystem capture, accessing personal media, adding network or analytics behavior, or proving an end-to-end user journey.
+
 ## Approved product policies
 
 ### Matching
@@ -103,6 +109,7 @@ Deferral is not a promise that a feature will ship. Each item needs a new produc
 - [ADR 0003: Persisted reference-import file ledger](adr/0003-persisted-reference-import-file-ledger.md)
 - [ADR 0004: Room V3 shoot-preparation authority](adr/0004-room-v3-shoot-preparation-authority.md)
 - [ADR 0005: Atomic Room V3 guided-session bootstrap](adr/0005-atomic-room-v3-guided-session-bootstrap.md)
+- [ADR 0006: Room V4 capture-file journal foundation](adr/0006-room-v4-capture-file-journal-foundation.md)
 - [Task 14A.1 validation](validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md)
 - [Task 14A.2 validation](validation/2026-09-02-task14a2-active-session-discovery-pixel6.md)
 - [Task 14A.3 validation](validation/2026-09-02-task14a3-stale-safe-resume-pixel6.md)

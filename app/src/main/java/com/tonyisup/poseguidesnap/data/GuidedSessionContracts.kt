@@ -223,6 +223,7 @@ enum class GuidedSessionBootstrapRejectionReason {
     INVALID_SESSION_AUTHORITY,
     INVALID_POSE_AUTHORITY,
     INVALID_ATTEMPT_AUTHORITY,
+    INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
     INVALID_PRIVATE_OUTPUT_AUTHORITY,
     INVALID_RECEIPT_AUTHORITY,
     INVALID_OUTBOX_AUTHORITY,
@@ -282,6 +283,7 @@ class GuidedSessionBootstrapRows(
     receipts: Iterable<GuidedReceiptAuthorityRow> = emptyList(),
     outboxes: Iterable<GuidedOutboxAuthorityRow> = emptyList(),
     exportOutputs: Iterable<GuidedExportOutputAuthorityRow> = emptyList(),
+    captureFileOperations: Iterable<GuidedCaptureFileOperationAuthorityRow> = emptyList(),
 ) {
     val poses: List<GuidedPoseAuthorityRow> = immutableBootstrapList(poses)
     val attempts: List<GuidedAttemptAuthorityRow> = immutableBootstrapList(attempts)
@@ -289,6 +291,8 @@ class GuidedSessionBootstrapRows(
     val receipts: List<GuidedReceiptAuthorityRow> = immutableBootstrapList(receipts)
     val outboxes: List<GuidedOutboxAuthorityRow> = immutableBootstrapList(outboxes)
     val exportOutputs: List<GuidedExportOutputAuthorityRow> = immutableBootstrapList(exportOutputs)
+    val captureFileOperations: List<GuidedCaptureFileOperationAuthorityRow> =
+        immutableBootstrapList(captureFileOperations)
 
     override fun toString(): String = "GuidedSessionBootstrapRows(redacted)"
 }
@@ -348,6 +352,25 @@ data class GuidedAttemptAuthorityRow(
     val confirmedAtEpochMillis: Long?,
 ) {
     override fun toString(): String = "GuidedAttemptAuthorityRow(redacted)"
+}
+
+data class GuidedCaptureFileOperationAuthorityRow(
+    val commandToken: String,
+    val burstOrdinal: Int,
+    val relativeFinalPath: String,
+    val relativeTempPath: String,
+    val relativeQuarantinePath: String,
+    val stage: String,
+    val byteCount: Long?,
+    val sha256: String?,
+    val capturedAtEpochMillis: Long?,
+    val lastFailureCode: String?,
+    val reconciliationRequired: Boolean,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+    val hasCanonicalStorage: Boolean = true,
+) {
+    override fun toString(): String = "GuidedCaptureFileOperationAuthorityRow(redacted)"
 }
 
 data class GuidedPrivateOutputAuthorityRow(

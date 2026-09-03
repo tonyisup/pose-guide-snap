@@ -8,7 +8,7 @@ import org.junit.Test
 
 class AuthorityOrdinalTriggersTest {
     @Test
-    fun productionDefinitionsCoverInsertAndUpdateForBothOutputTables() {
+    fun productionDefinitionsCoverInsertAndUpdateForAllOrdinalTables() {
         val actual = AuthorityOrdinalTriggers.definitions.map { definition ->
             Triple(definition.name, definition.table, definition.event)
         }.toSet()
@@ -33,6 +33,16 @@ class AuthorityOrdinalTriggersTest {
                 Triple(
                     "trigger_capture_export_outputs_burst_ordinal_update",
                     "capture_export_outputs",
+                    AuthorityOrdinalTriggers.Event.UPDATE,
+                ),
+                Triple(
+                    "trigger_capture_file_operations_burst_ordinal_insert",
+                    "capture_file_operations",
+                    AuthorityOrdinalTriggers.Event.INSERT,
+                ),
+                Triple(
+                    "trigger_capture_file_operations_burst_ordinal_update",
+                    "capture_file_operations",
                     AuthorityOrdinalTriggers.Event.UPDATE,
                 ),
             ),

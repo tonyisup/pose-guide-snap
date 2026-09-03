@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.ActiveSessionAuthorityTriggers
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
+import com.tonyisup.poseguidesnap.data.db.CaptureFileOperationStateTriggers
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -73,6 +74,15 @@ class AppDatabaseAndroidTest {
                 assertTrue("missing index on $table: $index; actual=$actual", index in actual)
             }
         }
+
+        assertEquals(
+            EXPECTED_JOURNAL_COLUMNS,
+            sqlite.tableColumns("capture_file_operations"),
+        )
+        assertEquals(
+            EXPECTED_JOURNAL_INDEXES,
+            sqlite.namedIndexContracts("capture_file_operations"),
+        )
     }
 
     @Test
@@ -138,15 +148,152 @@ class AppDatabaseAndroidTest {
     @Test
     fun ordinalConstraintsRemainInstalledExactlyOnceAfterReopen() {
         var sqlite = openDatabase().openHelper.writableDatabase
-        assertEquals(4, sqlite.ordinalTriggerCount())
+        assertExactOrdinalTriggers(sqlite)
         appDatabase?.close()
         appDatabase = null
 
         sqlite = openDatabase().openHelper.writableDatabase
-        assertEquals(4, sqlite.ordinalTriggerCount())
+        assertExactOrdinalTriggers(sqlite)
         seedAttempt(sqlite)
         assertOrdinalRejected {
             sqlite.execSQL(privateOutputInsert(3, "reopen-too-high.jpg"))
+        }
+        assertOrdinalRejected {
+            sqlite.execSQL(
+                fileOperationInsert(
+                    stage = "EXPECTING_RESERVATION",
+                    burstOrdinal = "3",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun captureFileOperationRejectsNonIntegerAndOutsideRangeInsertAndUpdateOrdinals() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedAttempt(sqlite)
+
+        CaptureFileOperationStateTriggers.definitions.forEach { definition ->
+            sqlite.execSQL("DROP TRIGGER IF EXISTS `${definition.name}`")
+        }
+        try {
+            assertOrdinalRejected {
+                sqlite.execSQL(
+                    fileOperationInsert(
+                        stage = "EXPECTING_RESERVATION",
+                        burstOrdinal = "-1",
+                    ),
+                )
+            }
+            assertOrdinalRejected {
+                sqlite.execSQL(
+                    fileOperationInsert(
+                        stage = "EXPECTING_RESERVATION",
+                        burstOrdinal = "3",
+                    ),
+                )
+            }
+            assertOrdinalRejected {
+                sqlite.execSQL(
+                    fileOperationInsert(
+                        stage = "EXPECTING_RESERVATION",
+                        burstOrdinal = "0.5",
+                    ),
+                )
+            }
+
+            sqlite.execSQL(
+                fileOperationInsert(
+                    stage = "EXPECTING_RESERVATION",
+                    burstOrdinal = "0",
+                ),
+            )
+            assertOrdinalRejected {
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET burst_ordinal = 3, " +
+                        "updated_at_epoch_millis = 2 " +
+                        "WHERE command_token = 'command-1' AND burst_ordinal = 0",
+                )
+            }
+            assertOrdinalRejected {
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET burst_ordinal = 1.5, " +
+                        "updated_at_epoch_millis = 2 " +
+                        "WHERE command_token = 'command-1' AND burst_ordinal = 0",
+                )
+            }
+        } finally {
+            CaptureFileOperationStateTriggers.install(sqlite)
+        }
+    }
+
+    @Test
+    fun captureFileOperationRejectsMalformedInsertAndUpdateShapes() {
+        val sqlite = openDatabase().openHelper.writableDatabase
+        seedAttempt(sqlite)
+
+        assertJournalRejected {
+            sqlite.execSQL(fileOperationInsert(stage = "TELEPORTING"))
+        }
+        assertJournalRejected {
+            sqlite.execSQL(
+                fileOperationInsert(
+                    stage = "EXPECTING_RESERVATION",
+                    byteCount = "100",
+                    sha256 = "'${VALID_SHA256}'",
+                    capturedAt = "1",
+                ),
+            )
+        }
+        assertJournalRejected {
+            sqlite.execSQL(fileOperationInsert(stage = "FINAL_DURABLE"))
+        }
+        assertJournalRejected {
+            sqlite.execSQL(
+                fileOperationInsert(
+                    stage = "EXPECTING_RESERVATION",
+                    reconciliationRequired = 1,
+                ),
+            )
+        }
+
+        sqlite.execSQL(fileOperationInsert(stage = "EXPECTING_RESERVATION"))
+
+        assertJournalRejected {
+            sqlite.execSQL(
+                "UPDATE capture_file_operations SET stage = 'WRITING_TEMP', " +
+                    "updated_at_epoch_millis = 1 " +
+                    "WHERE command_token = 'command-1' AND burst_ordinal = 0",
+            )
+        }
+        assertJournalRejected {
+            sqlite.execSQL(
+                "UPDATE capture_file_operations SET command_token = 'command-2', " +
+                    "updated_at_epoch_millis = 2 " +
+                    "WHERE command_token = 'command-1' AND burst_ordinal = 0",
+            )
+        }
+        assertJournalRejected {
+            sqlite.execSQL(
+                "UPDATE capture_file_operations SET relative_final_path = 'final/moved.jpg', " +
+                    "updated_at_epoch_millis = 2 " +
+                    "WHERE command_token = 'command-1' AND burst_ordinal = 0",
+            )
+        }
+    }
+
+    @Test
+    fun captureFileOperationTriggersRemainInstalledExactlyOnceAfterReopen() {
+        var sqlite = openDatabase().openHelper.writableDatabase
+        assertEquals(2, sqlite.journalTriggerCount())
+        appDatabase?.close()
+        appDatabase = null
+
+        sqlite = openDatabase().openHelper.writableDatabase
+        assertEquals(2, sqlite.journalTriggerCount())
+        seedAttempt(sqlite)
+        assertJournalRejected {
+            sqlite.execSQL(fileOperationInsert(stage = "TELEPORTING"))
         }
     }
 
@@ -363,6 +510,47 @@ class AppDatabaseAndroidTest {
             "'external_primary', 'photo.jpg', 'Pictures/PoseGuideSnap', 'image/jpeg', " +
             "'pending', '$claimToken', NULL, 'none', 0, 2, 2)"
 
+    private fun fileOperationInsert(
+        stage: String,
+        burstOrdinal: String = "0",
+        byteCount: String = "NULL",
+        sha256: String = "NULL",
+        capturedAt: String = "NULL",
+        lastFailureCode: String = "NULL",
+        reconciliationRequired: Int = 0,
+    ): String =
+        "INSERT INTO capture_file_operations " +
+            "(command_token, burst_ordinal, relative_final_path, relative_temp_path, " +
+            "relative_quarantine_path, stage, byte_count, sha256, " +
+            "captured_at_epoch_millis, last_failure_code, reconciliation_required, " +
+            "created_at_epoch_millis, updated_at_epoch_millis) " +
+            "VALUES ('command-1', $burstOrdinal, 'final/command-1/0.jpg', 'temp/command-1/0.tmp', " +
+            "'quarantine/command-1/0.bin', '$stage', $byteCount, $sha256, $capturedAt, " +
+            "$lastFailureCode, $reconciliationRequired, 1, 1)"
+
+    private fun assertJournalRejected(block: () -> Unit) {
+        try {
+            block()
+            throw AssertionError("Expected SQLite to reject a malformed capture file operation")
+        } catch (error: SQLiteConstraintException) {
+            assertTrue(
+                "unexpected constraint message: ${error.message}",
+                error.message.orEmpty().contains(CaptureFileOperationStateTriggers.ERROR_MESSAGE),
+            )
+        }
+    }
+
+    private fun SupportSQLiteDatabase.journalTriggerCount(): Int =
+        query(
+            "SELECT COUNT(*) AS trigger_count FROM sqlite_master " +
+                "WHERE type = 'trigger' AND name IN " +
+                "('trigger_capture_file_operations_state_insert', " +
+                "'trigger_capture_file_operations_state_update')",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getInt(cursor.getColumnIndexOrThrow("trigger_count"))
+        }
+
     private fun assertActiveSessionRejected(block: () -> Unit) {
         try {
             block()
@@ -413,15 +601,15 @@ class AppDatabaseAndroidTest {
         }
     }
 
-    private fun SupportSQLiteDatabase.ordinalTriggerCount(): Int =
-        query(
-            "SELECT COUNT(*) AS trigger_count FROM sqlite_master " +
-                "WHERE type = 'trigger' AND tbl_name IN " +
-                "('private_capture_outputs', 'capture_export_outputs')",
-        ).use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            cursor.getInt(cursor.getColumnIndexOrThrow("trigger_count"))
-        }
+    private fun assertExactOrdinalTriggers(sqlite: SupportSQLiteDatabase) {
+        val actual = sqlite.stringColumn(
+            "SELECT name FROM sqlite_master " +
+                "WHERE type = 'trigger' AND name LIKE 'trigger_%_burst_ordinal_%'",
+            "name",
+        )
+        assertEquals(6, actual.size)
+        assertEquals(EXPECTED_ORDINAL_TRIGGER_NAMES, actual)
+    }
 
     private fun SupportSQLiteDatabase.stringColumn(sql: String, column: String): Set<String> =
         buildSet {
@@ -449,6 +637,55 @@ class AppDatabaseAndroidTest {
             }
         }
 
+    private fun SupportSQLiteDatabase.tableColumns(table: String): List<ColumnContract> =
+        buildList {
+            query("PRAGMA table_info(`$table`)").use { cursor ->
+                while (cursor.moveToNext()) {
+                    val defaultValueIndex = cursor.getColumnIndexOrThrow("dflt_value")
+                    add(
+                        ColumnContract(
+                            name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                            type = cursor.getString(cursor.getColumnIndexOrThrow("type")),
+                            notNull = cursor.getInt(cursor.getColumnIndexOrThrow("notnull")) == 1,
+                            defaultValue = if (cursor.isNull(defaultValueIndex)) {
+                                null
+                            } else {
+                                cursor.getString(defaultValueIndex)
+                            },
+                            primaryKeyPosition = cursor.getInt(cursor.getColumnIndexOrThrow("pk")),
+                        ),
+                    )
+                }
+            }
+        }
+
+    private fun SupportSQLiteDatabase.namedIndexContracts(table: String): Set<NamedIndexContract> =
+        buildSet {
+            query("PRAGMA index_list(`$table`)").use { indexes ->
+                while (indexes.moveToNext()) {
+                    if (indexes.getString(indexes.getColumnIndexOrThrow("origin")) != "c") {
+                        continue
+                    }
+                    val name = indexes.getString(indexes.getColumnIndexOrThrow("name"))
+                    val columns = buildList {
+                        query("PRAGMA index_info(`$name`)").use { details ->
+                            while (details.moveToNext()) {
+                                add(details.getString(details.getColumnIndexOrThrow("name")))
+                            }
+                        }
+                    }
+                    add(
+                        NamedIndexContract(
+                            name = name,
+                            columns = columns,
+                            unique = indexes.getInt(indexes.getColumnIndexOrThrow("unique")) == 1,
+                            partial = indexes.getInt(indexes.getColumnIndexOrThrow("partial")) == 1,
+                        ),
+                    )
+                }
+            }
+        }
+
     private data class ForeignKeyContract(
         val table: String,
         val from: String,
@@ -462,10 +699,34 @@ class AppDatabaseAndroidTest {
         val unique: Boolean,
     )
 
+    private data class ColumnContract(
+        val name: String,
+        val type: String,
+        val notNull: Boolean,
+        val defaultValue: String?,
+        val primaryKeyPosition: Int,
+    )
+
+    private data class NamedIndexContract(
+        val name: String,
+        val columns: List<String>,
+        val unique: Boolean,
+        val partial: Boolean,
+    )
+
     companion object {
         private val EXPECTED_ACTIVE_SESSION_TRIGGER_NAMES = setOf(
             "trigger_shoot_sessions_one_active_insert",
             "trigger_shoot_sessions_one_active_update",
+        )
+
+        private val EXPECTED_ORDINAL_TRIGGER_NAMES = setOf(
+            "trigger_private_capture_outputs_burst_ordinal_insert",
+            "trigger_private_capture_outputs_burst_ordinal_update",
+            "trigger_capture_export_outputs_burst_ordinal_insert",
+            "trigger_capture_export_outputs_burst_ordinal_update",
+            "trigger_capture_file_operations_burst_ordinal_insert",
+            "trigger_capture_file_operations_burst_ordinal_update",
         )
 
         private val REQUIRED_TABLES = setOf(
@@ -477,6 +738,7 @@ class AppDatabaseAndroidTest {
             "capture_confirmation_receipts",
             "capture_export_outboxes",
             "capture_export_outputs",
+            "capture_file_operations",
         )
 
         private val REQUIRED_FOREIGN_KEYS = mapOf(
@@ -487,6 +749,7 @@ class AppDatabaseAndroidTest {
             "capture_confirmation_receipts" to setOf(foreignKey("capture_attempts", "command_token", "command_token")),
             "capture_export_outboxes" to setOf(foreignKey("capture_confirmation_receipts", "command_token", "command_token")),
             "capture_export_outputs" to setOf(foreignKey("capture_export_outboxes", "command_token", "command_token")),
+            "capture_file_operations" to setOf(foreignKey("capture_attempts", "command_token", "command_token")),
         )
 
         private val REQUIRED_INDEXES = mapOf(
@@ -503,6 +766,44 @@ class AppDatabaseAndroidTest {
                 IndexContract(listOf("claim_token"), true),
                 IndexContract(listOf("lifecycle_state"), false),
                 IndexContract(listOf("deletion_generation"), false),
+            ),
+            "capture_file_operations" to setOf(
+                IndexContract(listOf("stage"), false),
+                IndexContract(listOf("reconciliation_required"), false),
+            ),
+        )
+
+        private const val VALID_SHA256 =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+        private val EXPECTED_JOURNAL_COLUMNS = listOf(
+            ColumnContract("command_token", "TEXT", true, null, 1),
+            ColumnContract("burst_ordinal", "INTEGER", true, null, 2),
+            ColumnContract("relative_final_path", "TEXT", true, null, 0),
+            ColumnContract("relative_temp_path", "TEXT", true, null, 0),
+            ColumnContract("relative_quarantine_path", "TEXT", true, null, 0),
+            ColumnContract("stage", "TEXT", true, null, 0),
+            ColumnContract("byte_count", "INTEGER", false, null, 0),
+            ColumnContract("sha256", "TEXT", false, null, 0),
+            ColumnContract("captured_at_epoch_millis", "INTEGER", false, null, 0),
+            ColumnContract("last_failure_code", "TEXT", false, null, 0),
+            ColumnContract("reconciliation_required", "INTEGER", true, null, 0),
+            ColumnContract("created_at_epoch_millis", "INTEGER", true, null, 0),
+            ColumnContract("updated_at_epoch_millis", "INTEGER", true, null, 0),
+        )
+
+        private val EXPECTED_JOURNAL_INDEXES = setOf(
+            NamedIndexContract(
+                name = "index_capture_file_operations_stage",
+                columns = listOf("stage"),
+                unique = false,
+                partial = false,
+            ),
+            NamedIndexContract(
+                name = "index_capture_file_operations_reconciliation_required",
+                columns = listOf("reconciliation_required"),
+                unique = false,
+                partial = false,
             ),
         )
 

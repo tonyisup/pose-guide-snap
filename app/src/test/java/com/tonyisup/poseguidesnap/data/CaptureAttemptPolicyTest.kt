@@ -65,16 +65,16 @@ class CaptureAttemptPolicyTest {
     }
 
     @Test
-    fun captureStartPolicyRejectsBlankSessionAndNegativeTimestamp() {
+    fun captureAttemptStartPolicyRejectsBlankSessionAndNegativeTimestamp() {
         assertEquals(
-            CaptureStartRejectionReason.INVALID_SESSION_ID,
-            CaptureStartAuthorizationPolicy.validate("\t", 0L),
+            CaptureAttemptStartRejectionReason.INVALID_SESSION_ID,
+            CaptureAttemptStartPolicy.validate("\t", 0L),
         )
         assertEquals(
-            CaptureStartRejectionReason.INVALID_TIMESTAMP,
-            CaptureStartAuthorizationPolicy.validate("session-1", -1L),
+            CaptureAttemptStartRejectionReason.INVALID_TIMESTAMP,
+            CaptureAttemptStartPolicy.validate("session-1", -1L),
         )
-        assertNull(CaptureStartAuthorizationPolicy.validate("session-1", 0L))
+        assertNull(CaptureAttemptStartPolicy.validate("session-1", 0L))
     }
 
     @Test
@@ -84,12 +84,12 @@ class CaptureAttemptPolicyTest {
             AttemptRegistrationResult.Registered,
             AttemptRegistrationResult.AlreadyRegistered,
             AttemptRegistrationResult.Rejected(AttemptRegistrationRejectionReason.TOKEN_CONFLICT),
-            CaptureStartAuthorizationResult.Started,
-            CaptureStartAuthorizationResult.AlreadyStarted,
-            CaptureStartAuthorizationResult.BlockedByDeletion,
-            CaptureStartAuthorizationResult.Rejected(CaptureStartRejectionReason.TOKEN_SESSION_CONFLICT),
-            CaptureStartAuthorizationResult.Rejected(CaptureStartRejectionReason.INACTIVE_SESSION),
-            CaptureStartAuthorizationResult.Rejected(CaptureStartRejectionReason.STALE_POSE),
+            CaptureAttemptStartResult.Started,
+            CaptureAttemptStartResult.AlreadyStarted,
+            CaptureAttemptStartResult.BlockedByDeletion,
+            CaptureAttemptStartResult.Rejected(CaptureAttemptStartRejectionReason.TOKEN_SESSION_CONFLICT),
+            CaptureAttemptStartResult.Rejected(CaptureAttemptStartRejectionReason.INACTIVE_SESSION),
+            CaptureAttemptStartResult.Rejected(CaptureAttemptStartRejectionReason.STALE_POSE),
         )
 
         values.forEach { value ->
