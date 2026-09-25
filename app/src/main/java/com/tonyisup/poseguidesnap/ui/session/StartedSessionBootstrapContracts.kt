@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.ui.session
 import com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapResult
 import com.tonyisup.poseguidesnap.data.GuidedSessionLifecycle
 import com.tonyisup.poseguidesnap.data.GuidedSessionSnapshot
+import com.tonyisup.poseguidesnap.camera.GuidedSessionStartupRecoveryResult
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
 
 internal sealed interface StartedSessionBootstrapState {
@@ -40,6 +41,10 @@ internal sealed interface StartedSessionBootstrapState {
 
 internal fun interface StartedSessionBootstrapRepositoryPort {
     fun loadGuidedSessionBootstrap(sessionId: String): GuidedSessionBootstrapResult
+}
+
+internal fun interface StartedSessionStartupRecoveryPort {
+    fun reconcile(sessionId: String): GuidedSessionStartupRecoveryResult
 }
 
 internal fun interface StartedSessionBootstrapWorkflowPort {

@@ -233,6 +233,7 @@ internal class RoomShootEditorWorkflow(
     private val blockingDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val wallClockProvider: () -> Long = System::currentTimeMillis,
     private val sessionIdProvider: () -> String = { UUID.randomUUID().toString() },
+    private val recoverImports: () -> Unit = {},
 ) : ShootEditorWorkflowPort {
     private val startIdentityLock = Any()
     private var startIdentity: StartIdentity? = null
@@ -240,6 +241,7 @@ internal class RoomShootEditorWorkflow(
     override fun observeEditorSnapshot(shootId: String): Flow<ShootEditorDisplaySnapshot?> = flow {
         val lease = authority.tryAcquire() ?: throw ShootEditorAuthorityUnavailableException()
         try {
+            recoverImports()
             repository.observeShootEditor(shootId).collect { snapshot ->
                 if (snapshot == null) {
                     emit(null)

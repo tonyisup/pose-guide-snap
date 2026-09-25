@@ -152,3 +152,10 @@ internal fun androidPrivateCaptureFilePublisher(rootDirectory: File): PrivateCap
         rootDirectory = rootDirectory,
         fileOps = AndroidPrivateCaptureFileOps,
     )
+
+internal fun androidJournaledPrivateCaptureStore(
+    noBackupFilesDirectory: File,
+): JournaledPrivateCaptureStore = JournaledPrivateCaptureStore(
+    noBackupFilesDirectory = noBackupFilesDirectory,
+    fileOps = AndroidPrivateCaptureFileOps,
+)

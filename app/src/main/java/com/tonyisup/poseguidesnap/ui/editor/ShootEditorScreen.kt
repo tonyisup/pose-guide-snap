@@ -77,7 +77,7 @@ internal fun shootEditorEligibilityMessage(
     ShootEditorStartEligibility.SHOOT_DELETING ->
         "This shoot is being deleted and cannot be started."
     ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK ->
-        "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot."
+        "An interrupted import needs repair before continuing. Use Retry repair."
     ShootEditorStartEligibility.ACTIVE_SESSION ->
         "Resume the active session before starting a new one."
     ShootEditorStartEligibility.OPERATION_IN_PROGRESS ->
@@ -145,7 +145,7 @@ internal fun shootEditorFeedbackText(
         ShootEditorFeedbackCode.IMPORT_RETRYABLE_FAILURE ->
             "Try again later."
         ShootEditorFeedbackCode.RECONCILIATION_REQUIRED ->
-            "Use Back, then create a new shoot; import repair is not available in this version."
+            "Use Retry repair. If repair remains incomplete, your existing photos are kept safe."
         ShootEditorFeedbackCode.REORDER_SAVED ->
             "The displayed positions will update from the saved shoot."
         ShootEditorFeedbackCode.REORDER_UNCHANGED ->
@@ -175,7 +175,7 @@ private fun retryGuidance(retryAction: ReferenceImportRetryAction): String? = wh
     ReferenceImportRetryAction.RETRY_ALLOCATION ->
         "Retry adding the reference photo."
     ReferenceImportRetryAction.RUN_RECONCILIATION_THEN_RETRY ->
-        "Use Back, then create a new shoot; import repair is not available in this version."
+        "Use Retry repair. If repair remains incomplete, your existing photos are kept safe."
     ReferenceImportRetryAction.ALLOCATE_NEW_ATTEMPT ->
         "Choose a new photo to try again."
 }
@@ -223,7 +223,7 @@ private fun allocationBlockedGuidance(
         "Wait for the current import, then retry adding the photo."
     ReferenceImportAllocationBlockReason.RECONCILIATION_REQUIRED,
     ReferenceImportAllocationBlockReason.AUTHORITY_INCONSISTENT,
-    -> "Use Back, then create a new shoot; import repair is not available in this version."
+    -> "Use Retry repair. If repair remains incomplete, your existing photos are kept safe."
     ReferenceImportAllocationBlockReason.IDENTITY_UNAVAILABLE,
     ReferenceImportAllocationBlockReason.AUTHORITY_UNAVAILABLE,
     null,
@@ -353,6 +353,7 @@ internal fun ShootEditorScreen(
                 val deleting = snapshot.lifecycle == ShootPreparationLifecycle.DELETING
                 val full = references.size >= MAX_REFERENCES
                 val unresolvedImport = data.localReconciliationRequired ||
+                    data.feedback?.retryAction == ReferenceImportRetryAction.RUN_RECONCILIATION_THEN_RETRY ||
                     snapshot.importWorkStatuses.any { work ->
                         work == ImportWorkStatus.IN_PROGRESS ||
                             work == ImportWorkStatus.RECONCILIATION_REQUIRED
@@ -375,14 +376,20 @@ internal fun ShootEditorScreen(
                         )
                     }
                 }
-                if (
-                    data.localReconciliationRequired ||
-                    ImportWorkStatus.RECONCILIATION_REQUIRED in snapshot.importWorkStatuses
-                ) {
+                if (unresolvedImport) {
                     item(key = "reconciliation-required") {
                         PoliteStatus(
-                            "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot.",
+                            "An interrupted import needs repair before continuing. Use Retry repair.",
                         )
+                    }
+                    item(key = "retry-repair") {
+                        Button(
+                            onClick = onRetry,
+                            enabled = !operationPending,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = MIN_TOUCH_TARGET),
+                        ) {
+                            Text("Retry repair")
+                        }
                     }
                 }
                 data.feedback?.let { currentFeedback ->
@@ -500,7 +507,7 @@ private fun AddReferenceForm(
         full -> "This shoot has reached its 20-reference capacity."
         operationPending -> "Wait for the current operation to finish before adding a photo."
         unresolvedImport ->
-            "Use Back, then create a new shoot; import repair is not available in this version."
+            "Use Retry repair. If repair remains incomplete, your existing photos are kept safe."
         labelError != null -> labelError
         else -> "Ready to choose a reference photo."
     }

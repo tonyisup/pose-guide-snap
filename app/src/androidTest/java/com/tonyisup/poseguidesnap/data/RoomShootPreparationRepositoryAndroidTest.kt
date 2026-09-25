@@ -1,10 +1,16 @@
 package com.tonyisup.poseguidesnap.data
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -30,6 +36,37 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RoomShootPreparationRepositoryAndroidTest {
+    @Test
+    fun listObserverReceivesReferenceChangesFromAnotherDatabaseOwner() = runBlocking {
+        val observerContext = ServiceRegistrationContext(context)
+        val writerContext = ServiceRegistrationContext(context)
+        database = AppDatabase.create(observerContext, databaseName)
+        val observerRepository = repository()
+        observerRepository.createShoot("shoot-observation", "Observe", 1L)
+        val writer = AppDatabase.create(writerContext, databaseName)
+        try {
+            writer.openHelper.writableDatabase
+            withTimeout(10_000L) {
+                observerContext.registered.await()
+                writerContext.registered.await()
+            }
+            val initial = CompletableDeferred<Unit>()
+            val changes = async {
+                withTimeout(10_000L) {
+                    observerRepository.observeShoots().onEach { initial.complete(Unit) }
+                        .first { rows -> rows.singleOrNull()?.validatedReferenceCount == 1 }
+                }
+            }
+            initial.await()
+            writer.runInTransaction {
+                seedPose(writer.openHelper.writableDatabase, "shoot-observation", 0, "pose-observation", "VALIDATED", "Pose", true)
+            }
+            assertEquals(1, changes.await().single().validatedReferenceCount)
+        } finally {
+            writer.close()
+        }
+    }
+
     private lateinit var context: Context
     private lateinit var databaseName: String
     private var database: AppDatabase? = null
@@ -1919,4 +1956,44 @@ class RoomShootPreparationRepositoryAndroidTest {
         val poseId: String,
         val values: List<String?>,
     )
+
+    /** Room's bindService call returns before its invalidation callback is registered. */
+    private class ServiceRegistrationContext(base: Context) : ContextWrapper(base.applicationContext) {
+        val registered = CompletableDeferred<Unit>()
+        private val connections = IdentityHashMap<ServiceConnection, ServiceConnection>()
+
+        override fun getApplicationContext(): Context = this
+
+        override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
+            val forwarding = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                    conn.onServiceConnected(name, binder)
+                    registered.complete(Unit)
+                }
+
+                override fun onServiceDisconnected(name: ComponentName) = conn.onServiceDisconnected(name)
+
+                override fun onBindingDied(name: ComponentName) = conn.onBindingDied(name)
+
+                override fun onNullBinding(name: ComponentName) = conn.onNullBinding(name)
+            }
+            synchronized(connections) {
+                check(!connections.containsKey(conn)) { "Service connection already bound" }
+                connections[conn] = forwarding
+            }
+            return try {
+                super.bindService(service, forwarding, flags).also { bound ->
+                    if (!bound) synchronized(connections) { connections.remove(conn) }
+                }
+            } catch (failure: Throwable) {
+                synchronized(connections) { connections.remove(conn) }
+                throw failure
+            }
+        }
+
+        override fun unbindService(conn: ServiceConnection) {
+            val forwarding = synchronized(connections) { connections.remove(conn) }
+            super.unbindService(forwarding ?: conn)
+        }
+    }
 }

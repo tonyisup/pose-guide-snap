@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tonyisup.poseguidesnap.data.ImportWorkStatus
 import com.tonyisup.poseguidesnap.data.ShootPreparationLifecycle
+import com.tonyisup.poseguidesnap.importer.ReferenceImportAllocationBlockReason
+import com.tonyisup.poseguidesnap.importer.ReferenceImportRetryAction
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
@@ -156,6 +158,26 @@ class ShootEditorFlowTest {
     }
 
     @Test
+    fun allocationRepairGuidanceAlwaysHasActionEvenWithoutLocalImportRows() {
+        val repairs = AtomicInteger()
+        val data = ShootEditorLoadedData(
+            snapshot = snapshot(references = emptyList()),
+            feedback = ShootEditorFeedback(
+                code = ShootEditorFeedbackCode.IMPORT_ALLOCATION_BLOCKED,
+                retryAction = ReferenceImportRetryAction.RUN_RECONCILIATION_THEN_RETRY,
+                allocationBlockReason = ReferenceImportAllocationBlockReason.AUTHORITY_INCONSISTENT,
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                screen(ShootEditorUiState.Empty(data), onRetry = repairs::incrementAndGet)
+            }
+        }
+        composeRule.onNodeWithText("Retry repair").performScrollTo().assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, repairs.get()) }
+    }
+
+    @Test
     fun importAndReconciliationStatusRemainVisible() {
         val operation = ShootEditorOperationId("shoot-fixture", 1L)
         val data = ShootEditorLoadedData(
@@ -165,9 +187,11 @@ class ShootEditorFlowTest {
             ),
             localReconciliationRequired = true,
         )
+        val state = mutableStateOf<ShootEditorUiState>(ShootEditorUiState.Importing(data, operation))
+        val repairs = AtomicInteger()
         composeRule.setContent {
             MaterialTheme {
-                screen(ShootEditorUiState.Importing(data, operation))
+                screen(state.value, onRetry = repairs::incrementAndGet)
             }
         }
 
@@ -175,8 +199,12 @@ class ShootEditorFlowTest {
             "Reference photo selection and import are in progress.",
         ).performScrollTo().assertExists()
         composeRule.onNodeWithText(
-            "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot.",
+            "An interrupted import needs repair before continuing. Use Retry repair.",
         ).performScrollTo().assertExists()
+        composeRule.onNodeWithText("Retry repair").performScrollTo().assertIsNotEnabled()
+        composeRule.runOnIdle { state.value = ShootEditorUiState.Content(data) }
+        composeRule.onNodeWithText("Retry repair").performScrollTo().assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, repairs.get()) }
     }
 
     private fun loaded(

@@ -68,6 +68,116 @@ class GuidedSessionBootstrapMapperTest {
     }
 
     @Test
+    fun failedCleanedHistoryIsRetryableAndDoesNotBlockCurrentPose() {
+        val failed = attempt(0L, 0, "FAILED_CLEANED", 10L, 20L, null)
+        val result = GuidedSessionBootstrapMapper.map(
+            authorityRows(
+                currentPoseIndex = 0,
+                nextAttemptNumber = 1L,
+                lifecycleState = "ACTIVE",
+                attempts = listOf(failed),
+            ),
+        )
+
+        assertTrue(result is GuidedSessionBootstrapResult.Ready)
+        result as GuidedSessionBootstrapResult.Ready
+        assertEquals(1, result.snapshot.attemptCount)
+        assertEquals(1, result.snapshot.failedAttemptCount)
+        assertEquals(0, result.snapshot.confirmedAttemptCount)
+        assertNull(result.snapshot.blockingAttempt)
+    }
+
+    @Test
+    fun reconciliationAcceptsOnlyCleanupProgressNewerThanAggregateAttempt() {
+        val source = blockingRows("RECONCILIATION_REQUIRED")
+        val attempt = source.attempts.single().copy(
+            reconciliationRequired = true,
+            updatedAtEpochMillis = 20L,
+        )
+        val aggregate = source.copyRows(
+            shoot = source.shoot!!.copy(updatedAtEpochMillis = 20L),
+            session = source.session!!.copy(updatedAtEpochMillis = 20L),
+            attempts = listOf(attempt),
+        )
+        val cleanupProgress = aggregate.copyRows(
+            captureFileOperations = aggregate.captureFileOperations.mapAt(0) { row ->
+                progressedCaptureFileOperation(
+                    row = row,
+                    stage = CaptureFileOperationStage.CLEANUP_PENDING_SYNC,
+                    updatedAt = 21L,
+                    hasEvidence = false,
+                )
+            },
+        )
+        assertReconciliation(cleanupProgress, "newer recovery cleanup")
+
+        val forbiddenWriteProgress = aggregate.copyRows(
+            captureFileOperations = aggregate.captureFileOperations.mapAt(0) { row ->
+                progressedCaptureFileOperation(
+                    row = row,
+                    stage = CaptureFileOperationStage.WRITING_TEMP,
+                    updatedAt = 21L,
+                    hasEvidence = false,
+                )
+            },
+        )
+        assertRejected(
+            GuidedSessionBootstrapRejectionReason.INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+            forbiddenWriteProgress,
+        )
+    }
+
+    @Test
+    fun failedAttemptsMayPrecedeConfirmationAndAnotherBlockingRetryForTheSamePose() {
+        val failed = attempt(0L, 0, "FAILED_CLEANED", 10L, 20L, null)
+        val confirmed = attempt(1L, 0, "CONFIRMED", 30L, 40L, 40L)
+        val blocking = attempt(2L, 1, "RECONCILIATION_REQUIRED", 50L, 70L, null)
+            .copy(reconciliationRequired = true)
+        val rows = authorityRows(
+            currentPoseIndex = 1,
+            nextAttemptNumber = 3L,
+            lifecycleState = "ACTIVE",
+            attempts = listOf(failed, confirmed, blocking),
+        )
+        val result = GuidedSessionBootstrapMapper.map(rows)
+
+        assertTrue(result is GuidedSessionBootstrapResult.ReconciliationRequired)
+        result as GuidedSessionBootstrapResult.ReconciliationRequired
+        assertEquals(3, result.snapshot.attemptCount)
+        assertEquals(1, result.snapshot.failedAttemptCount)
+        assertEquals(1, result.snapshot.confirmedAttemptCount)
+        assertEquals(
+            GuidedCaptureAttemptState.RECONCILIATION_REQUIRED,
+            result.snapshot.blockingAttempt?.state,
+        )
+        assertTrue(requireNotNull(result.snapshot.blockingAttempt).reconciliationRequired)
+    }
+
+    @Test
+    fun failedCleanedRejectsResidualJournalAndAttemptPoseOrderingCannotSkip() {
+        val failed = attempt(0L, 0, "FAILED_CLEANED", 10L, 20L, null)
+        val ready = authorityRows(0, 1L, "ACTIVE", listOf(failed))
+        assertRejected(
+            GuidedSessionBootstrapRejectionReason.INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+            ready.copyRows(captureFileOperations = captureFileOperations("token-0", 10L)),
+        )
+
+        val skipped = authorityRows(
+            currentPoseIndex = 1,
+            nextAttemptNumber = 2L,
+            lifecycleState = "ACTIVE",
+            attempts = listOf(
+                failed,
+                attempt(1L, 1, "CONFIRMED", 30L, 40L, 40L),
+            ),
+        )
+        assertRejected(
+            GuidedSessionBootstrapRejectionReason.INVALID_ATTEMPT_AUTHORITY,
+            skipped,
+        )
+    }
+
+    @Test
     fun registeredAndCapturingRequireCoherentCaptureFileOperations() {
         listOf("REGISTERED", "CAPTURING").forEach { state ->
             assertReconciliation(blockingRows(state), state)
@@ -700,7 +810,7 @@ class GuidedSessionBootstrapMapperTest {
             ),
         )
         assertRejected(
-            GuidedSessionBootstrapRejectionReason.AUTHORITY_INCONSISTENT,
+            GuidedSessionBootstrapRejectionReason.INVALID_ATTEMPT_AUTHORITY,
             completed.copyRows(session = completed.session!!.copy(nextAttemptNumber = 2L)),
         )
     }
@@ -898,7 +1008,13 @@ class GuidedSessionBootstrapMapperTest {
                 exportOutputs(attempt.commandToken, attempt.confirmedAtEpochMillis!!)
             },
             captureFileOperations = attempts
-                .filter { attempt -> attempt.lifecycleState != "CONFIRMED" }
+                .filter { attempt ->
+                    attempt.lifecycleState in setOf(
+                        "REGISTERED",
+                        "CAPTURING",
+                        "RECONCILIATION_REQUIRED",
+                    )
+                }
                 .flatMap { attempt ->
                     captureFileOperations(
                         token = attempt.commandToken,
@@ -1055,7 +1171,7 @@ class GuidedSessionBootstrapMapperTest {
         stage = stage.name,
         byteCount = if (hasEvidence) 100L + row.burstOrdinal else null,
         sha256 = if (hasEvidence) SHA_256 else null,
-        capturedAtEpochMillis = if (hasEvidence) updatedAt - 1L else null,
+        capturedAtEpochMillis = if (hasEvidence) updatedAt else null,
         updatedAtEpochMillis = updatedAt,
     )
 

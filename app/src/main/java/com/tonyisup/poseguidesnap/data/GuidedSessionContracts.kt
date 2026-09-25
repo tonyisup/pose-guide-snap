@@ -10,6 +10,8 @@ enum class GuidedSessionLifecycle {
 enum class GuidedCaptureAttemptState {
     REGISTERED,
     CAPTURING,
+    FAILED_CLEANED,
+    RECONCILIATION_REQUIRED,
     CONFIRMED,
 }
 
@@ -45,9 +47,16 @@ data class GuidedBlockingAttemptSummary(
         require(isSafeGuidedOwnershipIdentity(poseId)) { "blocking pose ID is invalid" }
         require(attemptNumber >= 0L) { "blocking attempt number must be nonnegative" }
         require(poseIndex >= 0) { "blocking pose index must be nonnegative" }
-        require(state != GuidedCaptureAttemptState.CONFIRMED) {
-            "confirmed attempts cannot block bootstrap"
+        require(
+            state != GuidedCaptureAttemptState.CONFIRMED &&
+                state != GuidedCaptureAttemptState.FAILED_CLEANED,
+        ) {
+            "terminal attempts cannot block bootstrap"
         }
+        require(
+            reconciliationRequired ==
+                (state == GuidedCaptureAttemptState.RECONCILIATION_REQUIRED),
+        ) { "blocking reconciliation authority must match its state" }
         require(deletionGeneration >= 0L) { "blocking generation must be nonnegative" }
         require(createdAtEpochMillis >= 0L) { "blocking created timestamp must be nonnegative" }
         require(updatedAtEpochMillis >= createdAtEpochMillis) {
@@ -72,6 +81,7 @@ class GuidedSessionSnapshot(
     appliedReceiptTokens: Iterable<String>,
     val unresolvedExportCount: Int,
     val blockingAttempt: GuidedBlockingAttemptSummary?,
+    val failedAttemptCount: Int = 0,
 ) {
     val orderedPoseIds: List<String> = immutableBootstrapList(orderedPoseIds)
     val appliedReceiptTokens: List<String> = immutableBootstrapList(appliedReceiptTokens)
@@ -94,6 +104,9 @@ class GuidedSessionSnapshot(
         require(confirmedAttemptCount in 0..attemptCount) {
             "confirmed attempt count must be in bounds"
         }
+        require(failedAttemptCount in 0..attemptCount) {
+            "failed attempt count must be in bounds"
+        }
         require(this.appliedReceiptTokens.size == confirmedAttemptCount) {
             "receipt tokens must match confirmed attempts"
         }
@@ -104,8 +117,11 @@ class GuidedSessionSnapshot(
             "receipt tokens must be safe"
         }
         require(unresolvedExportCount >= 0) { "unresolved export count must be nonnegative" }
-        require(attemptCount == confirmedAttemptCount + if (blockingAttempt == null) 0 else 1) {
-            "attempt count must match confirmed and blocking authority"
+        require(
+            attemptCount == confirmedAttemptCount + failedAttemptCount +
+                if (blockingAttempt == null) 0 else 1,
+        ) {
+            "attempt count must match confirmed, failed, and blocking authority"
         }
     }
 
@@ -123,6 +139,7 @@ class GuidedSessionSnapshot(
         appliedReceiptTokens: Iterable<String> = this.appliedReceiptTokens,
         unresolvedExportCount: Int = this.unresolvedExportCount,
         blockingAttempt: GuidedBlockingAttemptSummary? = this.blockingAttempt,
+        failedAttemptCount: Int = this.failedAttemptCount,
     ): GuidedSessionSnapshot = GuidedSessionSnapshot(
         sessionId,
         shootId,
@@ -137,6 +154,7 @@ class GuidedSessionSnapshot(
         appliedReceiptTokens,
         unresolvedExportCount,
         blockingAttempt,
+        failedAttemptCount,
     )
 
     override fun equals(other: Any?): Boolean =
@@ -151,6 +169,7 @@ class GuidedSessionSnapshot(
             deletionGeneration == other.deletionGeneration &&
             attemptCount == other.attemptCount &&
             confirmedAttemptCount == other.confirmedAttemptCount &&
+            failedAttemptCount == other.failedAttemptCount &&
             appliedReceiptTokens == other.appliedReceiptTokens &&
             unresolvedExportCount == other.unresolvedExportCount &&
             blockingAttempt == other.blockingAttempt
@@ -166,6 +185,7 @@ class GuidedSessionSnapshot(
         result = 31 * result + deletionGeneration.hashCode()
         result = 31 * result + attemptCount
         result = 31 * result + confirmedAttemptCount
+        result = 31 * result + failedAttemptCount
         result = 31 * result + appliedReceiptTokens.hashCode()
         result = 31 * result + unresolvedExportCount
         result = 31 * result + (blockingAttempt?.hashCode() ?: 0)

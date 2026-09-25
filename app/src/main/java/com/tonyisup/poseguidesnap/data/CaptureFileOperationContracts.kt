@@ -158,6 +158,104 @@ sealed interface CaptureFileJournalResult {
     }
 }
 
+internal object CaptureFileTransitionPolicy {
+    private val legalTransitions = setOf(
+        CaptureFileOperationStage.EXPECTING_RESERVATION to CaptureFileOperationStage.WRITING_TEMP,
+        CaptureFileOperationStage.WRITING_TEMP to CaptureFileOperationStage.TEMP_SYNCED,
+        CaptureFileOperationStage.TEMP_SYNCED to CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+        CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC to CaptureFileOperationStage.FINAL_DURABLE,
+        CaptureFileOperationStage.TEMP_SYNCED to CaptureFileOperationStage.QUARANTINE_REQUIRED,
+        CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC to CaptureFileOperationStage.QUARANTINE_REQUIRED,
+        CaptureFileOperationStage.FINAL_DURABLE to CaptureFileOperationStage.QUARANTINE_REQUIRED,
+        CaptureFileOperationStage.QUARANTINE_REQUIRED to CaptureFileOperationStage.QUARANTINE_PENDING_SYNC,
+        CaptureFileOperationStage.QUARANTINE_PENDING_SYNC to CaptureFileOperationStage.QUARANTINE_DURABLE,
+        CaptureFileOperationStage.EXPECTING_RESERVATION to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.WRITING_TEMP to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.TEMP_SYNCED to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.FINAL_DURABLE to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.QUARANTINE_REQUIRED to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.QUARANTINE_PENDING_SYNC to CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.CLEANUP_REQUIRED to CaptureFileOperationStage.CLEANUP_PENDING_SYNC,
+        CaptureFileOperationStage.CLEANUP_PENDING_SYNC to CaptureFileOperationStage.CLEANED_DURABLE,
+    )
+
+    fun isLegalTransition(source: CaptureFileOperationStage, target: CaptureFileOperationStage): Boolean =
+        source to target in legalTransitions
+
+    fun advance(
+        source: CaptureFileOperationSnapshot,
+        request: CaptureFileAdvanceRequest,
+    ): CaptureFileJournalResult {
+        if (
+            request.identity != source.identity ||
+            request.expectedStage != source.stage ||
+            request.expectedUpdatedAtEpochMillis != source.updatedAtEpochMillis
+        ) {
+            return rejected(CaptureFileJournalRejectionReason.STALE_SNAPSHOT)
+        }
+        if (
+            request.expectedUpdatedAtEpochMillis < 0L ||
+            request.transitionedAtEpochMillis <= request.expectedUpdatedAtEpochMillis
+        ) {
+            return rejected(CaptureFileJournalRejectionReason.INVALID_TIMESTAMP)
+        }
+        if (!isLegalTransition(source.stage, request.targetStage)) {
+            return rejected(CaptureFileJournalRejectionReason.ILLEGAL_TRANSITION)
+        }
+        val expectedEvidence = when (request.targetStage) {
+            CaptureFileOperationStage.WRITING_TEMP,
+            CaptureFileOperationStage.CLEANED_DURABLE,
+            -> CaptureFileEvidence.EMPTY
+            CaptureFileOperationStage.TEMP_SYNCED -> CaptureFileEvidence(
+                request.byteCount,
+                request.sha256,
+                request.capturedAtEpochMillis,
+            )
+            else -> CaptureFileEvidence(source.byteCount, source.sha256, source.capturedAtEpochMillis)
+        }
+        if (
+            request.byteCount != expectedEvidence.byteCount ||
+            request.sha256 != expectedEvidence.sha256 ||
+            request.capturedAtEpochMillis != expectedEvidence.capturedAtEpochMillis ||
+            !hasValidCaptureFileOperationEvidence(
+                request.targetStage,
+                request.byteCount,
+                request.sha256,
+                request.capturedAtEpochMillis,
+            ) ||
+            (request.capturedAtEpochMillis != null &&
+                request.capturedAtEpochMillis !in source.createdAtEpochMillis..request.transitionedAtEpochMillis)
+        ) {
+            return rejected(CaptureFileJournalRejectionReason.INVALID_EVIDENCE)
+        }
+        return CaptureFileJournalResult.Applied(
+            source.copy(
+                stage = request.targetStage,
+                byteCount = request.byteCount,
+                sha256 = request.sha256,
+                capturedAtEpochMillis = request.capturedAtEpochMillis,
+                lastFailureCode = null,
+                reconciliationRequired = false,
+                updatedAtEpochMillis = request.transitionedAtEpochMillis,
+            ),
+        )
+    }
+
+    private fun rejected(reason: CaptureFileJournalRejectionReason) =
+        CaptureFileJournalResult.Rejected(reason)
+}
+
+private data class CaptureFileEvidence(
+    val byteCount: Long?,
+    val sha256: String?,
+    val capturedAtEpochMillis: Long?,
+) {
+    companion object {
+        val EMPTY = CaptureFileEvidence(null, null, null)
+    }
+}
+
 internal fun isWellFormedUtf16(value: String): Boolean {
     var index = 0
     while (index < value.length) {

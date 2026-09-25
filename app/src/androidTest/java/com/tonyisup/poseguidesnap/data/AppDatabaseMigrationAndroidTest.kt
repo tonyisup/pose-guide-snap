@@ -211,11 +211,10 @@ class AppDatabaseMigrationAndroidTest {
 
         assertEquals(
             CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+                CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
             ),
             RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
                 fixture.command,
-                malformedPrivateOutputs,
                 malformedExportTargets,
                 confirmedAtEpochMillis = 999L,
             ),
@@ -266,11 +265,10 @@ class AppDatabaseMigrationAndroidTest {
 
         assertEquals(
             CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
             ),
             RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
                 fixture.command,
-                fixture.privateOutputs,
                 fixture.exportTargets,
                 confirmedAtEpochMillis = 999L,
             ),
@@ -309,7 +307,6 @@ class AppDatabaseMigrationAndroidTest {
             CaptureConfirmationResult.AlreadyApplied,
             RoomShootRepository(checkNotNull(appDatabase)).confirmAndAdvance(
                 fixture.command,
-                fixture.privateOutputs,
                 fixture.exportTargets,
                 confirmedAtEpochMillis = 999L,
             ),

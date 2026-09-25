@@ -564,6 +564,11 @@ class DefaultPoseMatcherTest {
         assertEquals(0.85, defaults.minimumAngularSimilarity, 0.0)
         assertEquals(0.8, defaults.minimumPositionalSimilarity, 0.0)
         assertEquals(0.825, defaults.minimumOverallMatch, 0.0)
+        assertEquals(0.70, defaults.releaseMinimumLandmarkCoverage, 0.0)
+        assertEquals(0.75, defaults.releaseMinimumFramingScore, 0.0)
+        assertEquals(0.80, defaults.releaseMinimumAngularSimilarity, 0.0)
+        assertEquals(0.75, defaults.releaseMinimumPositionalSimilarity, 0.0)
+        assertEquals(0.775, defaults.releaseMinimumOverallMatch, 0.0)
         assertEquals(1.0, defaults.positionErrorAtZeroSimilarity, 0.0)
         assertEquals(0.5, defaults.angularWeight, 0.0)
         assertEquals(0.5, defaults.positionalWeight, 0.0)
@@ -578,6 +583,11 @@ class DefaultPoseMatcherTest {
             { policy(minimumAngularSimilarity = it) },
             { policy(minimumPositionalSimilarity = it) },
             { policy(minimumOverallMatch = it) },
+            { policy(releaseMinimumLandmarkCoverage = it) },
+            { policy(releaseMinimumFramingScore = it) },
+            { policy(releaseMinimumAngularSimilarity = it) },
+            { policy(releaseMinimumPositionalSimilarity = it) },
+            { policy(releaseMinimumOverallMatch = it) },
         )
         thresholdFactories.forEach { factory ->
             invalidNormalized.forEach { value ->
@@ -594,6 +604,70 @@ class DefaultPoseMatcherTest {
         assertThrows(IllegalArgumentException::class.java) { policy(angularWeight = 0.0, positionalWeight = 0.0) }
         assertThrows(IllegalArgumentException::class.java) { policy(angularWeight = 0.5, positionalWeight = 0.500000000002) }
         policy(angularWeight = 0.5, positionalWeight = 0.5000000000005)
+        assertThrows(IllegalArgumentException::class.java) {
+            policy(
+                minimumLandmarkCoverage = 0.5,
+                releaseMinimumLandmarkCoverage = 0.6,
+            )
+        }
+    }
+
+    @Test
+    fun exactReleaseThresholdsRetainButCannotAcquireAndAdjacentLowerEvidenceReleases() {
+        val matcher = DefaultPoseMatcher(
+            policy(
+                minimumLandmarkCoverage = 0.85,
+                minimumFramingScore = 0.85,
+                minimumAngularSimilarity = 0.85,
+                minimumPositionalSimilarity = 0.85,
+                minimumOverallMatch = 0.85,
+                releaseMinimumLandmarkCoverage = 0.8,
+                releaseMinimumFramingScore = 0.8,
+                releaseMinimumAngularSimilarity = 0.8,
+                releaseMinimumPositionalSimilarity = 0.8,
+                releaseMinimumOverallMatch = 0.8,
+            ),
+        )
+        val reference = features(
+            points = mapOf(PoseLandmark.NOSE to point(0.0)),
+            angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(0.0)),
+        )
+        val exactRelease = features(
+            points = mapOf(PoseLandmark.NOSE to point(0.2, confidence = 0.8)),
+            angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(0.2 * PI)),
+        )
+
+        val exact = matcher.match(
+            reference,
+            exactRelease,
+            mirrorAllowed = false,
+            detectedPersonCount = 1,
+            framingScore = 0.8,
+        )
+
+        assertFalse(exact.eligibleForLock)
+        assertTrue(exact.eligibleForLockRetention)
+        assertEquals(
+            setOf(
+                MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE,
+                MatchGateFailure.POOR_FRAMING,
+                MatchGateFailure.ANGULAR_MISMATCH,
+                MatchGateFailure.POSITIONAL_MISMATCH,
+                MatchGateFailure.LOW_OVERALL_MATCH,
+            ),
+            exact.gateFailures,
+        )
+        assertEquals(emptySet<MatchGateFailure>(), exact.releaseGateFailures)
+
+        val immediatelyBelow = matcher.match(
+            reference,
+            exactRelease,
+            mirrorAllowed = false,
+            detectedPersonCount = 1,
+            framingScore = Math.nextDown(0.8),
+        )
+        assertFalse(immediatelyBelow.eligibleForLockRetention)
+        assertEquals(setOf(MatchGateFailure.POOR_FRAMING), immediatelyBelow.releaseGateFailures)
     }
 
     @Test
@@ -674,6 +748,11 @@ class DefaultPoseMatcherTest {
         minimumAngularSimilarity: Double = 0.85,
         minimumPositionalSimilarity: Double = 0.8,
         minimumOverallMatch: Double = 0.825,
+        releaseMinimumLandmarkCoverage: Double = minimumLandmarkCoverage,
+        releaseMinimumFramingScore: Double = minimumFramingScore,
+        releaseMinimumAngularSimilarity: Double = minimumAngularSimilarity,
+        releaseMinimumPositionalSimilarity: Double = minimumPositionalSimilarity,
+        releaseMinimumOverallMatch: Double = minimumOverallMatch,
         positionErrorAtZeroSimilarity: Double = 1.0,
         angularWeight: Double = 0.5,
         positionalWeight: Double = 0.5,
@@ -683,6 +762,11 @@ class DefaultPoseMatcherTest {
         minimumAngularSimilarity,
         minimumPositionalSimilarity,
         minimumOverallMatch,
+        releaseMinimumLandmarkCoverage,
+        releaseMinimumFramingScore,
+        releaseMinimumAngularSimilarity,
+        releaseMinimumPositionalSimilarity,
+        releaseMinimumOverallMatch,
         positionErrorAtZeroSimilarity,
         angularWeight,
         positionalWeight,

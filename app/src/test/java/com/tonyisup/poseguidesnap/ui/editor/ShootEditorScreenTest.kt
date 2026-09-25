@@ -20,7 +20,7 @@ class ShootEditorScreenTest {
             ShootEditorStartEligibility.SHOOT_DELETING to
                 "This shoot is being deleted and cannot be started.",
             ShootEditorStartEligibility.UNRESOLVED_IMPORT_WORK to
-                "This shoot needs import repair that is not available in this version. Use Back, then create a new shoot.",
+                "An interrupted import needs repair before continuing. Use Retry repair.",
             ShootEditorStartEligibility.ACTIVE_SESSION to
                 "Resume the active session before starting a new one.",
             ShootEditorStartEligibility.OPERATION_IN_PROGRESS to
@@ -80,7 +80,7 @@ class ShootEditorScreenTest {
             ReferenceImportRetryAction.RETRY_ALLOCATION to
                 "Retry adding the reference photo.",
             ReferenceImportRetryAction.RUN_RECONCILIATION_THEN_RETRY to
-                "Use Back, then create a new shoot; import repair is not available in this version.",
+                "Use Retry repair. If repair remains incomplete, your existing photos are kept safe.",
             ReferenceImportRetryAction.ALLOCATE_NEW_ATTEMPT to
                 "Choose a new photo to try again.",
         )

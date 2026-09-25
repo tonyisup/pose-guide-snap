@@ -1,0 +1,89 @@
+Task 14B.1C bounded Pixel 6 checkpoint
+Date: 2026-09-04
+Device: Pixel 6 (oriole)
+Build fingerprint: google/oriole/oriole:16/CP1A.260305.018/14887507:user/release-keys
+
+Causal RED candidate app APK SHA-256:
+66c0e8c108a07384e71521aecba7539bda05df938ba1860dea446ddf8d89aff9
+
+Causal RED candidate instrumentation APK SHA-256:
+975eac3620a7b3a1a6b814c8f8aa822c42df1953fce14dc289bdd6cd785a8ce1
+
+The five-method confirmation invocation ran 5 tests with 1 failure. Four methods passed.
+Failure:
+confirmationRejectsBackwardAndAcceptsEqualBoundaryTimestamps
+journal updated 0 expected:<CaptureConfirmationResult.Rejected(reason=INVALID_TIMESTAMP)> but was:<CaptureConfirmationResult.Rejected(reason=JOURNAL_AUTHORITY_INVALID)>
+
+The implementation was corrected to validate raw journal structure before typed mapping, then classify confirmation clocks separately. The full host gate passed again before the corrected APK was installed.
+
+Final local and installed app APK SHA-256:
+9746a8d1fa095352a826ec77c0e2c4568e957be6003503e66efd1a4e3c18c4c5
+
+Final local and installed instrumentation APK SHA-256:
+975eac3620a7b3a1a6b814c8f8aa822c42df1953fce14dc289bdd6cd785a8ce1
+
+Final confirmation selector:
+com.tonyisup.poseguidesnap.data.CaptureConfirmationRepositoryAndroidTest#confirmationDerivesOutputsFromFinalJournalAndConsumesRows,
+com.tonyisup.poseguidesnap.data.CaptureConfirmationRepositoryAndroidTest#confirmationRejectsBackwardAndAcceptsEqualBoundaryTimestamps,
+com.tonyisup.poseguidesnap.data.CaptureConfirmationRepositoryAndroidTest#confirmationReplayRequiresNoResidualJournalAcrossReopen,
+com.tonyisup.poseguidesnap.data.CaptureConfirmationRepositoryAndroidTest#confirmationFaultAfterJournalDeleteRollsBackEverything,
+com.tonyisup.poseguidesnap.data.CaptureConfirmationRepositoryAndroidTest#confirmationDeletionAndDuplicateRacesHaveOneWinner
+
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: test=confirmationDeletionAndDuplicateRacesHaveOneWinner
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: test=confirmationReplayRequiresNoResidualJournalAcrossReopen
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: test=confirmationFaultAfterJournalDeleteRollsBackEverything
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: test=confirmationDerivesOutputsFromFinalJournalAndConsumesRows
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: test=confirmationRejectsBackwardAndAcceptsEqualBoundaryTimestamps
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 4.401
+
+OK (5 tests)
+
+INSTRUMENTATION_CODE: -1
+
+Final Packet 2B selector:
+com.tonyisup.poseguidesnap.data.GuidedSessionPacket2BAndroidTest#immediateBootstrapBlocksConfirmationWriterAndReturnsCompletePreThenPostState,
+com.tonyisup.poseguidesnap.data.GuidedSessionPacket2BAndroidTest#nontransactionalConfirmationReadsCanProduceMixedPreSessionAndPostReceiptState,
+com.tonyisup.poseguidesnap.data.GuidedSessionPacket2BAndroidTest#repeatedBootstrapsAreReadOnlyAcrossEveryV4AuthorityTableAndSchema
+
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: test=immediateBootstrapBlocksConfirmationWriterAndReturnsCompletePreThenPostState
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: test=nontransactionalConfirmationReadsCanProduceMixedPreSessionAndPostReceiptState
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: test=repeatedBootstrapsAreReadOnlyAcrossEveryV4AuthorityTableAndSchema
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 1.257
+
+OK (3 tests)
+
+INSTRUMENTATION_CODE: -1
+
+Post-run cleanup evidence:
+- App database directory listing: empty.
+- Instrumentation package lookup after uninstall: absent.
+- Main application package lookup after cleanup: present.
+- Main application data was not cleared.

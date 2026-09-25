@@ -4,23 +4,16 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.viewModelScope
-import com.tonyisup.poseguidesnap.data.JournaledReferenceAssetStore
-import com.tonyisup.poseguidesnap.data.RoomReferenceImportFileJournal
-import com.tonyisup.poseguidesnap.data.RoomReferenceImportRepository
 import com.tonyisup.poseguidesnap.data.RoomShootPreparationRepository
 import com.tonyisup.poseguidesnap.data.RoomShootRepository
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.importer.AndroidMoveNetReferenceAnalyzer
 import com.tonyisup.poseguidesnap.importer.BlockingMoveNetReferenceDetectorMapperAdapter
 import com.tonyisup.poseguidesnap.importer.ContentResolverReferencePickerByteSourceFactory
-import com.tonyisup.poseguidesnap.importer.JournaledReferenceAssetStoreAdapter
-import com.tonyisup.poseguidesnap.importer.JournaledReferencePickerImporterPort
-import com.tonyisup.poseguidesnap.importer.JournaledReferencePoseImporter
 import com.tonyisup.poseguidesnap.importer.MoveNetReferenceDetectorMapperAdapter
 import com.tonyisup.poseguidesnap.importer.ReferenceImportApplicationComposition
 import com.tonyisup.poseguidesnap.importer.ReferencePickerResultHandler
-import com.tonyisup.poseguidesnap.importer.RoomReferenceImportAuthorityAdapter
-import com.tonyisup.poseguidesnap.importer.RoomReferenceImportFileJournalAdapter
+import com.tonyisup.poseguidesnap.importer.createReferenceImportRuntime
 import com.tonyisup.poseguidesnap.pose.movenet.MoveNetPoseDetector
 import com.tonyisup.poseguidesnap.pose.movenet.MoveNetResultMapper
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
@@ -260,21 +253,17 @@ private fun createProductionRuntime(
 ): ShootEditorRuntimeParts<RoomShootEditorWorkflow, ShootEditorPickerCoordinator> {
     val registry = ShootEditorPickerRegistry()
     val applicationService = ReferenceImportApplicationComposition.create(database)
-    val importRepository = RoomReferenceImportRepository(database)
-    val fileJournal = RoomReferenceImportFileJournal(database)
-    val assetStore = JournaledReferenceAssetStore(context.noBackupFilesDir)
     val analyzer = AndroidMoveNetReferenceAnalyzer(
         noBackupFilesDirectory = context.noBackupFilesDir,
         detectorMapperAdapter = detector,
     )
-    val importer = JournaledReferencePoseImporter(
-        authority = RoomReferenceImportAuthorityAdapter(importRepository),
-        journal = RoomReferenceImportFileJournalAdapter(fileJournal),
-        assets = JournaledReferenceAssetStoreAdapter(assetStore),
+    val importRuntime = createReferenceImportRuntime(
+        database = database,
+        noBackupFilesDirectory = context.noBackupFilesDir,
         analyzer = analyzer,
     )
     val pickerHandler = ReferencePickerResultHandler(
-        importer = JournaledReferencePickerImporterPort(importer::importReference),
+        importer = importRuntime,
         sourceFactory = ContentResolverReferencePickerByteSourceFactory(context.contentResolver),
         dispatcher = blockingDispatcher,
     )
@@ -285,6 +274,7 @@ private fun createProductionRuntime(
         pickerRegistry = registry,
         authority = authority,
         blockingDispatcher = blockingDispatcher,
+        recoverImports = importRuntime::recover,
     )
     val coordinator = ShootEditorPickerCoordinator(
         registry = registry,

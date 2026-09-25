@@ -134,6 +134,21 @@ data class ShootState private constructor(
             poseIds = poseIds,
         )
 
+        fun restoreActive(
+            sessionId: String,
+            poseIds: Iterable<String>,
+            currentPoseIndex: Int,
+            nextAttemptNumber: Long,
+            appliedReceiptTokenValues: Iterable<String>,
+        ): ShootState = restore(
+            sessionId = sessionId,
+            poseIds = poseIds,
+            currentPoseIndex = currentPoseIndex,
+            mode = ShootMode.SearchingForPerson,
+            nextAttemptNumber = nextAttemptNumber,
+            appliedReceiptTokens = appliedReceiptTokenValues.map(::CaptureToken),
+        )
+
         internal fun restore(
             sessionId: String,
             poseIds: Iterable<String>,

@@ -1,0 +1,96 @@
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomShootPreparationRepositoryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.data.RoomShootPreparationRepositoryAndroidTest:
+INSTRUMENTATION_STATUS: test=listObserverReceivesReferenceChangesFromAnotherDatabaseOwner
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomShootPreparationRepositoryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=listObserverReceivesReferenceChangesFromAnotherDatabaseOwner
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.importer.ReferenceImportStartupReconcilerAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.importer.ReferenceImportStartupReconcilerAndroidTest:
+INSTRUMENTATION_STATUS: test=productionRuntimeRecoversAbandonedReservationAndUnblocksOtherShootsAfterReopen
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.importer.ReferenceImportStartupReconcilerAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=productionRuntimeRecoversAbandonedReservationAndUnblocksOtherShootsAfterReopen
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.CameraPermissionRecoveryFlowTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.ui.CameraPermissionRecoveryFlowTest:
+INSTRUMENTATION_STATUS: test=permanentDenialOpensSettingsInsteadOfRepeatingPermissionRequest
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.CameraPermissionRecoveryFlowTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=permanentDenialOpensSettingsInsteadOfRepeatingPermissionRequest
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest:
+INSTRUMENTATION_STATUS: test=loadingMissingAndUnavailableExposeRecoverySemantics
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=loadingMissingAndUnavailableExposeRecoverySemantics
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=allocationRepairGuidanceAlwaysHasActionEvenWithoutLocalImportRows
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=allocationRepairGuidanceAlwaysHasActionEvenWithoutLocalImportRows
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=importAndReconciliationStatusRemainVisible
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.ui.editor.ShootEditorFlowTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=importAndReconciliationStatusRemainVisible
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 4.896
+
+OK (6 tests)
+
+
+INSTRUMENTATION_CODE: -1

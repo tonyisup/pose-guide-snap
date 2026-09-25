@@ -1,0 +1,50 @@
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest:
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=calibration completed cues GOOD=0 LEFT_HAND_ON_KNEE=0 LEFT_ELBOW_UP=0 LEFT_ELBOW_DOWN=0 LEFT_ELBOW_LEFT=0 LEFT_ELBOW_RIGHT=0 RIGHT_HAND_ON_KNEE=3 RIGHT_ELBOW_UP=0 RIGHT_ELBOW_DOWN=0 RIGHT_ELBOW_LEFT=0 RIGHT_ELBOW_RIGHT=0 FULL_BODY=0 ONE_PERSON=0 RIGHT=0 LEFT=0 TILT_DOWN=0 TILT_UP=0 CLOSER=0 FARTHER=0 ALIGNED=0 RESTART=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration arm confirmation scope=joint samples=430 capped=false gaps=0 stableMaxMs=0 postSpeechWindowMinMs=14883 elbowMin=0.2001 elbowMax=0.2830 wristMin=0.2619 wristMax=0.4697 jointMin=0.2619 jointMax=0.4697 SPEAKING=123 UNAVAILABLE=0 UNSETTLED=95 MISMATCH=212 SETTLING=0 READY=0 EXPIRED=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration preparation result=TIMED_OUT blockers=DEADLINE,ARM_POSITION,FRAMING,UNCONFIRMED_ADJUSTMENT
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Preparation timed out without settled, resolved adjustments
+	at com.tonyisup.poseguidesnap.calibration.CalibrationPreparationGate.awaitReady(CalibrationPreparationGate.kt:15)
+	at com.tonyisup.poseguidesnap.calibration.CalibrationSpeechOutput.awaitReadyToHold(CalibrationSpeechOutput.kt:138)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collect(MatchCalibrationCollectionAndroidTest.kt:395)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collectOneAuthorizedSpokenGuidedSequence(MatchCalibrationCollectionAndroidTest.kt:56)
+
+INSTRUMENTATION_STATUS: stream=
+Error in collectOneAuthorizedSpokenGuidedSequence(com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest):
+java.lang.IllegalStateException: Preparation timed out without settled, resolved adjustments
+	at com.tonyisup.poseguidesnap.calibration.CalibrationPreparationGate.awaitReady(CalibrationPreparationGate.kt:15)
+	at com.tonyisup.poseguidesnap.calibration.CalibrationSpeechOutput.awaitReadyToHold(CalibrationSpeechOutput.kt:138)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collect(MatchCalibrationCollectionAndroidTest.kt:395)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collectOneAuthorizedSpokenGuidedSequence(MatchCalibrationCollectionAndroidTest.kt:56)
+
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 69.595
+There was 1 failure:
+1) collectOneAuthorizedSpokenGuidedSequence(com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest)
+java.lang.IllegalStateException: Preparation timed out without settled, resolved adjustments
+	at com.tonyisup.poseguidesnap.calibration.CalibrationPreparationGate.awaitReady(CalibrationPreparationGate.kt:15)
+	at com.tonyisup.poseguidesnap.calibration.CalibrationSpeechOutput.awaitReadyToHold(CalibrationSpeechOutput.kt:138)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collect(MatchCalibrationCollectionAndroidTest.kt:395)
+	at com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest.collectOneAuthorizedSpokenGuidedSequence(MatchCalibrationCollectionAndroidTest.kt:56)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

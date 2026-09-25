@@ -14,7 +14,13 @@ class GuidedSessionContractsTest {
             GuidedSessionLifecycle.entries.map(Enum<*>::name),
         )
         assertEquals(
-            listOf("REGISTERED", "CAPTURING", "CONFIRMED"),
+            listOf(
+                "REGISTERED",
+                "CAPTURING",
+                "FAILED_CLEANED",
+                "RECONCILIATION_REQUIRED",
+                "CONFIRMED",
+            ),
             GuidedCaptureAttemptState.entries.map(Enum<*>::name),
         )
         assertEquals(

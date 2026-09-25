@@ -1,7 +1,9 @@
 package com.tonyisup.poseguidesnap.ui
 
 import com.tonyisup.poseguidesnap.camera.CameraControllerStatus
+import com.tonyisup.poseguidesnap.data.GuidedReferenceSnapshot
 import com.tonyisup.poseguidesnap.domain.model.Landmark
+import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
 import java.lang.reflect.Modifier
@@ -35,7 +37,10 @@ class LiveCameraDiagnosticsTest {
         assertEquals("Positional gate: not evaluated (waiting for a frame)", diagnostics.positionalLabel)
         assertEquals("Overall gate: not evaluated (waiting for a frame)", diagnostics.overallLabel)
         assertEquals("Selected mirror: not evaluated (waiting for a frame)", diagnostics.mirrorLabel)
-        assertEquals("Capture lock: disabled in Task 10", diagnostics.captureLockLabel)
+        assertEquals(
+            "Automatic capture: disabled pending calibration",
+            diagnostics.captureLockLabel,
+        )
     }
 
     @Test
@@ -87,7 +92,7 @@ class LiveCameraDiagnosticsTest {
     }
 
     @Test
-    fun bundledReferenceObservationSurfacesEveryNamedUncalibratedGate() {
+    fun selectedReferenceObservationSurfacesEveryNamedUncalibratedGate() {
         val diagnostics = diagnostics(
             poseObservation = PoseObservation(
                 landmarks = BundledMeditationReference.observation.landmarks,
@@ -96,12 +101,16 @@ class LiveCameraDiagnosticsTest {
             ),
         )
 
+        assertEquals("Framing gate: pass (uncalibrated)", diagnostics.framingLabel)
         assertEquals("Coverage gate: pass (uncalibrated)", diagnostics.coverageLabel)
         assertEquals("Angular gate: pass (uncalibrated)", diagnostics.angularLabel)
         assertEquals("Positional gate: pass (uncalibrated)", diagnostics.positionalLabel)
         assertEquals("Overall gate: pass (uncalibrated)", diagnostics.overallLabel)
         assertEquals("Selected mirror: normal", diagnostics.mirrorLabel)
-        assertEquals("Capture lock: disabled in Task 10", diagnostics.captureLockLabel)
+        assertEquals(
+            "Automatic capture: disabled pending calibration",
+            diagnostics.captureLockLabel,
+        )
     }
 
     @Test
@@ -145,13 +154,22 @@ class LiveCameraDiagnosticsTest {
     }
 
     @Test
-    fun bundledReferenceIsNamedWhileMatchEvidenceWaitsForAFrame() {
+    fun selectedReferenceIsNamedWhileMatchEvidenceWaitsForAFrame() {
         val diagnostics = diagnostics()
 
         assertEquals(
-            "Reference loaded: Bundled meditation pose (17 landmarks)",
+            "Reference loaded: Selected meditation pose (17 landmarks)",
             diagnostics.referenceLabel,
         )
+    }
+
+    @Test
+    fun missingCurrentReferenceCannotFallBackToTheBundledDemoPose() {
+        val diagnostics = diagnostics(reference = null)
+
+        assertEquals("Reference: loading", diagnostics.referenceLabel)
+        assertTrue("waiting for the current reference" in diagnostics.overallLabel)
+        assertFalse("Bundled meditation pose" in diagnostics.referenceLabel)
     }
 
     @Test
@@ -191,15 +209,19 @@ class LiveCameraDiagnosticsTest {
         listOf("/data/", "tensor", "Throwable", "Exception", "monotonicTimestampNanos").forEach { privateMarker ->
             assertFalse("Private marker leaked into labels: $privateMarker", privateMarker in labels)
         }
+        assertFalse("Selected reference labels must not leak through toString", "Selected meditation pose" in diagnostics.toString())
+        assertTrue("Diagnostics toString must declare redaction", "redacted" in diagnostics.toString())
     }
 
     private fun diagnostics(
         cameraStatus: CameraControllerStatus = CameraControllerStatus.IDLE,
         poseObservation: PoseObservation? = null,
+        reference: GuidedReferenceSnapshot? = selectedReference,
         hasRecoverableFailure: Boolean = false,
     ): LiveCameraDiagnostics = LiveCameraDiagnostics.from(
         cameraStatus = cameraStatus,
         poseObservation = poseObservation,
+        reference = reference,
         hasRecoverableFailure = hasRecoverableFailure,
     )
 
@@ -222,6 +244,15 @@ class LiveCameraDiagnosticsTest {
     )
 
     private companion object {
+        val selectedReference = GuidedReferenceSnapshot(
+            poseId = "selected-meditation-pose",
+            label = "Selected meditation pose",
+            relativeAssetPath = "reference-assets/assets/${"a".repeat(64)}.asset",
+            mirrorAllowed = true,
+            landmarks = BundledMeditationReference.observation.landmarks,
+            imageSize = PoseImageSize(1024, 574),
+        )
+
         val cocoLandmarks = listOf(
             PoseLandmark.NOSE,
             PoseLandmark.LEFT_EYE,

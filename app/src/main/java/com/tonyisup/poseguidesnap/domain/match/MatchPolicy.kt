@@ -3,7 +3,9 @@ package com.tonyisup.poseguidesnap.domain.match
 import kotlin.math.abs
 
 /**
- * Immutable thresholds, scales, and weights for [DefaultPoseMatcher].
+ * Immutable thresholds, scales, and weights for [DefaultPoseMatcher]. The `minimum*` values gate
+ * lock acquisition. Each `releaseMinimum*` value may be lower, allowing bounded score hysteresis
+ * while a lock is already held; it can never exceed the matching acquisition threshold.
  *
  * [developmentDefaults] is deliberately uncalibrated prototype policy. Its values are not a
  * production-quality claim and must be calibrated before any release decision relies on them.
@@ -14,6 +16,11 @@ data class MatchPolicy(
     val minimumAngularSimilarity: Double,
     val minimumPositionalSimilarity: Double,
     val minimumOverallMatch: Double,
+    val releaseMinimumLandmarkCoverage: Double,
+    val releaseMinimumFramingScore: Double,
+    val releaseMinimumAngularSimilarity: Double,
+    val releaseMinimumPositionalSimilarity: Double,
+    val releaseMinimumOverallMatch: Double,
     val positionErrorAtZeroSimilarity: Double,
     val angularWeight: Double,
     val positionalWeight: Double,
@@ -24,6 +31,31 @@ data class MatchPolicy(
         requireNormalized(minimumAngularSimilarity, "minimumAngularSimilarity")
         requireNormalized(minimumPositionalSimilarity, "minimumPositionalSimilarity")
         requireNormalized(minimumOverallMatch, "minimumOverallMatch")
+        requireReleaseThreshold(
+            releaseMinimumLandmarkCoverage,
+            minimumLandmarkCoverage,
+            "releaseMinimumLandmarkCoverage",
+        )
+        requireReleaseThreshold(
+            releaseMinimumFramingScore,
+            minimumFramingScore,
+            "releaseMinimumFramingScore",
+        )
+        requireReleaseThreshold(
+            releaseMinimumAngularSimilarity,
+            minimumAngularSimilarity,
+            "releaseMinimumAngularSimilarity",
+        )
+        requireReleaseThreshold(
+            releaseMinimumPositionalSimilarity,
+            minimumPositionalSimilarity,
+            "releaseMinimumPositionalSimilarity",
+        )
+        requireReleaseThreshold(
+            releaseMinimumOverallMatch,
+            minimumOverallMatch,
+            "releaseMinimumOverallMatch",
+        )
         require(positionErrorAtZeroSimilarity.isFinite() && positionErrorAtZeroSimilarity > 0.0) {
             "positionErrorAtZeroSimilarity must be finite and positive"
         }
@@ -49,6 +81,11 @@ data class MatchPolicy(
             minimumAngularSimilarity = 0.85,
             minimumPositionalSimilarity = 0.8,
             minimumOverallMatch = 0.825,
+            releaseMinimumLandmarkCoverage = 0.70,
+            releaseMinimumFramingScore = 0.75,
+            releaseMinimumAngularSimilarity = 0.80,
+            releaseMinimumPositionalSimilarity = 0.75,
+            releaseMinimumOverallMatch = 0.775,
             positionErrorAtZeroSimilarity = 1.0,
             angularWeight = 0.5,
             positionalWeight = 0.5,
@@ -62,5 +99,12 @@ data class MatchPolicy(
 private fun requireNormalized(value: Double, name: String) {
     require(value.isFinite() && value in 0.0..1.0) {
         "$name must be finite and in [0, 1]"
+    }
+}
+
+private fun requireReleaseThreshold(value: Double, acquireValue: Double, name: String) {
+    requireNormalized(value, name)
+    require(value <= acquireValue) {
+        "$name must not exceed its acquisition threshold"
     }
 }

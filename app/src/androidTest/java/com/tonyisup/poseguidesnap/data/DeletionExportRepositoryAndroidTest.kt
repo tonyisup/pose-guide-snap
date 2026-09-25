@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.data
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteConstraintException
+import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -16,8 +17,10 @@ import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -245,7 +248,7 @@ class DeletionExportRepositoryAndroidTest {
     }
 
     @Test
-    fun deletionRejectsRequestBehindEachExistingAuthorityClockWithoutMutation() {
+    fun deletionRejectsBackwardAndAcceptsEqualCompleteAuthorityClock() {
         val clockCases = listOf(
             "shoot" to "UPDATE shoots SET updated_at_epoch_millis = 90 WHERE shoot_id = '$SHOOT_ID'",
             "session" to
@@ -270,10 +273,14 @@ class DeletionExportRepositoryAndroidTest {
         clockCases.forEach { (family, mutation) ->
             val fixture = freshDeletionClockFixture()
             fixture.sqlite.execSQL(mutation)
-            if (family == "confirmation receipt") {
+            if (family in setOf("attempt", "private output", "confirmation receipt")) {
                 fixture.sqlite.execSQL(
                     "UPDATE capture_attempts SET updated_at_epoch_millis = 90, " +
                         "confirmed_at_epoch_millis = 90 WHERE command_token = 'clock-family-token'",
+                )
+                fixture.sqlite.execSQL(
+                    "UPDATE capture_confirmation_receipts SET applied_at_epoch_millis = 90 " +
+                        "WHERE command_token = 'clock-family-token'",
                 )
                 fixture.sqlite.execSQL(
                     "UPDATE capture_export_outboxes SET created_at_epoch_millis = 90, " +
@@ -294,7 +301,36 @@ class DeletionExportRepositoryAndroidTest {
                 fixture.repository.beginShootDeletion(SHOOT_ID, 89L),
             )
             assertEquals(family, before, fixture.sqlite.authoritySnapshot())
+            assertEquals(
+                family,
+                BeginShootDeletionResult.Began(8L, 3, 1, 0),
+                fixture.repository.beginShootDeletion(SHOOT_ID, 90L),
+            )
         }
+
+        val journalFixture = freshDeletionClockFixture()
+        journalFixture.sqlite.seedCapturingJournalAttempt()
+        journalFixture.sqlite.seedJournalRows(
+            commandToken = JOURNAL_TOKEN,
+            createdAtEpochMillis = 10L,
+            updatedAtEpochMillis = 90L,
+        )
+        val beforeJournalClock = journalFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.INVALID_TIMESTAMP,
+            ),
+            journalFixture.repository.beginShootDeletion(SHOOT_ID, 89L),
+        )
+        assertEquals(beforeJournalClock, journalFixture.sqlite.authoritySnapshot())
+        assertEquals(
+            BeginShootDeletionResult.Began(8L, 3, 1, 0),
+            journalFixture.repository.beginShootDeletion(SHOOT_ID, 90L),
+        )
+        assertEquals(
+            beforeJournalClock.fileOperations,
+            journalFixture.sqlite.authoritySnapshot().fileOperations,
+        )
     }
 
     @Test
@@ -631,6 +667,11 @@ class DeletionExportRepositoryAndroidTest {
                     'CAPTURING', 0, 7, 60, 61, NULL)
             """.trimIndent(),
             arrayOf<Any>(SESSION_ID),
+        )
+        fixture.sqlite.seedJournalRows(
+            commandToken = "in-flight-token",
+            createdAtEpochMillis = 60L,
+            updatedAtEpochMillis = 61L,
         )
         fixture.sqlite.execSQL(
             """
@@ -1329,6 +1370,7 @@ class DeletionExportRepositoryAndroidTest {
             CaptureAttemptStartResult.Started,
             fixture.repository.markCaptureAttemptStarted(SESSION_ID, captureCommand.token, 75L),
         )
+        finalizeCaptureJournal(fixture, captureCommand)
         val confirmation = ShootEffect.ConfirmAndAdvanceCapture(
             token = captureCommand.token,
             poseId = captureCommand.poseId,
@@ -1343,7 +1385,6 @@ class DeletionExportRepositoryAndroidTest {
                 {
                     secondRepository.confirmAndAdvance(
                         confirmation,
-                        durableOutputs(confirmation.token),
                         exportTargets(confirmation.token),
                         80L,
                     )
@@ -1364,14 +1405,8 @@ class DeletionExportRepositoryAndroidTest {
                     ),
                 )
             } else {
-                // Task 3D: unfinished direct confirmation fail-closes with
-                // JOURNAL_CONFIRMATION_NOT_AVAILABLE before deletion classification
-                // (BlockedByDeletion); the journal-owned path re-establishes direct
-                // application in Task 14B.1C.
                 assertEquals(
-                    CaptureConfirmationResult.Rejected(
-                        CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
-                    ),
+                    CaptureConfirmationResult.BlockedByDeletion,
                     confirmationResult,
                 )
                 assertEquals(BeginShootDeletionResult.Began(8L, 0, 0, 0), deletion)
@@ -1491,15 +1526,12 @@ class DeletionExportRepositoryAndroidTest {
             outputs = capture.outputs,
         )
 
-        // Task 3D: unfinished direct confirmation fail-closes before WRONG_ATTEMPT_STATE;
-        // journal-owned path re-establishes it in Task 14B.1C.
         assertEquals(
             CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
+                CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
             ),
             fixture.repository.confirmAndAdvance(
                 confirmation,
-                durableOutputs(capture.token),
                 exportTargets(capture.token),
                 90L,
             ),
@@ -1512,6 +1544,7 @@ class DeletionExportRepositoryAndroidTest {
         val fixture = openFixture()
         fixture.sqlite.seedShoot()
         val capture = prepareCapturingAttempt(fixture, "ordered-deletion-before-confirmation")
+        finalizeCaptureJournal(fixture, capture)
         assertEquals(
             BeginShootDeletionResult.Began(8L, 0, 0, 0),
             fixture.repository.beginShootDeletion(SHOOT_ID, 80L),
@@ -1524,18 +1557,10 @@ class DeletionExportRepositoryAndroidTest {
             outputs = capture.outputs,
         )
 
-        // Task 3D: unfinished direct confirmation fail-closes with
-        // JOURNAL_CONFIRMATION_NOT_AVAILABLE before deletion classification
-        // (BlockedByDeletion); the journal-owned path re-establishes direct
-        // application in Task 14B.1C. Deletion-winner semantics are unchanged:
-        // the loser still cannot mutate any authority.
         assertEquals(
-            CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
-            ),
+            CaptureConfirmationResult.BlockedByDeletion,
             fixture.repository.confirmAndAdvance(
                 confirmation,
-                durableOutputs(capture.token),
                 exportTargets(capture.token),
                 90L,
             ),
@@ -1547,9 +1572,7 @@ class DeletionExportRepositoryAndroidTest {
     fun confirmationWinnerBeforeDeletionPreservesDurableAuthorityDeterministically() {
         val fixture = openFixture()
         fixture.sqlite.seedShoot()
-        // Task 3D: direct first-application via confirmAndAdvance fail-closes with
-        // JOURNAL_CONFIRMATION_NOT_AVAILABLE until the journal-owned path lands in
-        // Task 14B.1C, so the committed confirmation winner is seeded directly as a
+        // The committed confirmation winner is seeded directly as a
         // coherent confirmed graph (attempt CONFIRMED with confirmed_at == updated_at,
         // three durable private outputs, receipt, outbox, export outputs, session
         // advanced) mirroring seedCoherentConfirmedConfirmationGraph. The removed
@@ -1660,11 +1683,12 @@ class DeletionExportRepositoryAndroidTest {
     @Test
     fun deletionClockIncludesStableCaptureFileJournalAuthority() {
         val fixture = freshDeletionClockFixture()
+        fixture.sqlite.seedCapturingJournalAttempt()
         // Journal updated_at (95) is newer than every pre-V4 clock (max 50); a request equal
         // to the pre-V4 maximum but behind the journal clock must be rejected without mutation.
         fixture.sqlite.seedJournalRows(
-            commandToken = "clock-family-token",
-            createdAtEpochMillis = 50L,
+            commandToken = JOURNAL_TOKEN,
+            createdAtEpochMillis = 10L,
             updatedAtEpochMillis = 95L,
         )
         val before = fixture.sqlite.authoritySnapshot()
@@ -1681,9 +1705,10 @@ class DeletionExportRepositoryAndroidTest {
     @Test
     fun deletionPreservesStableCaptureFileJournalAuthorityByteForByte() {
         val fixture = freshDeletionClockFixture()
+        fixture.sqlite.seedCapturingJournalAttempt()
         fixture.sqlite.seedJournalRows(
-            commandToken = "clock-family-token",
-            createdAtEpochMillis = 50L,
+            commandToken = JOURNAL_TOKEN,
+            createdAtEpochMillis = 10L,
             updatedAtEpochMillis = 95L,
         )
         val journalBefore = fixture.sqlite.rows(
@@ -1716,9 +1741,10 @@ class DeletionExportRepositoryAndroidTest {
     @Test
     fun deletionJournalPostconditionDriftRollsBackEverything() {
         val fixture = freshDeletionClockFixture()
+        fixture.sqlite.seedCapturingJournalAttempt()
         fixture.sqlite.seedJournalRows(
-            commandToken = "clock-family-token",
-            createdAtEpochMillis = 50L,
+            commandToken = JOURNAL_TOKEN,
+            createdAtEpochMillis = 10L,
             updatedAtEpochMillis = 50L,
         )
         val before = fixture.sqlite.authoritySnapshot()
@@ -1738,8 +1764,8 @@ class DeletionExportRepositoryAndroidTest {
                 WHEN OLD.lifecycle_state = 'PENDING' AND NEW.lifecycle_state = 'CANCELLED'
                 BEGIN
                     UPDATE capture_file_operations
-                    SET updated_at_epoch_millis = 999
-                    WHERE command_token = 'clock-family-token' AND burst_ordinal = 0;
+                    SET relative_final_path = CAST(relative_final_path AS BLOB)
+                    WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0;
                 END
                 """.trimIndent(),
             )
@@ -1821,7 +1847,163 @@ class DeletionExportRepositoryAndroidTest {
     }
 
     @Test
+    fun captureFileJournalDeletionInterlockLinearizesAdmittedEffects() {
+        fun admissionRequest(source: CaptureFileOperationSnapshot, at: Long) =
+            CaptureFileAdvanceRequest(
+                identity = source.identity,
+                expectedStage = source.stage,
+                expectedUpdatedAtEpochMillis = source.updatedAtEpochMillis,
+                targetStage = CaptureFileOperationStage.WRITING_TEMP,
+                byteCount = null,
+                sha256 = null,
+                capturedAtEpochMillis = null,
+                transitionedAtEpochMillis = at,
+            )
+
+        val deletionSeed = openFixture()
+        deletionSeed.sqlite.seedShoot()
+        val deletionFirstCapture = prepareCapturingAttempt(deletionSeed, "deletion-first-file-effect")
+        val deletionFirstJournal = RoomCaptureFileJournal(requireNotNull(database))
+        val deletionFirstInitial = requireNotNull(
+            deletionFirstJournal.snapshot(PrivateOutputIdentity(deletionFirstCapture.token, 0)),
+        )
+        closeDatabase()
+        val deletionGate = SqlTransactionGate(
+            mutationSqlFragment = "UPDATE shoots",
+            pauseSqlFragment = "UPDATE capture_export_outputs",
+        )
+        val deletionFirst = openFixture(deletionGate)
+        val deletionCompetitor = AppDatabase.create(context, databaseName)
+        try {
+            val competingTransactionEntered = CountDownLatch(1)
+            val competingJournal = RoomCaptureFileJournal(
+                database = deletionCompetitor,
+                beforeMutationTransaction = { competingTransactionEntered.countDown() },
+            )
+            val (deletion, admission) = runWithPausedFirstTransaction(
+                gate = deletionGate,
+                competingTransactionEntered = competingTransactionEntered,
+                first = { deletionFirst.repository.beginShootDeletion(SHOOT_ID, 80L) },
+                second = { competingJournal.advance(admissionRequest(deletionFirstInitial, 81L)) },
+            )
+            assertEquals(BeginShootDeletionResult.Began(8L, 0, 0, 0), deletion)
+            assertEquals(CaptureFileJournalResult.BlockedByDeletion, admission)
+            assertEquals(
+                deletionFirstInitial,
+                competingJournal.snapshot(deletionFirstInitial.identity),
+            )
+        } finally {
+            deletionCompetitor.close()
+        }
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val admissionSeed = openFixture()
+        admissionSeed.sqlite.seedShoot()
+        val admissionFirstCapture = prepareCapturingAttempt(admissionSeed, "admission-first-file-effect")
+        val admissionFirstJournal = RoomCaptureFileJournal(requireNotNull(database))
+        val admissionFirstInitial = requireNotNull(
+            admissionFirstJournal.snapshot(PrivateOutputIdentity(admissionFirstCapture.token, 0)),
+        )
+        closeDatabase()
+        val admissionGate = SqlTransactionGate(
+            mutationSqlFragment = "UPDATE capture_file_operations",
+            pauseSqlFragment = "SELECT CASE",
+        )
+        val admissionFirst = openFixture(admissionGate)
+        val admissionCompetitor = AppDatabase.create(context, databaseName)
+        try {
+            val gatedJournal = RoomCaptureFileJournal(requireNotNull(database))
+            val competingTransactionEntered = CountDownLatch(1)
+            val competingRepository = RoomShootRepository(admissionCompetitor) {
+                competingTransactionEntered.countDown()
+            }
+            val (admission, deletion) = runWithPausedFirstTransaction(
+                gate = admissionGate,
+                competingTransactionEntered = competingTransactionEntered,
+                first = { gatedJournal.advance(admissionRequest(admissionFirstInitial, 76L)) },
+                second = { competingRepository.beginShootDeletion(SHOOT_ID, 80L) },
+            )
+            assertTrue(admission is CaptureFileJournalResult.Applied)
+            assertEquals(
+                BeginShootDeletionResult.Rejected(
+                    BeginShootDeletionRejectionReason.CAPTURE_FILE_EFFECT_IN_FLIGHT,
+                ),
+                deletion,
+            )
+        } finally {
+            admissionCompetitor.close()
+        }
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val settlementSeed = openFixture()
+        settlementSeed.sqlite.seedShoot()
+        val settlementCapture = prepareCapturingAttempt(settlementSeed, "settlement-first-file-effect")
+        val settlementJournal = RoomCaptureFileJournal(requireNotNull(database))
+        val settlementInitial = requireNotNull(
+            settlementJournal.snapshot(PrivateOutputIdentity(settlementCapture.token, 0)),
+        )
+        val admitted = settlementJournal.advance(
+            admissionRequest(settlementInitial, 76L),
+        ) as CaptureFileJournalResult.Applied
+        closeDatabase()
+        val settlementGate = SqlTransactionGate(
+            mutationSqlFragment = "UPDATE capture_file_operations",
+            pauseSqlFragment = "SELECT CASE",
+        )
+        val settlementFirst = openFixture(settlementGate)
+        val settlementCompetitor = AppDatabase.create(context, databaseName)
+        try {
+            val gatedJournal = RoomCaptureFileJournal(requireNotNull(database))
+            val competingTransactionEntered = CountDownLatch(1)
+            val competingRepository = RoomShootRepository(settlementCompetitor) {
+                competingTransactionEntered.countDown()
+            }
+            val (settlement, deletion) = runWithPausedFirstTransaction(
+                gate = settlementGate,
+                competingTransactionEntered = competingTransactionEntered,
+                first = {
+                    gatedJournal.advance(
+                        CaptureFileAdvanceRequest(
+                            identity = admitted.snapshot.identity,
+                            expectedStage = admitted.snapshot.stage,
+                            expectedUpdatedAtEpochMillis = admitted.snapshot.updatedAtEpochMillis,
+                            targetStage = CaptureFileOperationStage.TEMP_SYNCED,
+                            byteCount = 7L,
+                            sha256 = "ab".repeat(32),
+                            capturedAtEpochMillis = 77L,
+                            transitionedAtEpochMillis = 81L,
+                        ),
+                    )
+                },
+                second = { competingRepository.beginShootDeletion(SHOOT_ID, 81L) },
+            )
+            val settled = settlement as CaptureFileJournalResult.Applied
+            assertEquals(CaptureFileOperationStage.TEMP_SYNCED, settled.snapshot.stage)
+            assertEquals(BeginShootDeletionResult.Began(8L, 0, 0, 0), deletion)
+            val nextInitial = requireNotNull(
+                gatedJournal.snapshot(PrivateOutputIdentity(settlementCapture.token, 1)),
+            )
+            assertEquals(
+                CaptureFileJournalResult.BlockedByDeletion,
+                gatedJournal.advance(admissionRequest(nextInitial, 82L)),
+            )
+        } finally {
+            settlementCompetitor.close()
+        }
+    }
+
+    @Test
     fun malformedCaptureFileJournalAuthorityIsRejectedWithoutMutation() {
+        val coherentControl = freshDeletionClockFixture()
+        coherentControl.sqlite.seedCapturingJournalAttempt()
+        coherentControl.sqlite.seedJournalRows(JOURNAL_TOKEN, 10L, 50L)
+        assertEquals(
+            BeginShootDeletionResult.Began(8L, 3, 1, 0),
+            coherentControl.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+
         val journalCases = listOf<Pair<String, (SupportSQLiteDatabase) -> Unit>>(
             "blob journal ownership key" to { sqlite ->
                 sqlite.execSQL("PRAGMA foreign_keys = OFF")
@@ -1829,25 +2011,76 @@ class DeletionExportRepositoryAndroidTest {
                     sqlite.execSQL(
                         "UPDATE capture_file_operations SET command_token = CAST(? AS BLOB) " +
                             "WHERE command_token = ? AND burst_ordinal = 0",
-                        arrayOf<Any>("clock-family-token", "clock-family-token"),
+                        arrayOf<Any>(JOURNAL_TOKEN, JOURNAL_TOKEN),
                     )
                 } finally {
                     sqlite.execSQL("PRAGMA foreign_keys = ON")
                 }
             },
+            "blob attempt lifecycle" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_attempts SET lifecycle_state = CAST('CAPTURING' AS BLOB) " +
+                        "WHERE command_token = ?",
+                    arrayOf<Any>(JOURNAL_TOKEN),
+                )
+            },
             "malformed journal clock" to { sqlite ->
                 sqlite.execSQL(
                     "UPDATE capture_file_operations SET updated_at_epoch_millis = 'malformed-clock' " +
-                        "WHERE command_token = 'clock-family-token' AND burst_ordinal = 0",
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "real journal clock" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET updated_at_epoch_millis = 50.5 " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "blob journal path" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET relative_final_path = " +
+                        "CAST(relative_final_path AS BLOB) " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "wrong deterministic journal path" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET relative_final_path = 'wrong/path.jpg' " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "missing journal ordinal" to { sqlite ->
+                sqlite.execSQL(
+                    "DELETE FROM capture_file_operations " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 2",
+                )
+            },
+            "journal creation detached from attempt" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET created_at_epoch_millis = 11 " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "noncanonical journal reconciliation flag" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET reconciliation_required = 2 " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
+                )
+            },
+            "unknown journal stage" to { sqlite ->
+                sqlite.execSQL(
+                    "UPDATE capture_file_operations SET stage = 'CORRUPT' " +
+                        "WHERE command_token = 'journal-clock-token' AND burst_ordinal = 0",
                 )
             },
         )
 
         journalCases.forEach { (caseName, corrupt) ->
             val fixture = freshDeletionClockFixture()
+            fixture.sqlite.seedCapturingJournalAttempt()
             fixture.sqlite.seedJournalRows(
-                commandToken = "clock-family-token",
-                createdAtEpochMillis = 50L,
+                commandToken = JOURNAL_TOKEN,
+                createdAtEpochMillis = 10L,
                 updatedAtEpochMillis = 50L,
             )
             // Simulates out-of-band/on-disk corruption that bypasses the SQL-layer
@@ -1866,6 +2099,135 @@ class DeletionExportRepositoryAndroidTest {
             )
             assertEquals(caseName, before, fixture.sqlite.authoritySnapshot())
         }
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val lifecycleFixture = openFixture()
+        lifecycleFixture.sqlite.seedShoot()
+        val registered = captureCommand("registered-stage-mismatch")
+        assertEquals(
+            AttemptRegistrationResult.Registered,
+            lifecycleFixture.repository.registerCaptureAttempt(SESSION_ID, registered, 70L),
+        )
+        withCaptureFileOperationTriggersDisabled(lifecycleFixture.sqlite) {
+            lifecycleFixture.sqlite.execSQL(
+                "UPDATE capture_file_operations SET last_failure_code = 'WRITE_FAILED', " +
+                    "reconciliation_required = 1, " +
+                    "updated_at_epoch_millis = 71 WHERE command_token = ? AND burst_ordinal = 0",
+                arrayOf<Any>(registered.token.value),
+            )
+        }
+        val beforeLifecycleMismatch = lifecycleFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            lifecycleFixture.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+        assertEquals(beforeLifecycleMismatch, lifecycleFixture.sqlite.authoritySnapshot())
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val capturingClockFixture = openFixture()
+        capturingClockFixture.sqlite.seedShoot()
+        val capturing = prepareCapturingAttempt(capturingClockFixture, "capturing-clock-mismatch")
+        withCaptureFileOperationTriggersDisabled(capturingClockFixture.sqlite) {
+            capturingClockFixture.sqlite.execSQL(
+                "UPDATE capture_file_operations SET stage = 'WRITING_TEMP', " +
+                    "updated_at_epoch_millis = 71 WHERE command_token = ? AND burst_ordinal = 0",
+                arrayOf<Any>(capturing.token.value),
+            )
+        }
+        val beforeCapturingClockMismatch = capturingClockFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            capturingClockFixture.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+        assertEquals(
+            beforeCapturingClockMismatch,
+            capturingClockFixture.sqlite.authoritySnapshot(),
+        )
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val unknownLifecycleFixture = openFixture()
+        unknownLifecycleFixture.sqlite.seedShoot()
+        unknownLifecycleFixture.sqlite.execSQL(
+            """
+            INSERT INTO capture_attempts
+                (command_token, session_id, pose_id, pose_index, attempt_number, trigger_type,
+                 lifecycle_state, reconciliation_required, captured_deletion_generation,
+                 created_at_epoch_millis, updated_at_epoch_millis, confirmed_at_epoch_millis)
+            VALUES ('unknown-lifecycle-token', ?, 'pose-0', 0, 0, 'MANUAL',
+                    'CORRUPT', 0, 7, 10, 10, NULL)
+            """.trimIndent(),
+            arrayOf<Any>(SESSION_ID),
+        )
+        unknownLifecycleFixture.sqlite.execSQL(
+            "UPDATE shoot_sessions SET next_attempt_number = 1 WHERE session_id = ?",
+            arrayOf<Any>(SESSION_ID),
+        )
+        val beforeUnknownLifecycle = unknownLifecycleFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            unknownLifecycleFixture.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+        assertEquals(beforeUnknownLifecycle, unknownLifecycleFixture.sqlite.authoritySnapshot())
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val registeredClockFixture = openFixture()
+        registeredClockFixture.sqlite.seedShoot()
+        val registeredClock = captureCommand("registered-attempt-clock-mismatch")
+        assertEquals(
+            AttemptRegistrationResult.Registered,
+            registeredClockFixture.repository.registerCaptureAttempt(
+                SESSION_ID,
+                registeredClock,
+                70L,
+            ),
+        )
+        registeredClockFixture.sqlite.execSQL(
+            "UPDATE capture_attempts SET updated_at_epoch_millis = 71 WHERE command_token = ?",
+            arrayOf<Any>(registeredClock.token.value),
+        )
+        val beforeRegisteredClock = registeredClockFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            registeredClockFixture.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+        assertEquals(beforeRegisteredClock, registeredClockFixture.sqlite.authoritySnapshot())
+
+        closeDatabase()
+        context.deleteDatabase(databaseName)
+        val capturingConfirmationFixture = openFixture()
+        capturingConfirmationFixture.sqlite.seedShoot()
+        val capturingConfirmation = prepareCapturingAttempt(
+            capturingConfirmationFixture,
+            "capturing-confirmation-mismatch",
+        )
+        capturingConfirmationFixture.sqlite.execSQL(
+            "UPDATE capture_attempts SET confirmed_at_epoch_millis = 75 WHERE command_token = ?",
+            arrayOf<Any>(capturingConfirmation.token.value),
+        )
+        val beforeCapturingConfirmation =
+            capturingConfirmationFixture.sqlite.authoritySnapshot()
+        assertEquals(
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            ),
+            capturingConfirmationFixture.repository.beginShootDeletion(SHOOT_ID, 100L),
+        )
+        assertEquals(
+            beforeCapturingConfirmation,
+            capturingConfirmationFixture.sqlite.authoritySnapshot(),
+        )
     }
 
     /**
@@ -1901,6 +2263,19 @@ class DeletionExportRepositoryAndroidTest {
 
     private fun openFixture(): Fixture {
         val appDatabase = AppDatabase.create(context, databaseName).also { database = it }
+        return Fixture(
+            sqlite = appDatabase.openHelper.writableDatabase,
+            repository = RoomShootRepository(appDatabase),
+        )
+    }
+
+    private fun openFixture(queryCallback: RoomDatabase.QueryCallback): Fixture {
+        val appDatabase = AppDatabase.create(
+            context = context,
+            databaseName = databaseName,
+            queryCallback = queryCallback,
+            queryCallbackExecutor = Executor { command -> command.run() },
+        ).also { database = it }
         return Fixture(
             sqlite = appDatabase.openHelper.writableDatabase,
             repository = RoomShootRepository(appDatabase),
@@ -1947,6 +2322,67 @@ class DeletionExportRepositoryAndroidTest {
                 CaptureAttemptStartResult.Started,
         )
         return command
+    }
+
+    private fun finalizeCaptureJournal(
+        fixture: Fixture,
+        command: ShootEffect.CaptureCommand,
+    ) {
+        val journal = RoomCaptureFileJournal(requireNotNull(database))
+        command.outputs.forEach { identity ->
+            val initial = requireNotNull(journal.snapshot(identity))
+            val writing = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity = identity,
+                    expectedStage = initial.stage,
+                    expectedUpdatedAtEpochMillis = initial.updatedAtEpochMillis,
+                    targetStage = CaptureFileOperationStage.WRITING_TEMP,
+                    byteCount = null,
+                    sha256 = null,
+                    capturedAtEpochMillis = null,
+                    transitionedAtEpochMillis = 76L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val synced = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity = identity,
+                    expectedStage = writing.stage,
+                    expectedUpdatedAtEpochMillis = writing.updatedAtEpochMillis,
+                    targetStage = CaptureFileOperationStage.TEMP_SYNCED,
+                    byteCount = 100L + identity.ordinal,
+                    sha256 = (identity.ordinal + 1).toString(16).padStart(64, '0'),
+                    capturedAtEpochMillis = 76L,
+                    transitionedAtEpochMillis = 77L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val renamePending = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity = identity,
+                    expectedStage = synced.stage,
+                    expectedUpdatedAtEpochMillis = synced.updatedAtEpochMillis,
+                    targetStage = CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+                    byteCount = synced.byteCount,
+                    sha256 = synced.sha256,
+                    capturedAtEpochMillis = synced.capturedAtEpochMillis,
+                    transitionedAtEpochMillis = 78L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            assertEquals(
+                CaptureFileOperationStage.FINAL_DURABLE,
+                (journal.advance(
+                    CaptureFileAdvanceRequest(
+                        identity = identity,
+                        expectedStage = renamePending.stage,
+                        expectedUpdatedAtEpochMillis = renamePending.updatedAtEpochMillis,
+                        targetStage = CaptureFileOperationStage.FINAL_DURABLE,
+                        byteCount = renamePending.byteCount,
+                        sha256 = renamePending.sha256,
+                        capturedAtEpochMillis = renamePending.capturedAtEpochMillis,
+                        transitionedAtEpochMillis = 79L,
+                    ),
+                ) as CaptureFileJournalResult.Applied).snapshot.stage,
+            )
+        }
     }
 
     private fun durableOutputs(token: CaptureToken): List<DurablePrivateOutput> =
@@ -2001,6 +2437,82 @@ class DeletionExportRepositoryAndroidTest {
             executor.shutdownNow()
             check(executor.awaitTermination(10L, TimeUnit.SECONDS)) {
                 "concurrent authority workers did not terminate"
+            }
+        }
+    }
+
+    private fun <First, Second> runWithPausedFirstTransaction(
+        gate: SqlTransactionGate,
+        competingTransactionEntered: CountDownLatch,
+        first: () -> First,
+        second: () -> Second,
+    ): Pair<First, Second> {
+        val executor = Executors.newFixedThreadPool(2)
+        gate.arm()
+        return try {
+            val firstFuture = executor.submit<First> { first() }
+            check(gate.awaitEntered()) { "first transaction did not reach its paused write" }
+            val secondFuture = executor.submit<Second> { second() }
+            check(competingTransactionEntered.await(10L, TimeUnit.SECONDS)) {
+                "competing transaction did not reach its SQLite transaction boundary"
+            }
+            try {
+                secondFuture.get(500L, TimeUnit.MILLISECONDS)
+                error("competing transaction completed while the first write was paused")
+            } catch (_: TimeoutException) {
+                Unit
+            }
+            gate.release()
+            firstFuture.get(30L, TimeUnit.SECONDS) to
+                secondFuture.get(30L, TimeUnit.SECONDS)
+        } finally {
+            gate.release()
+            executor.shutdownNow()
+            check(executor.awaitTermination(10L, TimeUnit.SECONDS)) {
+                "paused authority workers did not terminate"
+            }
+        }
+    }
+
+    private class SqlTransactionGate(
+        private val mutationSqlFragment: String,
+        private val pauseSqlFragment: String,
+    ) : RoomDatabase.QueryCallback {
+        private val entered = CountDownLatch(1)
+        private val release = CountDownLatch(1)
+
+        @Volatile
+        private var armed = false
+
+        @Volatile
+        private var mutationObserved = false
+
+        fun arm() {
+            mutationObserved = false
+            armed = true
+        }
+
+        fun awaitEntered(): Boolean = entered.await(10L, TimeUnit.SECONDS)
+
+        fun release() {
+            release.countDown()
+        }
+
+        override fun onQuery(sqlQuery: String, bindArgs: List<Any?>) {
+            if (!armed) return
+            if (!mutationObserved && sqlQuery.contains(mutationSqlFragment, ignoreCase = true)) {
+                mutationObserved = true
+                return
+            }
+            if (
+                mutationObserved &&
+                sqlQuery.contains(pauseSqlFragment, ignoreCase = true)
+            ) {
+                armed = false
+                entered.countDown()
+                check(release.await(10L, TimeUnit.SECONDS)) {
+                    "paused transaction was not released"
+                }
             }
         }
     }
@@ -2134,6 +2646,24 @@ class DeletionExportRepositoryAndroidTest {
         }
     }
 
+    private fun SupportSQLiteDatabase.seedCapturingJournalAttempt() {
+        execSQL(
+            """
+            INSERT INTO capture_attempts
+                (command_token, session_id, pose_id, pose_index, attempt_number, trigger_type,
+                 lifecycle_state, reconciliation_required, captured_deletion_generation,
+                 created_at_epoch_millis, updated_at_epoch_millis, confirmed_at_epoch_millis)
+            VALUES (?, ?, 'pose-0', 0, 1, 'MANUAL', 'CAPTURING', 0, 7, 10, 50, NULL)
+            """.trimIndent(),
+            arrayOf<Any>(JOURNAL_TOKEN, SESSION_ID),
+        )
+        execSQL(
+            "UPDATE shoot_sessions SET next_attempt_number = 2, " +
+                "updated_at_epoch_millis = 50 WHERE session_id = ?",
+            arrayOf<Any>(SESSION_ID),
+        )
+    }
+
     private fun SupportSQLiteDatabase.authoritySnapshot(): AuthoritySnapshot =
         AuthoritySnapshot(
             shoots = rows("SELECT * FROM shoots ORDER BY shoot_id"),
@@ -2195,6 +2725,7 @@ class DeletionExportRepositoryAndroidTest {
     companion object {
         private const val SHOOT_ID = "deletion-shoot"
         private const val SESSION_ID = "deletion-session"
+        private const val JOURNAL_TOKEN = "journal-clock-token"
         private const val PENDING = "PENDING"
         private const val CLAIMED = "CLAIMED"
         private const val AMBIGUOUS = "AMBIGUOUS"

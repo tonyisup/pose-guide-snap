@@ -1,0 +1,9 @@
+# Task 16R confirmation attempt — Pixel 6 — 25 September 2026
+
+After the participant said Ready, the exact spoken-guidance collector ran on the paired Pixel 6/oriole with 30000 ms preparation and 10000 ms requested measurement. Instrumentation failed complete-body readiness in 37.91 seconds, before measurement: “Spoken guided warm-up ended without five fresh, fully evaluated body frames.” The stop announcement completed before the error was raised. This does not identify which landmarks were unavailable, prove that orientation was wrong, or establish whether the participant heard “Good.” Ask for their cue/pacing feedback before another physical repeat.
+
+Verified main APK SHA-256: `1374ed781e9b9fae99fa695d9a52743569979191eff35397d07e8cd0ec393ef6`. Verified test APK SHA-256: `93fdb4b5bed065e6732827d1c87de93d9cc184a36da304d066fbd13fa1840ab8`. Camera permission and absent device export directory were checked before launch. Main app was already installed; only the test APK was reinstalled.
+
+Method: `MatchCalibrationCollectionAndroidTest#collectOneAuthorizedSpokenGuidedSequence`. Authorization: `user-authorized-derived`; dataset: `pixel6-match-confirmed-a`; sequence: `positive-confirmed-landscape-a`; fixture: `positive`; case: `centered-match`. This sequence identifier was attempted and must not be reused. The participant was instructed to preserve the landscape, approximately eight-foot setup; no new device orientation check was performed.
+
+No scalar measurement report was produced, pulled or analyzed. No image, recording or raw landmarks were retained. Exact report/temp cleanup and empty export-directory removal succeeded; the main app was stopped, test package removed, and no Pose Guide Snap camera client remained. Main app/data were preserved. See the [instrumentation output](2026-09-25-task16r-camera-output.txt) and [feature/protocol record](2026-09-25-task16r-adjustment-confirmation.md).

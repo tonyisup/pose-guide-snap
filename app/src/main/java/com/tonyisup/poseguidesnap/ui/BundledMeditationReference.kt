@@ -1,15 +1,18 @@
 package com.tonyisup.poseguidesnap.ui
 
 import com.tonyisup.poseguidesnap.camera.PixelSize
+import com.tonyisup.poseguidesnap.data.GuidedReferenceSnapshot
 import com.tonyisup.poseguidesnap.domain.match.DefaultPoseMatcher
 import com.tonyisup.poseguidesnap.domain.match.MatchPolicy
 import com.tonyisup.poseguidesnap.domain.match.PoseCanonicalizationResult
 import com.tonyisup.poseguidesnap.domain.match.PoseCanonicalizer
 import com.tonyisup.poseguidesnap.domain.match.PoseFeatures
+import com.tonyisup.poseguidesnap.domain.match.PoseFramingEvaluator
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.MatchGateFailure
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
+import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import java.util.ArrayList
 import java.util.Collections
 
@@ -43,6 +46,7 @@ object BundledMeditationReference {
         ),
         monotonicTimestampNanos = 0L,
         detectedPersonCount = 1,
+        imageSize = PoseImageSize(1024, 574),
     )
 
     private fun landmark(
@@ -67,6 +71,7 @@ enum class PrototypeGateState {
 }
 
 enum class ReferenceMatchStatus {
+    WAITING_FOR_REFERENCE,
     WAITING_FOR_FRAME,
     NO_PERSON,
     MULTIPLE_PEOPLE,
@@ -97,8 +102,8 @@ data class NamedPrototypeGateEvidence(
 }
 
 /**
- * Named, deliberately uncalibrated Task 10 match evidence. This is display evidence only: framing
- * is not evaluated and capture lock is always disabled, even when all prototype pose gates pass.
+ * Named, deliberately uncalibrated match evidence. This is display evidence only: automatic
+ * capture stays disabled, even when all prototype pose and framing gates pass.
  */
 @ConsistentCopyVisibility
 data class BundledReferenceMatchEvidence private constructor(
@@ -115,6 +120,9 @@ data class BundledReferenceMatchEvidence private constructor(
     val captureLockLabel: String,
     val labels: List<String>,
 ) {
+    override fun toString(): String =
+        "BundledReferenceMatchEvidence(status=${status.name}, redacted)"
+
     companion object {
         private val canonicalizer = PoseCanonicalizer(
             minimumConfidence = 0.25,
@@ -122,7 +130,8 @@ data class BundledReferenceMatchEvidence private constructor(
         )
         private val policy = MatchPolicy.developmentDefaults()
         private val matcher = DefaultPoseMatcher(policy)
-        private val referenceFeatures: PoseFeatures = when (
+        private val framingEvaluator = PoseFramingEvaluator()
+        private val bundledReferenceFeatures: PoseFeatures = when (
             val result = canonicalizer.canonicalize(BundledMeditationReference.observation)
         ) {
             is PoseCanonicalizationResult.Success -> result.features
@@ -130,17 +139,74 @@ data class BundledReferenceMatchEvidence private constructor(
                 error("Bundled meditation reference cannot be canonicalized: ${result.reason}")
         }
 
-        fun evaluate(live: PoseObservation?): BundledReferenceMatchEvidence {
+        fun evaluate(live: PoseObservation?): BundledReferenceMatchEvidence = evaluateAgainst(
+            referenceLabel =
+                "Reference loaded: ${BundledMeditationReference.label} " +
+                    "(${BundledMeditationReference.observation.landmarks.size} landmarks)",
+            referenceFeatures = bundledReferenceFeatures,
+            referenceObservation = BundledMeditationReference.observation,
+            mirrorAllowed = BundledMeditationReference.mirrorAllowed,
+            live = live,
+        )
+
+        internal fun evaluate(
+            reference: GuidedReferenceSnapshot?,
+            live: PoseObservation?,
+        ): BundledReferenceMatchEvidence {
+            if (reference == null) {
+                return unevaluated(
+                    status = ReferenceMatchStatus.WAITING_FOR_REFERENCE,
+                    reason = "waiting for the current reference",
+                    referenceLabel = "Reference: loading",
+                )
+            }
+            val referenceLabel =
+                "Reference loaded: ${reference.label} (${reference.landmarks.size} landmarks)"
+            val observation = PoseObservation(
+                landmarks = reference.landmarks,
+                monotonicTimestampNanos = 0L,
+                detectedPersonCount = 1,
+                imageSize = reference.imageSize,
+            )
+            val features = when (val result = canonicalizer.canonicalize(observation)) {
+                is PoseCanonicalizationResult.Success -> result.features
+                is PoseCanonicalizationResult.Failure -> return unevaluated(
+                    status = ReferenceMatchStatus.CANONICALIZATION_FAILED,
+                    reason = "reference pose canonicalization failed",
+                    referenceLabel = referenceLabel,
+                )
+            }
+            return evaluateAgainst(
+                referenceLabel = referenceLabel,
+                referenceFeatures = features,
+                referenceObservation = observation,
+                mirrorAllowed = reference.mirrorAllowed,
+                live = live,
+            )
+        }
+
+        private fun evaluateAgainst(
+            referenceLabel: String,
+            referenceFeatures: PoseFeatures,
+            referenceObservation: PoseObservation,
+            mirrorAllowed: Boolean,
+            live: PoseObservation?,
+        ): BundledReferenceMatchEvidence {
             if (live == null) {
-                return unevaluated(ReferenceMatchStatus.WAITING_FOR_FRAME, "waiting for a frame")
+                return unevaluated(
+                    ReferenceMatchStatus.WAITING_FOR_FRAME,
+                    "waiting for a frame",
+                    referenceLabel,
+                )
             }
             if (live.detectedPersonCount == 0) {
-                return unevaluated(ReferenceMatchStatus.NO_PERSON, "no person")
+                return unevaluated(ReferenceMatchStatus.NO_PERSON, "no person", referenceLabel)
             }
             if (live.detectedPersonCount > 1) {
                 return unevaluated(
                     ReferenceMatchStatus.MULTIPLE_PEOPLE,
                     "multiple people (${live.detectedPersonCount})",
+                    referenceLabel,
                 )
             }
 
@@ -150,17 +216,23 @@ data class BundledReferenceMatchEvidence private constructor(
                 return unevaluated(
                     ReferenceMatchStatus.CANONICALIZATION_FAILED,
                     "pose canonicalization failed",
+                    referenceLabel,
                 )
             }
 
-            // Framing is intentionally a neutral matcher input because Task 10 does not evaluate it.
+            val framingEvidence = framingEvaluator.evaluate(referenceObservation, live)
             val match = matcher.match(
                 reference = referenceFeatures,
                 observed = normal.features,
                 mirroredObserved = mirrored.features,
-                mirrorAllowed = BundledMeditationReference.mirrorAllowed,
+                mirrorAllowed = mirrorAllowed,
                 detectedPersonCount = live.detectedPersonCount,
-                framingScore = 1.0,
+                framingScore = framingEvidence.framingScore,
+            )
+            val framing = evaluatedGate(
+                name = "Framing gate",
+                score = match.framingScore,
+                failed = MatchGateFailure.POOR_FRAMING in match.gateFailures,
             )
             val coverage = evaluatedGate(
                 name = "Coverage gate",
@@ -190,51 +262,58 @@ data class BundledReferenceMatchEvidence private constructor(
             }
             return create(
                 status = ReferenceMatchStatus.EVALUATED,
+                framing = framing,
                 coverage = coverage,
                 angular = angular,
                 positional = positional,
                 overall = overall,
                 selectedMirror = selectedMirror,
                 mirrorLabel = mirrorLabel,
+                referenceLabel = referenceLabel,
             )
         }
 
         private fun unevaluated(
             status: ReferenceMatchStatus,
             reason: String,
+            referenceLabel: String =
+                "Reference loaded: ${BundledMeditationReference.label} " +
+                    "(${BundledMeditationReference.observation.landmarks.size} landmarks)",
         ): BundledReferenceMatchEvidence {
             val coverage = unevaluatedGate("Coverage gate", reason)
+            val framing = NamedPrototypeGateEvidence(
+                state = PrototypeGateState.NOT_EVALUATED,
+                score = null,
+                label = "Framing gate: not evaluated",
+            )
             val angular = unevaluatedGate("Angular gate", reason)
             val positional = unevaluatedGate("Positional gate", reason)
             val overall = unevaluatedGate("Overall gate", reason)
             return create(
                 status = status,
+                framing = framing,
                 coverage = coverage,
                 angular = angular,
                 positional = positional,
                 overall = overall,
                 selectedMirror = MirrorSelection.NOT_EVALUATED,
                 mirrorLabel = "Selected mirror: not evaluated ($reason)",
+                referenceLabel = referenceLabel,
             )
         }
 
         private fun create(
             status: ReferenceMatchStatus,
+            framing: NamedPrototypeGateEvidence,
             coverage: NamedPrototypeGateEvidence,
             angular: NamedPrototypeGateEvidence,
             positional: NamedPrototypeGateEvidence,
             overall: NamedPrototypeGateEvidence,
             selectedMirror: MirrorSelection,
             mirrorLabel: String,
+            referenceLabel: String,
         ): BundledReferenceMatchEvidence {
-            val referenceLabel =
-                "Reference loaded: ${BundledMeditationReference.label} (${BundledMeditationReference.observation.landmarks.size} landmarks)"
-            val framing = NamedPrototypeGateEvidence(
-                state = PrototypeGateState.NOT_EVALUATED,
-                score = null,
-                label = "Framing gate: not evaluated",
-            )
-            val captureLockLabel = "Capture lock: disabled in Task 10"
+            val captureLockLabel = "Automatic capture: disabled pending calibration"
             val labels = Collections.unmodifiableList(
                 ArrayList(
                     listOf(

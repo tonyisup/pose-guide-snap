@@ -107,6 +107,29 @@ class ShootReducerTest {
     }
 
     @Test
+    fun lowerReleaseThresholdRetainsLockButCannotStartAcquisition() {
+        val releaseOnly = result(
+            failures = setOf(MatchGateFailure.LOW_OVERALL_MATCH),
+            eligible = false,
+            releaseFailures = emptySet(),
+            eligibleForRetention = true,
+        )
+        val reducer = reducer()
+
+        val unlocked = reducer.reduce(
+            state(mode = ShootMode.SearchingForPerson),
+            frame(releaseOnly, at = 0L),
+        )
+        val locked = reducer.reduce(
+            state(mode = ShootMode.Locked()),
+            frame(releaseOnly, at = 0L),
+        )
+
+        assertEquals(ShootMode.Coaching, unlocked.nextState.mode)
+        assertEquals(ShootMode.Locked(), locked.nextState.mode)
+    }
+
+    @Test
     fun staleFrameIsIgnoredWithoutChangingLockState() {
         val initial = state(mode = ShootMode.LockCandidate(0L), lastReducer = 0L)
         val transition = reducer(maxAge = 10L).reduce(
@@ -800,6 +823,8 @@ class ShootReducerTest {
     private fun result(
         failures: Set<MatchGateFailure>,
         eligible: Boolean,
+        releaseFailures: Set<MatchGateFailure> = failures,
+        eligibleForRetention: Boolean = eligible,
     ): MatchResult = MatchResult(
         landmarkCoverage = 1.0,
         framingScore = 1.0,
@@ -809,6 +834,8 @@ class ShootReducerTest {
         gateFailures = failures,
         mirrorUsed = false,
         eligibleForLock = eligible,
+        releaseGateFailures = releaseFailures,
+        eligibleForLockRetention = eligibleForRetention,
     )
 
     private fun frame(result: MatchResult, at: Long): ShootEvent.FrameObserved =

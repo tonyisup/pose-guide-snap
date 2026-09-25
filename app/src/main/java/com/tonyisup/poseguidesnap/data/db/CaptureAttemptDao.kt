@@ -37,6 +37,71 @@ internal interface CaptureAttemptDao {
         poseIndex: Int,
     ): ShootPoseEntity?
 
+    @Query(
+        """
+        SELECT CASE
+            WHEN COUNT(*) = 0 THEN 0
+            WHEN COUNT(*) != SUM(
+                CASE WHEN
+                    typeof(command_token) = 'text'
+                    AND length(trim(command_token)) > 0
+                    AND typeof(session_id) = 'text'
+                    AND session_id = :sessionId
+                    AND typeof(pose_id) = 'text'
+                    AND length(trim(pose_id)) > 0
+                    AND typeof(pose_index) = 'integer'
+                    AND pose_index >= 0
+                    AND typeof(attempt_number) = 'integer'
+                    AND attempt_number >= 0
+                    AND typeof(trigger_type) = 'text'
+                    AND trigger_type IN ('MANUAL', 'AUTOMATIC')
+                    AND typeof(lifecycle_state) = 'text'
+                    AND lifecycle_state IN (
+                        'REGISTERED', 'CAPTURING', 'FAILED_CLEANED',
+                        'RECONCILIATION_REQUIRED', 'CONFIRMED'
+                    )
+                    AND typeof(reconciliation_required) = 'integer'
+                    AND reconciliation_required IN (0, 1)
+                    AND typeof(captured_deletion_generation) = 'integer'
+                    AND captured_deletion_generation >= 0
+                    AND typeof(created_at_epoch_millis) = 'integer'
+                    AND created_at_epoch_millis >= 0
+                    AND typeof(updated_at_epoch_millis) = 'integer'
+                    AND updated_at_epoch_millis >= created_at_epoch_millis
+                    AND (
+                        (lifecycle_state = 'REGISTERED'
+                            AND reconciliation_required = 0
+                            AND updated_at_epoch_millis = created_at_epoch_millis
+                            AND typeof(confirmed_at_epoch_millis) = 'null')
+                        OR (lifecycle_state = 'CAPTURING'
+                            AND reconciliation_required = 0
+                            AND typeof(confirmed_at_epoch_millis) = 'null')
+                        OR (lifecycle_state = 'FAILED_CLEANED'
+                            AND reconciliation_required = 0
+                            AND typeof(confirmed_at_epoch_millis) = 'null')
+                        OR (lifecycle_state = 'RECONCILIATION_REQUIRED'
+                            AND reconciliation_required = 1
+                            AND typeof(confirmed_at_epoch_millis) = 'null')
+                        OR (lifecycle_state = 'CONFIRMED'
+                            AND reconciliation_required = 0
+                            AND typeof(confirmed_at_epoch_millis) = 'integer'
+                            AND confirmed_at_epoch_millis = updated_at_epoch_millis)
+                    )
+                THEN 1 ELSE 0 END
+            ) THEN 2
+            WHEN SUM(
+                CASE WHEN lifecycle_state IN (
+                    'REGISTERED', 'CAPTURING', 'RECONCILIATION_REQUIRED'
+                ) THEN 1 ELSE 0 END
+            ) > 0 THEN 1
+            ELSE 0
+        END
+        FROM capture_attempts
+        WHERE CAST(session_id AS BLOB) = CAST(:sessionId AS BLOB)
+        """,
+    )
+    fun classifySessionAttemptAdmission(sessionId: String): Int
+
     @Insert
     fun insertAttempt(attempt: CaptureAttemptEntity)
 
@@ -104,6 +169,18 @@ internal interface CaptureAttemptDao {
                     AND candidate.lifecycle_state = 'CONFIRMED'
                 THEN 1 ELSE 0 END
             ) = 1 THEN 5
+            WHEN SUM(
+                CASE WHEN
+                    typeof(candidate.lifecycle_state) = 'text'
+                    AND candidate.lifecycle_state = 'FAILED_CLEANED'
+                THEN 1 ELSE 0 END
+            ) = 1 THEN 6
+            WHEN SUM(
+                CASE WHEN
+                    typeof(candidate.lifecycle_state) = 'text'
+                    AND candidate.lifecycle_state = 'RECONCILIATION_REQUIRED'
+                THEN 1 ELSE 0 END
+            ) = 1 THEN 7
             ELSE 1
         END
         FROM capture_attempts AS candidate
@@ -118,6 +195,111 @@ internal interface CaptureAttemptDao {
         sessionId: String,
         commandToken: String,
     ): Int
+
+    @Query(
+        """
+        SELECT CASE
+            WHEN COUNT(*) = 0 THEN 0
+            WHEN COUNT(*) != 1 THEN 2
+            WHEN SUM(
+                CASE WHEN
+                    typeof(attempt.command_token) = 'text'
+                    AND length(trim(attempt.command_token)) > 0
+                    AND typeof(attempt.session_id) = 'text'
+                    AND attempt.session_id = :sessionId
+                    AND typeof(attempt.pose_id) = 'text'
+                    AND length(trim(attempt.pose_id)) > 0
+                    AND typeof(attempt.pose_index) = 'integer'
+                    AND attempt.pose_index >= 0
+                    AND typeof(attempt.attempt_number) = 'integer'
+                    AND attempt.attempt_number >= 0
+                    AND typeof(attempt.trigger_type) = 'text'
+                    AND attempt.trigger_type IN ('MANUAL', 'AUTOMATIC')
+                    AND typeof(attempt.lifecycle_state) = 'text'
+                    AND attempt.lifecycle_state IN ('REGISTERED', 'CAPTURING')
+                    AND typeof(attempt.reconciliation_required) = 'integer'
+                    AND attempt.reconciliation_required = 0
+                    AND typeof(attempt.captured_deletion_generation) = 'integer'
+                    AND attempt.captured_deletion_generation >= 0
+                    AND typeof(attempt.created_at_epoch_millis) = 'integer'
+                    AND attempt.created_at_epoch_millis >= 0
+                    AND typeof(attempt.updated_at_epoch_millis) = 'integer'
+                    AND attempt.updated_at_epoch_millis >= attempt.created_at_epoch_millis
+                    AND typeof(attempt.confirmed_at_epoch_millis) = 'null'
+                    AND typeof(session.session_id) = 'text'
+                    AND session.session_id = :sessionId
+                    AND typeof(session.shoot_id) = 'text'
+                    AND length(trim(session.shoot_id)) > 0
+                    AND typeof(session.current_pose_index) = 'integer'
+                    AND session.current_pose_index = attempt.pose_index
+                    AND typeof(session.next_attempt_number) = 'integer'
+                    AND session.next_attempt_number = attempt.attempt_number + 1
+                    AND typeof(session.lifecycle_state) = 'text'
+                    AND session.lifecycle_state = 'ACTIVE'
+                    AND typeof(session.created_at_epoch_millis) = 'integer'
+                    AND session.created_at_epoch_millis >= 0
+                    AND typeof(session.updated_at_epoch_millis) = 'integer'
+                    AND session.updated_at_epoch_millis >= session.created_at_epoch_millis
+                    AND typeof(shoot.shoot_id) = 'text'
+                    AND shoot.shoot_id = session.shoot_id
+                    AND typeof(shoot.name) = 'text'
+                    AND typeof(shoot.lifecycle_state) = 'text'
+                    AND shoot.lifecycle_state = 'ACTIVE'
+                    AND typeof(shoot.deletion_generation) = 'integer'
+                    AND shoot.deletion_generation = attempt.captured_deletion_generation
+                    AND typeof(shoot.created_at_epoch_millis) = 'integer'
+                    AND shoot.created_at_epoch_millis >= 0
+                    AND typeof(shoot.updated_at_epoch_millis) = 'integer'
+                    AND shoot.updated_at_epoch_millis >= shoot.created_at_epoch_millis
+                    AND typeof(pose.shoot_id) = 'text'
+                    AND pose.shoot_id = session.shoot_id
+                    AND typeof(pose.pose_index) = 'integer'
+                    AND pose.pose_index = attempt.pose_index
+                    AND typeof(pose.pose_id) = 'text'
+                    AND pose.pose_id = attempt.pose_id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM capture_file_operations AS operation
+                        WHERE CAST(operation.command_token AS BLOB) =
+                            CAST(attempt.command_token AS BLOB)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM private_capture_outputs AS output
+                        WHERE CAST(output.command_token AS BLOB) =
+                            CAST(attempt.command_token AS BLOB)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM capture_confirmation_receipts AS receipt
+                        WHERE CAST(receipt.command_token AS BLOB) =
+                            CAST(attempt.command_token AS BLOB)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM capture_export_outboxes AS outbox
+                        WHERE CAST(outbox.command_token AS BLOB) =
+                            CAST(attempt.command_token AS BLOB)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM capture_export_outputs AS output
+                        WHERE CAST(output.command_token AS BLOB) =
+                            CAST(attempt.command_token AS BLOB)
+                    )
+                THEN 1 ELSE 0 END
+            ) = 1 THEN 1
+            ELSE 2
+        END
+        FROM capture_attempts AS attempt
+        LEFT JOIN shoot_sessions AS session
+          ON CAST(session.session_id AS BLOB) = CAST(attempt.session_id AS BLOB)
+        LEFT JOIN shoots AS shoot
+          ON CAST(shoot.shoot_id AS BLOB) = CAST(session.shoot_id AS BLOB)
+        LEFT JOIN shoot_poses AS pose
+          ON CAST(pose.shoot_id AS BLOB) = CAST(session.shoot_id AS BLOB)
+         AND pose.pose_index = session.current_pose_index
+        WHERE CAST(attempt.session_id AS BLOB) = CAST(:sessionId AS BLOB)
+          AND attempt.attempt_number = session.next_attempt_number - 1
+          AND attempt.lifecycle_state IN ('REGISTERED', 'CAPTURING')
+        """,
+    )
+    fun classifyJournalFreeRecoveryCandidate(sessionId: String): Int
 
     @Query(
         """
@@ -424,5 +606,124 @@ internal interface CaptureAttemptDao {
         relativeFinalPath2: String,
         relativeTempPath2: String,
         relativeQuarantinePath2: String,
+    ): Int
+
+    @Query(
+        """
+        UPDATE capture_attempts
+        SET lifecycle_state = 'FAILED_CLEANED',
+            reconciliation_required = 0,
+            updated_at_epoch_millis = :settledAtEpochMillis,
+            confirmed_at_epoch_millis = NULL
+        WHERE command_token = :commandToken
+          AND session_id = :sessionId
+          AND lifecycle_state = :expectedLifecycleState
+          AND :expectedLifecycleState IN (
+              'REGISTERED', 'CAPTURING', 'RECONCILIATION_REQUIRED'
+          )
+          AND reconciliation_required = CASE
+              WHEN :expectedLifecycleState = 'RECONCILIATION_REQUIRED' THEN 1
+              ELSE 0
+          END
+          AND updated_at_epoch_millis = :expectedUpdatedAtEpochMillis
+          AND confirmed_at_epoch_millis IS NULL
+          AND :settledAtEpochMillis >= updated_at_epoch_millis
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_file_operations AS operation
+              WHERE operation.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM private_capture_outputs AS output
+              WHERE output.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_confirmation_receipts AS receipt
+              WHERE receipt.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_export_outboxes AS outbox
+              WHERE outbox.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_export_outputs AS output
+              WHERE output.command_token = capture_attempts.command_token
+          )
+        """,
+    )
+    fun settleAttemptFailedCleaned(
+        commandToken: String,
+        sessionId: String,
+        expectedLifecycleState: String,
+        expectedUpdatedAtEpochMillis: Long,
+        settledAtEpochMillis: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE capture_attempts
+        SET lifecycle_state = 'RECONCILIATION_REQUIRED',
+            reconciliation_required = 1,
+            updated_at_epoch_millis = :settledAtEpochMillis
+        WHERE command_token = :commandToken
+          AND session_id = :sessionId
+          AND lifecycle_state = 'CAPTURING'
+          AND reconciliation_required = 0
+          AND updated_at_epoch_millis = :expectedUpdatedAtEpochMillis
+          AND confirmed_at_epoch_millis IS NULL
+          AND :settledAtEpochMillis >= updated_at_epoch_millis
+          AND 3 = (
+              SELECT COUNT(*) FROM capture_file_operations AS operation
+              WHERE operation.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM private_capture_outputs AS output
+              WHERE output.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_confirmation_receipts AS receipt
+              WHERE receipt.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_export_outboxes AS outbox
+              WHERE outbox.command_token = capture_attempts.command_token
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM capture_export_outputs AS output
+              WHERE output.command_token = capture_attempts.command_token
+          )
+        """,
+    )
+    fun markAttemptReconciliationRequired(
+        commandToken: String,
+        sessionId: String,
+        expectedUpdatedAtEpochMillis: Long,
+        settledAtEpochMillis: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE shoot_sessions
+        SET updated_at_epoch_millis = :settledAtEpochMillis
+        WHERE session_id = :sessionId
+          AND current_pose_index = :expectedPoseIndex
+          AND next_attempt_number = :expectedNextAttemptNumber
+          AND lifecycle_state = 'ACTIVE'
+          AND updated_at_epoch_millis = :expectedUpdatedAtEpochMillis
+          AND :settledAtEpochMillis >= updated_at_epoch_millis
+          AND EXISTS (
+              SELECT 1 FROM shoots AS owning_shoot
+              WHERE owning_shoot.shoot_id = shoot_sessions.shoot_id
+                AND owning_shoot.lifecycle_state = 'ACTIVE'
+                AND owning_shoot.deletion_generation = :expectedDeletionGeneration
+          )
+        """,
+    )
+    fun advanceSessionClockForAttemptSettlement(
+        sessionId: String,
+        expectedPoseIndex: Int,
+        expectedNextAttemptNumber: Long,
+        expectedDeletionGeneration: Long,
+        expectedUpdatedAtEpochMillis: Long,
+        settledAtEpochMillis: Long,
     ): Int
 }

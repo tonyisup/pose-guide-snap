@@ -1,0 +1,27 @@
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest:
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=calibration framing recordedFrames=91 evaluatedFrames=91 unavailableFrames=0 minimumCenterSimilarity=0.7746766383678123 maximumCenterSimilarity=0.7774264206924574 minimumScaleSimilarity=0.7869523629574631 maximumScaleSimilarity=0.7908075389890958
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration report file=calibration-sequence-v3.json sha256=162304dae2e472ba57659126231c97e7ccc6a044eecd3504780191cc8f7ec3de frames=91 dataset=pixel6-match-confirmed-a sequence=positive-confirmed-landscape-b
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 48.128
+
+OK (1 test)
+
+
+INSTRUMENTATION_CODE: -1

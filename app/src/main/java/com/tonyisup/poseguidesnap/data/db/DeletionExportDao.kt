@@ -147,6 +147,69 @@ internal interface DeletionExportDao {
 
     @Query(
         """
+        SELECT CASE WHEN COUNT(*) = COALESCE(SUM(
+            CASE WHEN
+                typeof(attempt.command_token) = 'text'
+                AND length(trim(attempt.command_token)) > 0
+                AND typeof(attempt.session_id) = 'text'
+                AND length(trim(attempt.session_id)) > 0
+                AND typeof(attempt.pose_id) = 'text'
+                AND length(trim(attempt.pose_id)) > 0
+                AND typeof(attempt.pose_index) = 'integer'
+                AND attempt.pose_index >= 0
+                AND typeof(attempt.attempt_number) = 'integer'
+                AND attempt.attempt_number >= 0
+                AND typeof(attempt.trigger_type) = 'text'
+                AND attempt.trigger_type IN ('MANUAL', 'AUTOMATIC')
+                AND typeof(attempt.lifecycle_state) = 'text'
+                AND attempt.lifecycle_state IN (
+                    'REGISTERED', 'CAPTURING', 'FAILED_CLEANED',
+                    'RECONCILIATION_REQUIRED', 'CONFIRMED'
+                )
+                AND typeof(attempt.reconciliation_required) = 'integer'
+                AND attempt.reconciliation_required IN (0, 1)
+                AND typeof(attempt.captured_deletion_generation) = 'integer'
+                AND attempt.captured_deletion_generation >= 0
+                AND typeof(attempt.created_at_epoch_millis) = 'integer'
+                AND attempt.created_at_epoch_millis >= 0
+                AND typeof(attempt.updated_at_epoch_millis) = 'integer'
+                AND attempt.updated_at_epoch_millis >= attempt.created_at_epoch_millis
+                AND (
+                    (attempt.lifecycle_state = 'REGISTERED'
+                        AND attempt.reconciliation_required = 0
+                        AND typeof(attempt.confirmed_at_epoch_millis) = 'null'
+                        AND attempt.updated_at_epoch_millis = attempt.created_at_epoch_millis)
+                    OR
+                    (attempt.lifecycle_state = 'CAPTURING'
+                        AND attempt.reconciliation_required = 0
+                        AND typeof(attempt.confirmed_at_epoch_millis) = 'null')
+                    OR
+                    (attempt.lifecycle_state = 'FAILED_CLEANED'
+                        AND attempt.reconciliation_required = 0
+                        AND typeof(attempt.confirmed_at_epoch_millis) = 'null')
+                    OR
+                    (attempt.lifecycle_state = 'RECONCILIATION_REQUIRED'
+                        AND attempt.reconciliation_required = 1
+                        AND typeof(attempt.confirmed_at_epoch_millis) = 'null')
+                    OR
+                    (attempt.lifecycle_state = 'CONFIRMED'
+                        AND attempt.reconciliation_required = 0
+                        AND typeof(attempt.confirmed_at_epoch_millis) = 'integer'
+                        AND attempt.confirmed_at_epoch_millis =
+                            attempt.updated_at_epoch_millis)
+                )
+            THEN 1 ELSE 0 END
+        ), 0) THEN 1 ELSE 0 END
+        FROM capture_attempts AS attempt
+        INNER JOIN shoot_sessions AS session
+          ON CAST(session.session_id AS BLOB) = CAST(attempt.session_id AS BLOB)
+        WHERE CAST(session.shoot_id AS BLOB) = CAST(:shootId AS BLOB)
+        """,
+    )
+    fun hasValidCaptureAttemptStorageForShoot(shootId: String): Int
+
+    @Query(
+        """
         SELECT 0 AS family_ordinal,
                CASE WHEN typeof(shoot.shoot_id) = 'text' THEN shoot.shoot_id ELSE '' END
                    AS primary_key,
@@ -320,6 +383,83 @@ internal interface DeletionExportDao {
 
     @Query(
         """
+        SELECT CASE WHEN COUNT(*) = COALESCE(SUM(
+            CASE WHEN
+                typeof(journal.command_token) = 'text'
+                AND length(trim(journal.command_token)) > 0
+                AND typeof(journal.burst_ordinal) = 'integer'
+                AND journal.burst_ordinal BETWEEN 0 AND 2
+                AND typeof(journal.relative_final_path) = 'text'
+                AND typeof(journal.relative_temp_path) = 'text'
+                AND typeof(journal.relative_quarantine_path) = 'text'
+                AND typeof(journal.stage) = 'text'
+                AND journal.stage IN (
+                    'EXPECTING_RESERVATION', 'WRITING_TEMP', 'TEMP_SYNCED',
+                    'FINAL_RENAME_PENDING_SYNC', 'FINAL_DURABLE', 'CLEANUP_REQUIRED',
+                    'CLEANUP_PENDING_SYNC', 'CLEANED_DURABLE', 'QUARANTINE_REQUIRED',
+                    'QUARANTINE_PENDING_SYNC', 'QUARANTINE_DURABLE'
+                )
+                AND typeof(journal.byte_count) IN ('integer', 'null')
+                AND typeof(journal.sha256) IN ('text', 'null')
+                AND typeof(journal.captured_at_epoch_millis) IN ('integer', 'null')
+                AND (
+                    (journal.byte_count IS NULL
+                        AND journal.sha256 IS NULL
+                        AND journal.captured_at_epoch_millis IS NULL)
+                    OR
+                    (journal.byte_count > 0
+                        AND length(journal.sha256) = 64
+                        AND journal.sha256 NOT GLOB '*[^0-9a-f]*'
+                        AND journal.captured_at_epoch_millis >= 0)
+                )
+                AND (
+                    (journal.stage IN (
+                        'EXPECTING_RESERVATION', 'WRITING_TEMP', 'CLEANED_DURABLE'
+                    ) AND journal.byte_count IS NULL)
+                    OR
+                    (journal.stage IN (
+                        'TEMP_SYNCED', 'FINAL_RENAME_PENDING_SYNC', 'FINAL_DURABLE',
+                        'QUARANTINE_REQUIRED', 'QUARANTINE_PENDING_SYNC',
+                        'QUARANTINE_DURABLE'
+                    ) AND journal.byte_count IS NOT NULL)
+                    OR journal.stage IN ('CLEANUP_REQUIRED', 'CLEANUP_PENDING_SYNC')
+                )
+                AND typeof(journal.last_failure_code) IN ('text', 'null')
+                AND (
+                    journal.last_failure_code IS NULL
+                    OR journal.last_failure_code IN (
+                        'RESERVATION_FAILED', 'WRITE_FAILED', 'FILE_SYNC_FAILED',
+                        'RENAME_FAILED', 'DIRECTORY_SYNC_FAILED', 'DELETE_FAILED',
+                        'STATE_MISMATCH', 'EVIDENCE_MISMATCH'
+                    )
+                )
+                AND typeof(journal.reconciliation_required) = 'integer'
+                AND journal.reconciliation_required IN (0, 1)
+                AND journal.reconciliation_required =
+                    (journal.last_failure_code IS NOT NULL)
+                AND typeof(journal.created_at_epoch_millis) = 'integer'
+                AND journal.created_at_epoch_millis >= 0
+                AND typeof(journal.updated_at_epoch_millis) = 'integer'
+                AND journal.updated_at_epoch_millis >= journal.created_at_epoch_millis
+                AND (
+                    journal.captured_at_epoch_millis IS NULL
+                    OR journal.captured_at_epoch_millis BETWEEN
+                        journal.created_at_epoch_millis AND journal.updated_at_epoch_millis
+                )
+            THEN 1 ELSE 0 END
+        ), 0) THEN 1 ELSE 0 END
+        FROM capture_file_operations AS journal
+        INNER JOIN capture_attempts AS attempt
+          ON CAST(attempt.command_token AS BLOB) = CAST(journal.command_token AS BLOB)
+        INNER JOIN shoot_sessions AS session
+          ON CAST(session.session_id AS BLOB) = CAST(attempt.session_id AS BLOB)
+        WHERE CAST(session.shoot_id AS BLOB) = CAST(:shootId AS BLOB)
+        """,
+    )
+    fun hasValidCaptureFileOperationStorageForShoot(shootId: String): Int
+
+    @Query(
+        """
         SELECT * FROM capture_export_outputs
         WHERE command_token = :commandToken AND burst_ordinal = :burstOrdinal
         """,
@@ -397,6 +537,94 @@ internal interface DeletionExportDao {
           AND lifecycle_state = 'ACTIVE'
           AND deletion_generation >= 0
           AND deletion_generation = :previousGeneration
+          AND :requestedAtEpochMillis >= created_at_epoch_millis
+          AND :requestedAtEpochMillis >= updated_at_epoch_millis
+          AND NOT EXISTS (
+              SELECT 1 FROM shoot_sessions AS session
+              WHERE session.shoot_id = :shootId
+                AND (
+                    session.created_at_epoch_millis > :requestedAtEpochMillis
+                    OR session.updated_at_epoch_millis > :requestedAtEpochMillis
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_attempts AS attempt
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND (
+                    attempt.created_at_epoch_millis > :requestedAtEpochMillis
+                    OR attempt.updated_at_epoch_millis > :requestedAtEpochMillis
+                    OR attempt.confirmed_at_epoch_millis > :requestedAtEpochMillis
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM private_capture_outputs AS private_output
+              INNER JOIN capture_attempts AS attempt
+                ON attempt.command_token = private_output.command_token
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND private_output.captured_at_epoch_millis > :requestedAtEpochMillis
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_confirmation_receipts AS receipt
+              INNER JOIN capture_attempts AS attempt ON attempt.command_token = receipt.command_token
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND receipt.applied_at_epoch_millis > :requestedAtEpochMillis
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_file_operations AS journal_clock
+              INNER JOIN capture_attempts AS attempt
+                ON attempt.command_token = journal_clock.command_token
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND (
+                    journal_clock.created_at_epoch_millis > :requestedAtEpochMillis
+                    OR journal_clock.updated_at_epoch_millis > :requestedAtEpochMillis
+                    OR journal_clock.captured_at_epoch_millis > :requestedAtEpochMillis
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_export_outboxes AS outbox
+              INNER JOIN capture_attempts AS attempt ON attempt.command_token = outbox.command_token
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND (
+                    outbox.created_at_epoch_millis > :requestedAtEpochMillis
+                    OR outbox.updated_at_epoch_millis > :requestedAtEpochMillis
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_export_outputs AS output
+              INNER JOIN capture_attempts AS attempt ON attempt.command_token = output.command_token
+              INNER JOIN shoot_sessions AS session ON session.session_id = attempt.session_id
+              WHERE session.shoot_id = :shootId
+                AND (
+                    output.created_at_epoch_millis > :requestedAtEpochMillis
+                    OR output.updated_at_epoch_millis > :requestedAtEpochMillis
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM capture_file_operations AS journal
+              INNER JOIN capture_attempts AS attempt
+                ON CAST(attempt.command_token AS BLOB) = CAST(journal.command_token AS BLOB)
+              INNER JOIN shoot_sessions AS session
+                ON CAST(session.session_id AS BLOB) = CAST(attempt.session_id AS BLOB)
+              WHERE session.shoot_id = :shootId
+                AND journal.stage IN (
+                    'WRITING_TEMP',
+                    'FINAL_RENAME_PENDING_SYNC',
+                    'CLEANUP_PENDING_SYNC',
+                    'QUARANTINE_PENDING_SYNC'
+                )
+          )
         """,
     )
     fun beginDeletion(
@@ -415,6 +643,8 @@ internal interface DeletionExportDao {
           AND media_uri_string IS NULL
           AND ambiguity_state = 'NONE'
           AND deletion_generation = :previousGeneration
+          AND :requestedAtEpochMillis >= created_at_epoch_millis
+          AND :requestedAtEpochMillis >= updated_at_epoch_millis
           AND command_token IN (
               SELECT outbox.command_token
               FROM capture_export_outboxes AS outbox
@@ -443,6 +673,8 @@ internal interface DeletionExportDao {
         SET lifecycle_state = 'CANCELLED',
             updated_at_epoch_millis = :requestedAtEpochMillis
         WHERE lifecycle_state = 'PENDING'
+          AND :requestedAtEpochMillis >= created_at_epoch_millis
+          AND :requestedAtEpochMillis >= updated_at_epoch_millis
           AND command_token IN (
               SELECT attempt.command_token
               FROM capture_attempts AS attempt

@@ -1,0 +1,31 @@
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest:
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=calibration framing recordedFrames=96 evaluatedFrames=96 unavailableFrames=0 minimumCenterSimilarity=0.814433940331251 maximumCenterSimilarity=0.822425445547688 minimumScaleSimilarity=0.7442402144894052 maximumScaleSimilarity=0.7688677206953721
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration report file=calibration-sequence-v3.json sha256=eaa32730427a18c7b010dac6ac786833749fde02396f973d00cb83b944db43f6 frames=96 dataset=pixel6-arm-confirmation-diagnostic-a sequence=positive-arm-confirmation-landscape-b
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration completed cues GOOD=0 LEFT_ARM=1 RIGHT_ARM=0 FULL_BODY=0 ONE_PERSON=0 RIGHT=0 LEFT=0 TILT_DOWN=0 TILT_UP=0 CLOSER=0 FARTHER=0 ALIGNED=0 RESTART=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration arm confirmation samples=175 capped=false gaps=0 stableMaxMs=0 postSpeechWindowMinMs=12985 elbowMin=0.2721 elbowMax=0.3526 wristMin=0.2928 wristMax=0.3881 SPEAKING=47 UNAVAILABLE=0 MISMATCH=128 SETTLING=0 READY=0 EXPIRED=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 47.833
+
+OK (1 test)
+
+
+INSTRUMENTATION_CODE: -1

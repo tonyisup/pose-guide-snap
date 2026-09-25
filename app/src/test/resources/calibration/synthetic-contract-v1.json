@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "synthetic-contract-v1",
+  "provenance": "Hand-authored scalar boundary and failure examples; no detector output was used.",
+  "authorization": "public-synthetic",
+  "populationLimits": [
+    "Contains no people, cameras, lighting conditions, or real poses.",
+    "Exercises report validation and lock-state arithmetic only.",
+    "Cannot support threshold selection or an accuracy claim."
+  ],
+  "containsPrivateImages": false,
+  "sequences": [
+    {
+      "sequenceId": "positive-stable",
+      "fixtureClass": "positive",
+      "caseClass": "stable-above-threshold",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.92, "framingScore": 0.93, "angularSimilarity": 0.94, "positionalSimilarity": 0.91, "overallMatch": 0.925, "mirrorUsed": false, "inferenceLatencyMs": 31.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 250, "detectedPersonCount": 1, "landmarkCoverage": 0.91, "framingScore": 0.92, "angularSimilarity": 0.93, "positionalSimilarity": 0.9, "overallMatch": 0.915, "mirrorUsed": false, "inferenceLatencyMs": 32.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.91, "angularSimilarity": 0.92, "positionalSimilarity": 0.89, "overallMatch": 0.905, "mirrorUsed": false, "inferenceLatencyMs": 33.0, "cueEmitted": false, "captureCommands": 1}
+      ]
+    },
+    {
+      "sequenceId": "positive-exact-boundary",
+      "fixtureClass": "positive",
+      "caseClass": "inclusive-gate-boundary",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.75, "framingScore": 0.8, "angularSimilarity": 0.85, "positionalSimilarity": 0.8, "overallMatch": 0.825, "mirrorUsed": false, "inferenceLatencyMs": 30.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.75, "framingScore": 0.8, "angularSimilarity": 0.85, "positionalSimilarity": 0.8, "overallMatch": 0.825, "mirrorUsed": false, "inferenceLatencyMs": 30.0, "cueEmitted": false, "captureCommands": 1}
+      ]
+    },
+    {
+      "sequenceId": "positive-release-glitch",
+      "fixtureClass": "positive",
+      "caseClass": "sub-hysteresis-ineligible-glitch",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": true, "inferenceLatencyMs": 29.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": true, "inferenceLatencyMs": 29.0, "cueEmitted": false, "captureCommands": 1},
+        {"elapsedMs": 600, "detectedPersonCount": 1, "landmarkCoverage": 0.69, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": true, "inferenceLatencyMs": 30.0, "cueEmitted": true, "captureCommands": 0},
+        {"elapsedMs": 750, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": true, "inferenceLatencyMs": 29.0, "cueEmitted": false, "captureCommands": 0}
+      ]
+    },
+    {
+      "sequenceId": "negative-angular",
+      "fixtureClass": "negative",
+      "caseClass": "angular-gate-failure",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.91, "framingScore": 0.92, "angularSimilarity": 0.84, "positionalSimilarity": 0.9, "overallMatch": 0.87, "mirrorUsed": false, "inferenceLatencyMs": 34.0, "cueEmitted": true, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.91, "framingScore": 0.92, "angularSimilarity": 0.84, "positionalSimilarity": 0.9, "overallMatch": 0.87, "mirrorUsed": false, "inferenceLatencyMs": 35.0, "cueEmitted": false, "captureCommands": 0}
+      ]
+    },
+    {
+      "sequenceId": "negative-coverage",
+      "fixtureClass": "negative",
+      "caseClass": "coverage-gate-failure",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.74, "framingScore": 0.92, "angularSimilarity": 0.92, "positionalSimilarity": 0.9, "overallMatch": 0.91, "mirrorUsed": false, "inferenceLatencyMs": 33.0, "cueEmitted": true, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.74, "framingScore": 0.92, "angularSimilarity": 0.92, "positionalSimilarity": 0.9, "overallMatch": 0.91, "mirrorUsed": false, "inferenceLatencyMs": 33.0, "cueEmitted": false, "captureCommands": 0}
+      ]
+    },
+    {
+      "sequenceId": "negative-multiple-people",
+      "fixtureClass": "negative",
+      "caseClass": "person-count-gate-failure",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 2, "landmarkCoverage": 0.95, "framingScore": 0.95, "angularSimilarity": 0.95, "positionalSimilarity": 0.95, "overallMatch": 0.95, "mirrorUsed": false, "inferenceLatencyMs": 36.0, "cueEmitted": true, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 2, "landmarkCoverage": 0.95, "framingScore": 0.95, "angularSimilarity": 0.95, "positionalSimilarity": 0.95, "overallMatch": 0.95, "mirrorUsed": false, "inferenceLatencyMs": 37.0, "cueEmitted": false, "captureCommands": 0}
+      ]
+    },
+    {
+      "sequenceId": "negative-transient-match",
+      "fixtureClass": "negative",
+      "caseClass": "acquire-dwell-rejection",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": false, "inferenceLatencyMs": 31.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 250, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": false, "inferenceLatencyMs": 31.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 499, "detectedPersonCount": 1, "landmarkCoverage": 0.9, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.9, "overallMatch": 0.9, "mirrorUsed": false, "inferenceLatencyMs": 32.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 0, "landmarkCoverage": 0.0, "framingScore": 0.0, "angularSimilarity": 0.0, "positionalSimilarity": 0.0, "overallMatch": 0.0, "mirrorUsed": false, "inferenceLatencyMs": 30.0, "cueEmitted": true, "captureCommands": 0}
+      ]
+    },
+    {
+      "sequenceId": "negative-false-lock-probe",
+      "fixtureClass": "negative",
+      "caseClass": "deliberate-separation-failure",
+      "frames": [
+        {"elapsedMs": 0, "detectedPersonCount": 1, "landmarkCoverage": 0.88, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.88, "overallMatch": 0.89, "mirrorUsed": false, "inferenceLatencyMs": 32.0, "cueEmitted": false, "captureCommands": 0},
+        {"elapsedMs": 500, "detectedPersonCount": 1, "landmarkCoverage": 0.88, "framingScore": 0.9, "angularSimilarity": 0.9, "positionalSimilarity": 0.88, "overallMatch": 0.89, "mirrorUsed": false, "inferenceLatencyMs": 32.0, "cueEmitted": false, "captureCommands": 1}
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@ package com.tonyisup.poseguidesnap.pose.movenet
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
+import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import kotlin.math.floor
 import kotlin.math.min
 
@@ -21,9 +22,34 @@ class MoveNetRawOutput(slots: Iterable<FloatArray>) {
 
     internal fun value(slotIndex: Int, valueIndex: Int): Float = values[slotIndex][valueIndex]
 
+    /** Strongest valid instance score without exposing a person slot or mutable tensor data. */
+    internal fun maximumValidInstanceScore(): Double? = values
+        .asSequence()
+        .map { slot -> slot[INSTANCE_SCORE_INDEX] }
+        .filter { score -> score.isFinite() && score in 0.0f..1.0f }
+        .maxOrNull()
+        ?.toDouble()
+
+    /** Strongest valid keypoint score across every slot, without exposing its slot or identity. */
+    internal fun maximumValidKeypointScore(): Double? = values
+        .asSequence()
+        .flatMap { slot ->
+            (KEYPOINT_SCORE_OFFSET until KEYPOINT_VALUE_COUNT step VALUES_PER_KEYPOINT)
+                .asSequence()
+                .map { valueIndex -> slot[valueIndex] }
+        }
+        .filter { score -> score.isFinite() && score in 0.0f..1.0f }
+        .maxOrNull()
+        ?.toDouble()
+
     internal companion object {
         const val PERSON_SLOT_COUNT = 6
         const val VALUES_PER_SLOT = 56
+        const val INSTANCE_SCORE_INDEX = 55
+        const val VALUES_PER_KEYPOINT = 3
+        const val KEYPOINT_SCORE_OFFSET = 2
+        const val KEYPOINT_COUNT = 17
+        const val KEYPOINT_VALUE_COUNT = KEYPOINT_COUNT * VALUES_PER_KEYPOINT
     }
 }
 
@@ -109,7 +135,7 @@ class MoveNetResultMapper(
         }
 
         val acceptedSlots = (0 until MoveNetRawOutput.PERSON_SLOT_COUNT).filter { slotIndex ->
-            val score = rawOutput.value(slotIndex, INSTANCE_SCORE_INDEX)
+            val score = rawOutput.value(slotIndex, MoveNetRawOutput.INSTANCE_SCORE_INDEX)
             score.isFinite() &&
                 score >= policy.minimumPersonScore &&
                 score <= 1.0f
@@ -119,13 +145,14 @@ class MoveNetResultMapper(
                 landmarks = emptyList(),
                 monotonicTimestampNanos = monotonicTimestampNanos,
                 detectedPersonCount = 0,
+                imageSize = PoseImageSize(letterbox.sourceWidth, letterbox.sourceHeight),
             )
         }
 
         val selectedSlot = acceptedSlots.reduce { strongestSlot, candidateSlot ->
             if (
-                rawOutput.value(candidateSlot, INSTANCE_SCORE_INDEX) >
-                rawOutput.value(strongestSlot, INSTANCE_SCORE_INDEX)
+                rawOutput.value(candidateSlot, MoveNetRawOutput.INSTANCE_SCORE_INDEX) >
+                rawOutput.value(strongestSlot, MoveNetRawOutput.INSTANCE_SCORE_INDEX)
             ) {
                 candidateSlot
             } else {
@@ -133,7 +160,7 @@ class MoveNetResultMapper(
             }
         }
         val landmarks = COCO_IDENTITIES.mapIndexedNotNull { keypointIndex, identity ->
-            val valueOffset = keypointIndex * VALUES_PER_KEYPOINT
+            val valueOffset = keypointIndex * MoveNetRawOutput.VALUES_PER_KEYPOINT
             val inputY = rawOutput.value(selectedSlot, valueOffset)
             val inputX = rawOutput.value(selectedSlot, valueOffset + 1)
             val score = rawOutput.value(selectedSlot, valueOffset + 2)
@@ -170,13 +197,11 @@ class MoveNetResultMapper(
             landmarks = landmarks,
             monotonicTimestampNanos = monotonicTimestampNanos,
             detectedPersonCount = acceptedSlots.size,
+            imageSize = PoseImageSize(letterbox.sourceWidth, letterbox.sourceHeight),
         )
     }
 
     private companion object {
-        const val VALUES_PER_KEYPOINT = 3
-        const val INSTANCE_SCORE_INDEX = 55
-
         val COCO_IDENTITIES = listOf(
             PoseLandmark.NOSE,
             PoseLandmark.LEFT_EYE,

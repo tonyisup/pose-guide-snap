@@ -41,24 +41,46 @@ class DefaultPoseMatcher(
         }
 
         val failures = linkedSetOf<MatchGateFailure>()
+        val releaseFailures = linkedSetOf<MatchGateFailure>()
         when {
-            detectedPersonCount == 0 -> failures += MatchGateFailure.NO_PERSON
-            detectedPersonCount > 1 -> failures += MatchGateFailure.MULTIPLE_PEOPLE
+            detectedPersonCount == 0 -> {
+                failures += MatchGateFailure.NO_PERSON
+                releaseFailures += MatchGateFailure.NO_PERSON
+            }
+            detectedPersonCount > 1 -> {
+                failures += MatchGateFailure.MULTIPLE_PEOPLE
+                releaseFailures += MatchGateFailure.MULTIPLE_PEOPLE
+            }
         }
         if (selected.landmarkCoverage < policy.minimumLandmarkCoverage) {
             failures += MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE
         }
+        if (selected.landmarkCoverage < policy.releaseMinimumLandmarkCoverage) {
+            releaseFailures += MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE
+        }
         if (framingScore < policy.minimumFramingScore) {
             failures += MatchGateFailure.POOR_FRAMING
+        }
+        if (framingScore < policy.releaseMinimumFramingScore) {
+            releaseFailures += MatchGateFailure.POOR_FRAMING
         }
         if (selected.angularSimilarity < policy.minimumAngularSimilarity) {
             failures += MatchGateFailure.ANGULAR_MISMATCH
         }
+        if (selected.angularSimilarity < policy.releaseMinimumAngularSimilarity) {
+            releaseFailures += MatchGateFailure.ANGULAR_MISMATCH
+        }
         if (selected.positionalSimilarity < policy.minimumPositionalSimilarity) {
             failures += MatchGateFailure.POSITIONAL_MISMATCH
         }
+        if (selected.positionalSimilarity < policy.releaseMinimumPositionalSimilarity) {
+            releaseFailures += MatchGateFailure.POSITIONAL_MISMATCH
+        }
         if (selected.overallMatch < policy.minimumOverallMatch) {
             failures += MatchGateFailure.LOW_OVERALL_MATCH
+        }
+        if (selected.overallMatch < policy.releaseMinimumOverallMatch) {
+            releaseFailures += MatchGateFailure.LOW_OVERALL_MATCH
         }
 
         return MatchResult(
@@ -70,6 +92,8 @@ class DefaultPoseMatcher(
             gateFailures = failures,
             mirrorUsed = selected.mirrorUsed,
             eligibleForLock = failures.isEmpty(),
+            releaseGateFailures = releaseFailures,
+            eligibleForLockRetention = releaseFailures.isEmpty(),
         )
     }
 
@@ -82,11 +106,17 @@ class DefaultPoseMatcher(
             policy.angularWeight * angularSimilarity +
                 policy.positionalWeight * positionalSimilarity
         ).coerceIn(0.0, 1.0)
-        val failedCandidateGateCount = listOf(
+        val failedAcquireCandidateGateCount = listOf(
             landmarkCoverage < policy.minimumLandmarkCoverage,
             angularSimilarity < policy.minimumAngularSimilarity,
             positionalSimilarity < policy.minimumPositionalSimilarity,
             overallMatch < policy.minimumOverallMatch,
+        ).count { it }
+        val failedReleaseCandidateGateCount = listOf(
+            landmarkCoverage < policy.releaseMinimumLandmarkCoverage,
+            angularSimilarity < policy.releaseMinimumAngularSimilarity,
+            positionalSimilarity < policy.releaseMinimumPositionalSimilarity,
+            overallMatch < policy.releaseMinimumOverallMatch,
         ).count { it }
 
         return CandidateEvidence(
@@ -94,23 +124,28 @@ class DefaultPoseMatcher(
             angularSimilarity = angularSimilarity,
             positionalSimilarity = positionalSimilarity,
             overallMatch = overallMatch,
-            failedCandidateGateCount = failedCandidateGateCount,
+            failedAcquireCandidateGateCount = failedAcquireCandidateGateCount,
+            failedReleaseCandidateGateCount = failedReleaseCandidateGateCount,
             mirrorUsed = observed.mirrorUsed,
         )
     }
 
     /**
-     * Lock-safe deterministic candidate ordering: fewer failed candidate-specific mandatory gates
-     * (coverage, angular, positional, overall), then higher overall, angular, positional, and
-     * coverage evidence. An exact tie preserves the first (unmirrored) candidate. Person and
-     * framing gates are omitted because they are shared by both candidates.
+     * Lock-safe deterministic candidate ordering: fewer release-gate failures, then fewer
+     * acquisition-gate failures, followed by higher overall, angular, positional, and coverage
+     * evidence. This retains an already-held lock when either allowed mirror candidate still meets
+     * the lower release thresholds, while an acquisition-eligible candidate always remains
+     * preferred over a release-only candidate. An exact tie preserves the unmirrored candidate.
+     * Person and framing gates are omitted because both candidates share them.
      */
     private fun select(
         unmirrored: CandidateEvidence,
         mirrored: CandidateEvidence,
     ): CandidateEvidence = when {
-        mirrored.failedCandidateGateCount != unmirrored.failedCandidateGateCount ->
-            if (mirrored.failedCandidateGateCount < unmirrored.failedCandidateGateCount) mirrored else unmirrored
+        mirrored.failedReleaseCandidateGateCount != unmirrored.failedReleaseCandidateGateCount ->
+            if (mirrored.failedReleaseCandidateGateCount < unmirrored.failedReleaseCandidateGateCount) mirrored else unmirrored
+        mirrored.failedAcquireCandidateGateCount != unmirrored.failedAcquireCandidateGateCount ->
+            if (mirrored.failedAcquireCandidateGateCount < unmirrored.failedAcquireCandidateGateCount) mirrored else unmirrored
         mirrored.overallMatch != unmirrored.overallMatch ->
             if (mirrored.overallMatch > unmirrored.overallMatch) mirrored else unmirrored
         mirrored.angularSimilarity != unmirrored.angularSimilarity ->
@@ -171,7 +206,8 @@ class DefaultPoseMatcher(
         val angularSimilarity: Double,
         val positionalSimilarity: Double,
         val overallMatch: Double,
-        val failedCandidateGateCount: Int,
+        val failedAcquireCandidateGateCount: Int,
+        val failedReleaseCandidateGateCount: Int,
         val mirrorUsed: Boolean,
     )
 

@@ -103,6 +103,7 @@ internal interface CaptureConfirmationDao {
           AND lifecycle_state = 'CAPTURING'
           AND reconciliation_required = 0
           AND confirmed_at_epoch_millis IS NULL
+          AND :confirmedAtEpochMillis >= updated_at_epoch_millis
           AND :capturedDeletionGeneration >= 0
           AND captured_deletion_generation = :capturedDeletionGeneration
           AND EXISTS (
@@ -138,6 +139,7 @@ internal interface CaptureConfirmationDao {
           AND shoot_id = :shootId
           AND current_pose_index = :expectedPoseIndex
           AND lifecycle_state = 'ACTIVE'
+          AND :confirmedAtEpochMillis >= updated_at_epoch_millis
           AND :expectedDeletionGeneration >= 0
           AND EXISTS (
               SELECT 1

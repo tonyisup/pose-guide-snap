@@ -7,6 +7,7 @@ import com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapRejectionReason
 import com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapResult
 import com.tonyisup.poseguidesnap.data.GuidedSessionLifecycle
 import com.tonyisup.poseguidesnap.data.GuidedSessionSnapshot
+import com.tonyisup.poseguidesnap.camera.GuidedSessionStartupRecoveryResult
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -28,6 +29,48 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class StartedSessionBootstrapWorkflowTest {
+    @Test
+    fun startupRecoveryRunsBeforeBootstrapRead() = runTest {
+        val calls = mutableListOf<String>()
+        val workflow = RoomStartedSessionBootstrapWorkflow(
+            repository = StartedSessionBootstrapRepositoryPort {
+                calls += "bootstrap"
+                GuidedSessionBootstrapResult.Ready(snapshot())
+            },
+            authority = StartedSessionResourceAuthority {},
+            blockingDispatcher = UnconfinedTestDispatcher(),
+            startupRecovery = StartedSessionStartupRecoveryPort {
+                calls += "recovery"
+                GuidedSessionStartupRecoveryResult.SETTLED
+            },
+        )
+
+        assertTrue(workflow.load(StartedSessionHandle(SESSION_ID)) is StartedSessionBootstrapState.Ready)
+        assertEquals(listOf("recovery", "bootstrap"), calls)
+    }
+
+    @Test
+    fun outstandingStartupRecoveryBlocksBootstrapReadAndCameraAdmission() = runTest {
+        var repositoryCalls = 0
+        val workflow = RoomStartedSessionBootstrapWorkflow(
+            repository = StartedSessionBootstrapRepositoryPort {
+                repositoryCalls += 1
+                GuidedSessionBootstrapResult.Ready(snapshot())
+            },
+            authority = StartedSessionResourceAuthority {},
+            blockingDispatcher = UnconfinedTestDispatcher(),
+            startupRecovery = StartedSessionStartupRecoveryPort {
+                GuidedSessionStartupRecoveryResult.OUTSTANDING
+            },
+        )
+
+        assertSame(
+            StartedSessionBootstrapState.ReconciliationRequired,
+            workflow.load(StartedSessionHandle(SESSION_ID)),
+        )
+        assertEquals(0, repositoryCalls)
+    }
+
     @Test
     fun mapsEveryBootstrapResultWithExactIdentityAndRetryability() = runTest {
         val active = snapshot()

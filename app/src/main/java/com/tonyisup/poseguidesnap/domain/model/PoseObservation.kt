@@ -6,15 +6,18 @@ data class PoseObservation private constructor(
     val landmarks: List<Landmark>,
     val monotonicTimestampNanos: Long,
     val detectedPersonCount: Int,
+    val imageSize: PoseImageSize,
 ) {
     constructor(
         landmarks: Iterable<Landmark>,
         monotonicTimestampNanos: Long,
         detectedPersonCount: Int,
+        imageSize: PoseImageSize = PoseImageSize.UNIT_SQUARE,
     ) : this(
         landmarks = immutableList(landmarks),
         monotonicTimestampNanos = monotonicTimestampNanos,
         detectedPersonCount = detectedPersonCount,
+        imageSize = imageSize,
     )
 
     init {

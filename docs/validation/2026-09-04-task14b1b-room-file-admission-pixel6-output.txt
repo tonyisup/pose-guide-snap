@@ -1,0 +1,62 @@
+Task 14B.1B bounded Pixel 6 checkpoint
+Date: 2026-09-04
+Device: Pixel 6 (oriole)
+Build fingerprint: google/oriole/oriole:16/CP1A.260305.018/14887507:user/release-keys
+
+Local and installed app APK SHA-256:
+0b4f91958dc1ebf7ecebac1272cb6470e1ec11817a538b5f520fbe701bfb6868
+
+Local and installed instrumentation APK SHA-256:
+544198b7b0ac19b0b9cf36e509122f60abe45d8bccb243a0e2c6fc1b44b6f3ba
+
+Exact selector:
+com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest#captureFileJournalAdvancesLegalTransitionsAndIsIdempotent,
+com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest#captureFileJournalRejectsInvalidStorageAndCausalTimestampsWithoutMutation,
+com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest#captureFileJournalCasHasOneWinnerAcrossWalConnections,
+com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest#captureFileJournalPersistsAcrossReopen,
+com.tonyisup.poseguidesnap.data.DeletionExportRepositoryAndroidTest#captureFileJournalDeletionInterlockLinearizesAdmittedEffects,
+com.tonyisup.poseguidesnap.data.DeletionExportRepositoryAndroidTest#deletionRejectsBackwardAndAcceptsEqualCompleteAuthorityClock
+
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=captureFileJournalCasHasOneWinnerAcrossWalConnections
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=captureFileJournalRejectsInvalidStorageAndCausalTimestampsWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=captureFileJournalPersistsAcrossReopen
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.RoomCaptureFileJournalAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=captureFileJournalAdvancesLegalTransitionsAndIsIdempotent
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.DeletionExportRepositoryAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=captureFileJournalDeletionInterlockLinearizesAdmittedEffects
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.data.DeletionExportRepositoryAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: test=deletionRejectsBackwardAndAcceptsEqualCompleteAuthorityClock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 3.866
+
+OK (6 tests)
+
+INSTRUMENTATION_CODE: -1
+
+Post-run cleanup evidence:
+- App database directory listing: empty.
+- Instrumentation package lookup after uninstall: absent.
+- Main application package lookup after cleanup: present.
+- Main application data was not cleared.

@@ -43,7 +43,7 @@ class StartedSessionDestinationFlowTest {
                     state = state.value,
                     onRetry = {},
                     onBack = {},
-                    cameraContent = { Text(FAKE_CAMERA) },
+                    cameraContent = { _ -> Text(FAKE_CAMERA) },
                 )
             }
         }
@@ -84,7 +84,7 @@ class StartedSessionDestinationFlowTest {
                     state = StartedSessionBootstrapState.Ready(snapshot()),
                     onRetry = {},
                     onBack = {},
-                    cameraContent = { Text(FAKE_CAMERA) },
+                    cameraContent = { _ -> Text(FAKE_CAMERA) },
                 )
             }
         }
@@ -104,7 +104,7 @@ class StartedSessionDestinationFlowTest {
                     state = StartedSessionBootstrapState.Unavailable(canRetry = true),
                     onRetry = retries::incrementAndGet,
                     onBack = backs::incrementAndGet,
-                    cameraContent = { Text(FAKE_CAMERA) },
+                    cameraContent = { _ -> Text(FAKE_CAMERA) },
                 )
             }
         }
@@ -134,7 +134,7 @@ class StartedSessionDestinationFlowTest {
                             state = StartedSessionBootstrapState.Unavailable(canRetry = true),
                             onRetry = {},
                             onBack = {},
-                            cameraContent = { Text(FAKE_CAMERA) },
+                            cameraContent = { _ -> Text(FAKE_CAMERA) },
                         )
                     }
                 }

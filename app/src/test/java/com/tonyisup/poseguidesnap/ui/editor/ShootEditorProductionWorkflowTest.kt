@@ -47,6 +47,23 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ShootEditorProductionWorkflowTest {
     @Test
+    fun recoveryRunsBeforeEveryEditorObservationAndFailurePreventsAdmission() = runTest {
+        val repository = FakeRoomPort(snapshot())
+        var repairs = 0
+        val workflow = workflow(repository = repository, recovery = {
+            repairs++
+            repository.snapshot = snapshot(importWork = emptyList())
+        })
+        assertTrue(requireNotNull(workflow.observeEditorSnapshot(SHOOT_ID).first()).importWorkStatuses.isEmpty())
+        workflow.observeEditorSnapshot(SHOOT_ID).first()
+        assertEquals(2, repairs)
+        val unavailable = workflow(recovery = { error("recovery unavailable") })
+        assertThrows(IllegalStateException::class.java) {
+            kotlinx.coroutines.runBlocking { unavailable.observeEditorSnapshot(SHOOT_ID).first() }
+        }
+    }
+
+    @Test
     fun snapshotProjectionContainsOnlySafeDisplayFieldsAndRejectsWrongShoot() = runTest {
         val repository = FakeRoomPort(snapshot = snapshot())
         val workflow = workflow(repository = repository)
@@ -567,6 +584,7 @@ class ShootEditorProductionWorkflowTest {
         dispatcher: kotlinx.coroutines.CoroutineDispatcher = UnconfinedTestDispatcher(),
         wallClock: () -> Long = { 123L },
         sessionId: () -> String = { "session-safe" },
+        recovery: () -> Unit = {},
     ) = RoomShootEditorWorkflow(
         repository = repository,
         activeSessions = activeSessions,
@@ -576,6 +594,7 @@ class ShootEditorProductionWorkflowTest {
         blockingDispatcher = dispatcher,
         wallClockProvider = wallClock,
         sessionIdProvider = sessionId,
+        recoverImports = recovery,
     )
 
     private class FakeActiveSessionPort(

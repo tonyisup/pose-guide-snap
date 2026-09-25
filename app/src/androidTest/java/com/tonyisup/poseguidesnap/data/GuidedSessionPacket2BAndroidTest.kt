@@ -82,7 +82,7 @@ class GuidedSessionPacket2BAndroidTest {
         get() = CaptureToken(commandTokenValue)
     private var writerDatabase: AppDatabase? = null
     private var readerDatabase: GuidedSessionPacket2BDatabase? = null
-    private var activeGate: SecondBootstrapSelectGate? = null
+    private var activeGate: CaptureFileBootstrapSelectGate? = null
 
     @Before
     fun setUp() {
@@ -112,19 +112,23 @@ class GuidedSessionPacket2BAndroidTest {
     fun immediateBootstrapBlocksConfirmationWriterAndReturnsCompletePreThenPostState() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        prepareCapturingAttempt(writer)
-        val gate = SecondBootstrapSelectGate()
+        val confirmation = prepareCapturingAttempt(writer)
+        finalizeCaptureJournal(writer, confirmation.token)
+        val gate = CaptureFileBootstrapSelectGate()
         val reader = openReader(gate)
         val expectedPre = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         assertTrue(GuidedSessionBootstrapMapper.map(expectedPre) is GuidedSessionBootstrapResult.ReconciliationRequired)
 
-        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
-        // seeded directly (journal-owned path lands in 14B.1C).
         val exclusion = proveImmediateWriterExclusion(gate) {
-            writer.openHelper.writableDatabase.commitConfirmedAuthorityInTransaction()
+            RoomShootRepository(writer).confirmAndAdvance(
+                confirmation,
+                exportTargets(commandToken),
+                30L,
+            )
         }
 
         assertCompleteRowsEqual(expectedPre, exclusion.readerRows)
+        assertEquals(CaptureConfirmationResult.Applied, exclusion.writerResult)
 
         val postRows = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         val post = GuidedSessionBootstrapMapper.map(postRows)
@@ -146,10 +150,9 @@ class GuidedSessionPacket2BAndroidTest {
     fun immediateBootstrapBlocksDeletionWriterAndReturnsCompletePreThenPostState() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
-        // seeded directly (journal-owned path lands in 14B.1C).
+        // This deletion-isolation scenario starts from an already committed authority graph.
         writer.openHelper.writableDatabase.seedConfirmedAuthorityGraph()
-        val gate = SecondBootstrapSelectGate()
+        val gate = CaptureFileBootstrapSelectGate()
         val reader = openReader(gate)
         val expectedPre = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         assertTrue(GuidedSessionBootstrapMapper.map(expectedPre) is GuidedSessionBootstrapResult.Ready)
@@ -178,12 +181,18 @@ class GuidedSessionPacket2BAndroidTest {
         val writer = openWriter()
         val sqlite = writer.openHelper.writableDatabase
         sqlite.seedBaseAuthority()
-        prepareCapturingAttempt(writer)
+        val confirmation = prepareCapturingAttempt(writer)
+        finalizeCaptureJournal(writer, confirmation.token)
         val preSession = sqlite.safeSessionFacts()
 
-        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
-        // seeded directly (journal-owned path lands in 14B.1C).
-        sqlite.commitConfirmedAuthorityInTransaction()
+        assertEquals(
+            CaptureConfirmationResult.Applied,
+            RoomShootRepository(writer).confirmAndAdvance(
+                confirmation,
+                exportTargets(commandToken),
+                30L,
+            ),
+        )
         val postReceipt = sqlite.safeReceiptFacts()
 
         assertEquals(SafeSessionFacts(0, 1L, "ACTIVE"), preSession)
@@ -196,8 +205,7 @@ class GuidedSessionPacket2BAndroidTest {
         val writer = openWriter()
         val sqlite = writer.openHelper.writableDatabase
         sqlite.seedBaseAuthority()
-        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
-        // seeded directly (journal-owned path lands in 14B.1C).
+        // This nontransactional deletion control starts from committed authority.
         sqlite.seedConfirmedAuthorityGraph()
         val preSession = sqlite.safeSessionFacts()
         val preShoot = sqlite.safeShootFacts()
@@ -214,13 +222,12 @@ class GuidedSessionPacket2BAndroidTest {
     }
 
     @Test
-    fun repeatedBootstrapsAreReadOnlyAcrossEveryV3AuthorityTableAndSchema() {
+    fun repeatedBootstrapsAreReadOnlyAcrossEveryV4AuthorityTableAndSchema() {
         val writer = openWriter()
         writer.openHelper.writableDatabase.seedBaseAuthority()
-        // Task 3D: direct first-application confirmation is fail-closed; committed authority is
-        // seeded directly (journal-owned path lands in 14B.1C).
+        // Read-only bootstrap verification begins from committed authority.
         writer.openHelper.writableDatabase.seedConfirmedAuthorityGraph()
-        val reader = openReader(SecondBootstrapSelectGate())
+        val reader = openReader(CaptureFileBootstrapSelectGate())
         val sqlite = reader.openHelper.writableDatabase
         val expected = reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         assertTrue(GuidedSessionBootstrapMapper.map(expected) is GuidedSessionBootstrapResult.Ready)
@@ -294,7 +301,7 @@ class GuidedSessionPacket2BAndroidTest {
         assertEquals("wal", database.openHelper.writableDatabase.journalMode())
     }
 
-    private fun openReader(gate: SecondBootstrapSelectGate): GuidedSessionPacket2BDatabase {
+    private fun openReader(gate: CaptureFileBootstrapSelectGate): GuidedSessionPacket2BDatabase {
         activeGate = gate
         val callback = object : RoomDatabase.QueryCallback {
             override fun onQuery(sqlQuery: String, bindArgs: List<Any?>) {
@@ -315,7 +322,7 @@ class GuidedSessionPacket2BAndroidTest {
     }
 
     private fun <WriterResult> proveImmediateWriterExclusion(
-        gate: SecondBootstrapSelectGate,
+        gate: CaptureFileBootstrapSelectGate,
         writer: () -> WriterResult,
     ): ExclusionResult<WriterResult> {
         val reader = checkNotNull(readerDatabase)
@@ -326,7 +333,10 @@ class GuidedSessionPacket2BAndroidTest {
             reader.guidedSessionDao().loadGuidedSessionBootstrap(sessionId)
         }
         try {
-            assertTrue("bootstrap did not pause at its second SELECT", gate.awaitSecondSelect())
+            assertTrue(
+                "bootstrap did not pause before its capture-file-operation SELECT",
+                gate.awaitCaptureFileSelect(),
+            )
             val writerFuture = executor.submit<WriterResult> {
                 writerStarted.countDown()
                 writer()
@@ -389,19 +399,6 @@ class GuidedSessionPacket2BAndroidTest {
         )
     }
 
-    private fun confirmPreparedAttempt(database: AppDatabase) {
-        val confirmation = prepareCapturingAttempt(database)
-        assertEquals(
-            CaptureConfirmationResult.Applied,
-            RoomShootRepository(database).confirmAndAdvance(
-                command = confirmation,
-                privateOutputs = durableOutputs(commandToken),
-                exportTargets = exportTargets(commandToken),
-                confirmedAtEpochMillis = 30L,
-            ),
-        )
-    }
-
     private fun captureCommand(): ShootEffect.CaptureCommand = ShootEffect.CaptureCommand(
         CaptureAttempt.create(
             token = commandToken,
@@ -412,14 +409,74 @@ class GuidedSessionPacket2BAndroidTest {
         ),
     )
 
+    private fun finalizeCaptureJournal(database: AppDatabase, token: CaptureToken) {
+        val journal = RoomCaptureFileJournal(database)
+        (0..2).forEach { ordinal ->
+            val identity = PrivateOutputIdentity(token, ordinal)
+            val initial = requireNotNull(journal.snapshot(identity))
+            val writing = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    initial.stage,
+                    initial.updatedAtEpochMillis,
+                    CaptureFileOperationStage.WRITING_TEMP,
+                    null,
+                    null,
+                    null,
+                    21L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val synced = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    writing.stage,
+                    writing.updatedAtEpochMillis,
+                    CaptureFileOperationStage.TEMP_SYNCED,
+                    100L + ordinal,
+                    (ordinal + 1).toString(16).padStart(64, '0'),
+                    21L,
+                    22L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val renamePending = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    synced.stage,
+                    synced.updatedAtEpochMillis,
+                    CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+                    synced.byteCount,
+                    synced.sha256,
+                    synced.capturedAtEpochMillis,
+                    23L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            assertEquals(
+                CaptureFileOperationStage.FINAL_DURABLE,
+                (journal.advance(
+                    CaptureFileAdvanceRequest(
+                        identity,
+                        renamePending.stage,
+                        renamePending.updatedAtEpochMillis,
+                        CaptureFileOperationStage.FINAL_DURABLE,
+                        renamePending.byteCount,
+                        renamePending.sha256,
+                        renamePending.capturedAtEpochMillis,
+                        24L,
+                    ),
+                ) as CaptureFileJournalResult.Applied).snapshot.stage,
+            )
+        }
+    }
+
     private fun durableOutputs(token: CaptureToken): List<DurablePrivateOutput> =
         (0..2).map { ordinal ->
+            val identity = PrivateOutputIdentity(token, ordinal)
             DurablePrivateOutput(
-                identity = PrivateOutputIdentity(token, ordinal),
-                relativePath = "private/${token.value}/$ordinal.jpg",
+                identity = identity,
+                relativePath = CaptureFileOperationPaths.forIdentity(identity).relativeFinalPath,
                 byteCount = 100L + ordinal,
-                capturedAtEpochMillis = 21L + ordinal,
-                integrityMetadata = null,
+                capturedAtEpochMillis = 21L,
+                integrityMetadata = (ordinal + 1).toString(16).padStart(64, '0'),
             )
         }
 
@@ -802,11 +859,11 @@ class GuidedSessionPacket2BAndroidTest {
     }
 }
 
-private class SecondBootstrapSelectGate {
+private class CaptureFileBootstrapSelectGate {
     private val armed = AtomicBoolean(false)
     private val selectCount = AtomicInteger(0)
-    private val secondSelectReached = CountDownLatch(1)
-    private val releaseSecondSelect = CountDownLatch(1)
+    private val captureFileSelectReached = CountDownLatch(1)
+    private val releaseCaptureFileSelect = CountDownLatch(1)
 
     fun arm() {
         selectCount.set(0)
@@ -819,18 +876,19 @@ private class SecondBootstrapSelectGate {
 
     fun onQuery(sql: String) {
         if (!armed.get() || !sql.isGuidedBootstrapSelect()) return
-        if (selectCount.incrementAndGet() == 2) {
-            secondSelectReached.countDown()
-            check(releaseSecondSelect.await(10L, TimeUnit.SECONDS)) {
-                "bootstrap second SELECT was not released within its bound"
+        if (selectCount.incrementAndGet() == 9) {
+            captureFileSelectReached.countDown()
+            check(releaseCaptureFileSelect.await(10L, TimeUnit.SECONDS)) {
+                "bootstrap capture-file-operation SELECT was not released within its bound"
             }
         }
     }
 
-    fun awaitSecondSelect(): Boolean = secondSelectReached.await(10L, TimeUnit.SECONDS)
+    fun awaitCaptureFileSelect(): Boolean =
+        captureFileSelectReached.await(10L, TimeUnit.SECONDS)
 
     fun release() {
-        releaseSecondSelect.countDown()
+        releaseCaptureFileSelect.countDown()
     }
 
     fun bootstrapSelectCount(): Int = selectCount.get()

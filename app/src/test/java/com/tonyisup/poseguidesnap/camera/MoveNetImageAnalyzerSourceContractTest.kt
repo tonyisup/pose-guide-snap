@@ -109,6 +109,10 @@ class MoveNetImageAnalyzerSourceContractTest {
         assertTrue(resultSurface.contains("val poseObservation: PoseObservation"))
         assertTrue(resultSurface.contains("val coordinateTransform: FrameCoordinateTransform"))
         assertTrue(resultSurface.contains("val sourceMonotonicTimestampNanos: Long"))
+        assertTrue(resultSurface.contains("val maximumValidPersonScore: Double?"))
+        assertTrue(resultSurface.contains("val maximumValidKeypointScore: Double?"))
+        assertTrue(resultSurface.contains("val visualStatistics: FrameVisualStatistics"))
+        assertTrue(source.contains("private const val VISUAL_SAMPLE_GRID_SIZE = 16"))
         assertFalse(resultSurface.contains("Bitmap"))
         assertFalse(resultSurface.contains("ImageProxy"))
     }

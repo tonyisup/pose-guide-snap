@@ -46,7 +46,7 @@ data class Landmark(
     val type: PoseLandmark,
     val x: Double,
     val y: Double,
-    /** Relative detector depth; signed values are valid. */
+    /** Relative detector depth in image-width units; signed values are valid. MoveNet supplies zero. */
     val z: Double,
     val visibility: Double,
     val presence: Double,
