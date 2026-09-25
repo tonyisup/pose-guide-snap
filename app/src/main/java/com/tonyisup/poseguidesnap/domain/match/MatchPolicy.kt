@@ -9,6 +9,13 @@ import kotlin.math.abs
  *
  * [developmentDefaults] is deliberately uncalibrated prototype policy. Its values are not a
  * production-quality claim and must be calibrated before any release decision relies on them.
+ *
+ * Since 25 September 2026 the defaults gate on person count, body visibility, landmark coverage,
+ * angular similarity, and the blended overall match only. The composition (framing) score and the
+ * separate positional score remain reported, but their acquisition thresholds are zero: replaying
+ * every recorded Pixel 6 calibration run showed those two gates rejected every correct-pose frame
+ * ever recorded, while the blended score separated the correct poses from the one true negative.
+ * Body visibility is a structural gate supplied by the caller, not a score threshold.
  */
 data class MatchPolicy(
     val minimumLandmarkCoverage: Double,
@@ -77,14 +84,14 @@ data class MatchPolicy(
         /** Uncalibrated development-only values for deterministic tests and prototype behavior. */
         fun developmentDefaults(): MatchPolicy = MatchPolicy(
             minimumLandmarkCoverage = 0.75,
-            minimumFramingScore = 0.8,
+            minimumFramingScore = 0.0,
             minimumAngularSimilarity = 0.85,
-            minimumPositionalSimilarity = 0.8,
+            minimumPositionalSimilarity = 0.0,
             minimumOverallMatch = 0.825,
             releaseMinimumLandmarkCoverage = 0.70,
-            releaseMinimumFramingScore = 0.75,
+            releaseMinimumFramingScore = 0.0,
             releaseMinimumAngularSimilarity = 0.80,
-            releaseMinimumPositionalSimilarity = 0.75,
+            releaseMinimumPositionalSimilarity = 0.0,
             releaseMinimumOverallMatch = 0.775,
             positionErrorAtZeroSimilarity = 1.0,
             angularWeight = 0.5,

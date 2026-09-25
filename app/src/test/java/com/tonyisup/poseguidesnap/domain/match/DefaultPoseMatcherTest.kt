@@ -20,7 +20,7 @@ class DefaultPoseMatcherTest {
             observed = pose,
             mirrorAllowed = false,
             detectedPersonCount = 1,
-            framingScore = 1.0,
+            bodyVisible = true, framingScore = 1.0,
         )
 
         assertEquals(1.0, result.landmarkCoverage, 0.0)
@@ -34,7 +34,7 @@ class DefaultPoseMatcherTest {
     }
 
     @Test
-    fun clearlyDifferentPoseReportsEverySimilarityFailure() {
+    fun clearlyDifferentPoseReportsAngularAndOverallFailures() {
         val reference = features(
             points = mapOf(PoseLandmark.NOSE to point(0.0)),
             angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(0.0)),
@@ -44,7 +44,7 @@ class DefaultPoseMatcherTest {
             angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(PI)),
         )
 
-        val result = DefaultPoseMatcher().match(reference, different, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = DefaultPoseMatcher().match(reference, different, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(1.0, result.landmarkCoverage, 0.0)
         assertEquals(0.0, result.angularSimilarity, 0.0)
@@ -53,7 +53,6 @@ class DefaultPoseMatcherTest {
         assertEquals(
             setOf(
                 MatchGateFailure.ANGULAR_MISMATCH,
-                MatchGateFailure.POSITIONAL_MISMATCH,
                 MatchGateFailure.LOW_OVERALL_MATCH,
             ),
             result.gateFailures,
@@ -78,8 +77,8 @@ class DefaultPoseMatcherTest {
         )
         val matcher = DefaultPoseMatcher()
 
-        val allowed = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = true, detectedPersonCount = 1, framingScore = 1.0)
-        val disabled = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val allowed = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = true, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
+        val disabled = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertTrue(allowed.mirrorUsed)
         assertTrue(allowed.eligibleForLock)
@@ -89,7 +88,6 @@ class DefaultPoseMatcherTest {
         assertEquals(
             setOf(
                 MatchGateFailure.ANGULAR_MISMATCH,
-                MatchGateFailure.POSITIONAL_MISMATCH,
                 MatchGateFailure.LOW_OVERALL_MATCH,
             ),
             disabled.gateFailures,
@@ -104,7 +102,7 @@ class DefaultPoseMatcherTest {
         val matcher = DefaultPoseMatcher()
 
         repeat(100) {
-            val result = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = true, detectedPersonCount = 1, framingScore = 1.0)
+            val result = matcher.match(reference, unmirrored, mirrored, mirrorAllowed = true, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
             assertFalse(result.mirrorUsed)
             assertTrue(result.eligibleForLock)
         }
@@ -124,7 +122,7 @@ class DefaultPoseMatcherTest {
             angles = reference.jointAngles,
         )
 
-        val result = DefaultPoseMatcher().match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = DefaultPoseMatcher().match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(0.5, result.landmarkCoverage, 0.0)
         assertEquals(1.0, result.angularSimilarity, 0.0)
@@ -134,21 +132,28 @@ class DefaultPoseMatcherTest {
     }
 
     @Test
-    fun poorFramingIsIndependentFromPerfectPoseEvidence() {
+    fun poorFramingMeansBodyNotVisibleWhileCompositionScoreNoLongerGatesByDefault() {
         val pose = standardFeatures()
 
-        val result = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 0.79)
+        val hidden = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = false, framingScore = 1.0)
+        val offCentre = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 0.79)
 
-        assertEquals(1.0, result.overallMatch, 0.0)
-        assertEquals(setOf(MatchGateFailure.POOR_FRAMING), result.gateFailures)
-        assertFalse(result.eligibleForLock)
+        assertEquals(1.0, hidden.overallMatch, 0.0)
+        assertEquals(setOf(MatchGateFailure.POOR_FRAMING), hidden.gateFailures)
+        assertEquals(setOf(MatchGateFailure.POOR_FRAMING), hidden.releaseGateFailures)
+        assertFalse(hidden.eligibleForLock)
+        assertFalse(hidden.eligibleForLockRetention)
+
+        assertEquals(0.79, offCentre.framingScore, 0.0)
+        assertEquals(emptySet<MatchGateFailure>(), offCentre.gateFailures)
+        assertTrue(offCentre.eligibleForLock)
     }
 
     @Test
     fun noPersonRetainsPerfectSubscoresAndReportsOnlyPersonGate() {
         val pose = standardFeatures()
 
-        val result = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 0, framingScore = 1.0)
+        val result = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 0, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(1.0, result.landmarkCoverage, 0.0)
         assertEquals(1.0, result.angularSimilarity, 0.0)
@@ -161,7 +166,7 @@ class DefaultPoseMatcherTest {
     fun multiplePeopleRetainsPerfectSubscoresAndReportsOnlyPersonGate() {
         val pose = standardFeatures()
 
-        val result = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 2, framingScore = 1.0)
+        val result = DefaultPoseMatcher().match(pose, pose, mirrorAllowed = false, detectedPersonCount = 2, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(1.0, result.landmarkCoverage, 0.0)
         assertEquals(1.0, result.angularSimilarity, 0.0)
@@ -195,7 +200,7 @@ class DefaultPoseMatcherTest {
             observed,
             mirrorAllowed = false,
             detectedPersonCount = 1,
-            framingScore = 1.0,
+            bodyVisible = true, framingScore = 1.0,
         )
 
         assertEquals(1.0, subnormal.landmarkCoverage, 0.0)
@@ -230,7 +235,7 @@ class DefaultPoseMatcherTest {
             extremeObserved,
             mirrorAllowed = false,
             detectedPersonCount = 1,
-            framingScore = 1.0,
+            bodyVisible = true, framingScore = 1.0,
         )
         assertEquals(0.0, overflow.positionalSimilarity, 0.0)
         assertEquals(setOf(MatchGateFailure.POSITIONAL_MISMATCH), overflow.gateFailures)
@@ -264,7 +269,7 @@ class DefaultPoseMatcherTest {
             fullyEligibleMirrored,
             mirrorAllowed = true,
             detectedPersonCount = 1,
-            framingScore = 1.0,
+            bodyVisible = true, framingScore = 1.0,
         )
 
         assertTrue(result.mirrorUsed)
@@ -299,8 +304,8 @@ class DefaultPoseMatcherTest {
         )
         assertBoundary(
             MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE,
-            coverageMatcher.match(coverageReference, coverageObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
-            coverageMatcher.match(coverageReference, coverageObserved(Math.nextDown(0.5)), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
+            coverageMatcher.match(coverageReference, coverageObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
+            coverageMatcher.match(coverageReference, coverageObserved(Math.nextDown(0.5)), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
         )
 
         val empty = features()
@@ -315,8 +320,8 @@ class DefaultPoseMatcherTest {
         )
         assertBoundary(
             MatchGateFailure.POOR_FRAMING,
-            framingMatcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 0.5),
-            framingMatcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, framingScore = Math.nextDown(0.5)),
+            framingMatcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 0.5),
+            framingMatcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = Math.nextDown(0.5)),
         )
 
         val angleReference = features(angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(0.0)))
@@ -333,8 +338,8 @@ class DefaultPoseMatcherTest {
         )
         assertBoundary(
             MatchGateFailure.ANGULAR_MISMATCH,
-            angleMatcher.match(angleReference, angleObserved(PI / 2.0), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
-            angleMatcher.match(angleReference, angleObserved(Math.nextUp(PI / 2.0)), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
+            angleMatcher.match(angleReference, angleObserved(PI / 2.0), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
+            angleMatcher.match(angleReference, angleObserved(Math.nextUp(PI / 2.0)), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
         )
 
         val positionReference = features(points = mapOf(PoseLandmark.NOSE to point(0.0)))
@@ -351,8 +356,8 @@ class DefaultPoseMatcherTest {
         )
         assertBoundary(
             MatchGateFailure.POSITIONAL_MISMATCH,
-            positionMatcher.match(positionReference, positionObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
-            positionMatcher.match(positionReference, positionObserved(Math.nextUp(0.5)), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
+            positionMatcher.match(positionReference, positionObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
+            positionMatcher.match(positionReference, positionObserved(Math.nextUp(0.5)), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
         )
 
         val overallMatcher = DefaultPoseMatcher(
@@ -368,8 +373,8 @@ class DefaultPoseMatcherTest {
         )
         assertBoundary(
             MatchGateFailure.LOW_OVERALL_MATCH,
-            overallMatcher.match(positionReference, positionObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
-            overallMatcher.match(positionReference, positionObserved(Math.nextUp(0.5)), mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
+            overallMatcher.match(positionReference, positionObserved(0.5), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
+            overallMatcher.match(positionReference, positionObserved(Math.nextUp(0.5)), mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
         )
     }
 
@@ -393,7 +398,7 @@ class DefaultPoseMatcherTest {
             angles = reference.jointAngles,
         )
 
-        val result = DefaultPoseMatcher(policy).match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = DefaultPoseMatcher(policy).match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(1.0, result.angularSimilarity, 0.0)
         assertEquals(0.0, result.positionalSimilarity, 0.0)
@@ -431,7 +436,7 @@ class DefaultPoseMatcherTest {
             lowerAggregateWithOneFailure,
             mirrorAllowed = true,
             detectedPersonCount = 1,
-            framingScore = 1.0,
+            bodyVisible = true, framingScore = 1.0,
         )
 
         assertTrue(result.mirrorUsed)
@@ -453,8 +458,8 @@ class DefaultPoseMatcherTest {
         val matcher = DefaultPoseMatcher()
 
         listOf(
-            matcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
-            matcher.match(noSharedReference, noSharedObserved, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0),
+            matcher.match(empty, empty, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
+            matcher.match(noSharedReference, noSharedObserved, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0),
         ).forEach { result ->
             assertEquals(0.0, result.landmarkCoverage, 0.0)
             assertEquals(0.0, result.angularSimilarity, 0.0)
@@ -464,7 +469,6 @@ class DefaultPoseMatcherTest {
                 setOf(
                     MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE,
                     MatchGateFailure.ANGULAR_MISMATCH,
-                    MatchGateFailure.POSITIONAL_MISMATCH,
                     MatchGateFailure.LOW_OVERALL_MATCH,
                 ),
                 result.gateFailures,
@@ -479,7 +483,7 @@ class DefaultPoseMatcherTest {
             angles = mapOf(JointAngleKey.LEFT_ELBOW to angle(0.0, weight = 0.0)),
         )
 
-        val result = DefaultPoseMatcher().match(zero, zero, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = DefaultPoseMatcher().match(zero, zero, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(0.0, result.landmarkCoverage, 0.0)
         assertEquals(0.0, result.angularSimilarity, 0.0)
@@ -503,7 +507,7 @@ class DefaultPoseMatcherTest {
         )
         val matcher = DefaultPoseMatcher(policy(minimumAngularSimilarity = 0.0, minimumOverallMatch = 0.0))
 
-        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         // Coverage: (min(.8,.4) + min(.2,1)) / (.8 + .2) = .6.
         assertEquals(0.6, result.landmarkCoverage, STRICT_TOLERANCE)
@@ -527,7 +531,7 @@ class DefaultPoseMatcherTest {
         )
         val matcher = DefaultPoseMatcher(policy(minimumLandmarkCoverage = 0.0, minimumPositionalSimilarity = 0.0, minimumOverallMatch = 0.0))
 
-        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         // Mean error: (.4*pi/2 + .2*pi) / (.4 + .2) = 2*pi/3; similarity = 1/3.
         assertEquals(1.0 / 3.0, result.angularSimilarity, STRICT_TOLERANCE)
@@ -548,7 +552,7 @@ class DefaultPoseMatcherTest {
             ),
         )
 
-        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+        val result = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
 
         assertEquals(0.0, result.angularSimilarity, 0.0)
         assertEquals(0.5, result.positionalSimilarity, STRICT_TOLERANCE)
@@ -560,14 +564,14 @@ class DefaultPoseMatcherTest {
         val defaults = MatchPolicy.developmentDefaults()
 
         assertEquals(0.75, defaults.minimumLandmarkCoverage, 0.0)
-        assertEquals(0.8, defaults.minimumFramingScore, 0.0)
+        assertEquals(0.0, defaults.minimumFramingScore, 0.0)
         assertEquals(0.85, defaults.minimumAngularSimilarity, 0.0)
-        assertEquals(0.8, defaults.minimumPositionalSimilarity, 0.0)
+        assertEquals(0.0, defaults.minimumPositionalSimilarity, 0.0)
         assertEquals(0.825, defaults.minimumOverallMatch, 0.0)
         assertEquals(0.70, defaults.releaseMinimumLandmarkCoverage, 0.0)
-        assertEquals(0.75, defaults.releaseMinimumFramingScore, 0.0)
+        assertEquals(0.0, defaults.releaseMinimumFramingScore, 0.0)
         assertEquals(0.80, defaults.releaseMinimumAngularSimilarity, 0.0)
-        assertEquals(0.75, defaults.releaseMinimumPositionalSimilarity, 0.0)
+        assertEquals(0.0, defaults.releaseMinimumPositionalSimilarity, 0.0)
         assertEquals(0.775, defaults.releaseMinimumOverallMatch, 0.0)
         assertEquals(1.0, defaults.positionErrorAtZeroSimilarity, 0.0)
         assertEquals(0.5, defaults.angularWeight, 0.0)
@@ -642,7 +646,7 @@ class DefaultPoseMatcherTest {
             exactRelease,
             mirrorAllowed = false,
             detectedPersonCount = 1,
-            framingScore = 0.8,
+            bodyVisible = true, framingScore = 0.8,
         )
 
         assertFalse(exact.eligibleForLock)
@@ -664,7 +668,7 @@ class DefaultPoseMatcherTest {
             exactRelease,
             mirrorAllowed = false,
             detectedPersonCount = 1,
-            framingScore = Math.nextDown(0.8),
+            bodyVisible = true, framingScore = Math.nextDown(0.8),
         )
         assertFalse(immediatelyBelow.eligibleForLockRetention)
         assertEquals(setOf(MatchGateFailure.POOR_FRAMING), immediatelyBelow.releaseGateFailures)
@@ -677,15 +681,15 @@ class DefaultPoseMatcherTest {
         val matcher = DefaultPoseMatcher()
 
         assertThrows(IllegalArgumentException::class.java) {
-            matcher.match(unmirrored, unmirrored, mirrorAllowed = false, detectedPersonCount = -1, framingScore = 1.0)
+            matcher.match(unmirrored, unmirrored, mirrorAllowed = false, detectedPersonCount = -1, bodyVisible = true, framingScore = 1.0)
         }
         listOf(-0.01, 1.01, Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY).forEach {
             assertThrows(IllegalArgumentException::class.java) {
-                matcher.match(unmirrored, unmirrored, mirrorAllowed = false, detectedPersonCount = 1, framingScore = it)
+                matcher.match(unmirrored, unmirrored, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = it)
             }
         }
         assertThrows(IllegalArgumentException::class.java) {
-            matcher.match(unmirrored, mirrored, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 1.0)
+            matcher.match(unmirrored, mirrored, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 1.0)
         }
         assertThrows(IllegalArgumentException::class.java) {
             matcher.match(
@@ -694,7 +698,7 @@ class DefaultPoseMatcherTest {
                 mirroredObserved = unmirrored,
                 mirrorAllowed = true,
                 detectedPersonCount = 1,
-                framingScore = 1.0,
+                bodyVisible = true, framingScore = 1.0,
             )
         }
     }
@@ -707,10 +711,10 @@ class DefaultPoseMatcherTest {
             angles = reference.jointAngles,
         )
         val matcher = DefaultPoseMatcher()
-        val first = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 0.9)
+        val first = matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 0.9)
 
         repeat(100) {
-            assertEquals(first, matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, framingScore = 0.9))
+            assertEquals(first, matcher.match(reference, observed, mirrorAllowed = false, detectedPersonCount = 1, bodyVisible = true, framingScore = 0.9))
         }
     }
 

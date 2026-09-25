@@ -38,7 +38,7 @@ class LiveCameraDiagnosticsTest {
         assertEquals("Overall gate: not evaluated (waiting for a frame)", diagnostics.overallLabel)
         assertEquals("Selected mirror: not evaluated (waiting for a frame)", diagnostics.mirrorLabel)
         assertEquals(
-            "Automatic capture: disabled pending calibration",
+            "Automatic capture: armed with uncalibrated thresholds",
             diagnostics.captureLockLabel,
         )
     }
@@ -108,7 +108,7 @@ class LiveCameraDiagnosticsTest {
         assertEquals("Overall gate: pass (uncalibrated)", diagnostics.overallLabel)
         assertEquals("Selected mirror: normal", diagnostics.mirrorLabel)
         assertEquals(
-            "Automatic capture: disabled pending calibration",
+            "Automatic capture: armed with uncalibrated thresholds",
             diagnostics.captureLockLabel,
         )
     }

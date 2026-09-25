@@ -4,6 +4,7 @@ import com.tonyisup.poseguidesnap.data.CaptureFileFailureCode
 import com.tonyisup.poseguidesnap.data.CaptureFileOperationPaths
 import com.tonyisup.poseguidesnap.data.CaptureFileOperationSnapshot
 import com.tonyisup.poseguidesnap.data.CaptureFileOperationStage
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
 import com.tonyisup.poseguidesnap.domain.session.PrivateOutputIdentity
 import java.io.File
 import java.nio.file.Files
@@ -373,6 +374,25 @@ class JournaledPrivateCaptureStore internal constructor(
         } catch (_: Exception) {
             JournalFreeCapturePathObservation.UNAVAILABLE
         }
+    }
+
+    /**
+     * Existing final files for the three deterministic identities of [token], ordinal 0 first.
+     * Absent, unsafe, or non-regular entries are skipped. This is a read-only observation for
+     * display; it grants no write, cleanup, or confirmation authority.
+     */
+    fun finalFilesFor(token: CaptureToken): List<File> = try {
+        (0..2).mapNotNull { ordinal ->
+            val identity = PrivateOutputIdentity(token, ordinal)
+            val exact = exactPaths(identity, CaptureFileOperationPaths.forIdentity(identity))
+                ?: return@mapNotNull null
+            when (observe(exact.final)) {
+                is ExactFileObservation.Regular -> exact.final.toFile()
+                else -> null
+            }
+        }
+    } catch (_: Exception) {
+        emptyList()
     }
 
     private fun namespacesAreSafe(): Boolean = try {

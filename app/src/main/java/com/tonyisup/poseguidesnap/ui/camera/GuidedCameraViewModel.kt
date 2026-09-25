@@ -1,5 +1,6 @@
 package com.tonyisup.poseguidesnap.ui.camera
 
+import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tonyisup.poseguidesnap.camera.JournaledCaptureResult
@@ -9,11 +10,17 @@ import com.tonyisup.poseguidesnap.camera.JournaledStillCaptureWriter
 import com.tonyisup.poseguidesnap.data.GuidedCurrentReferenceResult
 import com.tonyisup.poseguidesnap.data.GuidedReferenceSnapshot
 import com.tonyisup.poseguidesnap.data.GuidedSessionSnapshot
+import com.tonyisup.poseguidesnap.domain.model.MatchGateFailure
+import com.tonyisup.poseguidesnap.domain.model.MatchResult
+import com.tonyisup.poseguidesnap.domain.model.PoseObservation
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
 import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 import com.tonyisup.poseguidesnap.domain.session.ShootEvent
 import com.tonyisup.poseguidesnap.domain.session.ShootMode
 import com.tonyisup.poseguidesnap.domain.session.ShootReducer
 import com.tonyisup.poseguidesnap.domain.session.ShootState
+import com.tonyisup.poseguidesnap.ui.BundledReferenceMatchEvidence
+import com.tonyisup.poseguidesnap.ui.ReferenceMatchStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
@@ -36,12 +43,25 @@ internal enum class GuidedCameraPhase {
     UNAVAILABLE,
 }
 
+/** Reducer-derived progress toward an automatic lock, for the status line only. */
+internal enum class GuidedMatchPhase {
+    IDLE,
+    SEARCHING,
+    FRAMING,
+    COACHING,
+    LOCK_CANDIDATE,
+    LOCKED,
+}
+
 internal class GuidedCameraUiState(
     val phase: GuidedCameraPhase,
     val currentPoseNumber: Int,
     val poseCount: Int,
     val reference: GuidedReferenceSnapshot?,
     val cameraReady: Boolean,
+    val matchPhase: GuidedMatchPhase = GuidedMatchPhase.IDLE,
+    val overallMatch: Double? = null,
+    val lastCapture: List<Bitmap> = emptyList(),
 ) {
     val captureEnabled: Boolean
         get() = phase == GuidedCameraPhase.READY && cameraReady && reference != null
@@ -74,6 +94,9 @@ internal class GuidedCameraViewModel(
     private var cameraReady = false
     private var referenceJob: Job? = null
     private var attachedWriter: JournaledStillCaptureWriter? = null
+    private var matchPhase = GuidedMatchPhase.IDLE
+    private var overallMatch: Double? = null
+    private var lastCapture: List<Bitmap> = emptyList()
     private val _state = MutableStateFlow(
         GuidedCameraUiState(
             phase = GuidedCameraPhase.LOADING_REFERENCE,
@@ -127,6 +150,57 @@ internal class GuidedCameraViewModel(
             publishLocked(GuidedCameraPhase.CAPTURING, _state.value.reference)
             effect
         }
+        launchCapture(command)
+    }
+
+    /**
+     * Feeds one analyzed camera frame through the selected reference's match evidence into the
+     * shoot reducer. When the reducer reaches [ShootMode.Locked] this requests automatic capture,
+     * which runs through exactly the same journaled path as [manualCapture].
+     */
+    fun observeFrame(observation: PoseObservation, frameTimestampNanos: Long) {
+        val command = synchronized(lock) {
+            if (cleared || stopRequested) return
+            val current = _state.value
+            if (current.phase != GuidedCameraPhase.READY || !cameraReady) return
+            val reference = current.reference ?: return
+            val evidence = BundledReferenceMatchEvidence.evaluate(reference, observation)
+            val match = evidence.matchResult ?: failClosedMatch(evidence.status)
+            val received = nextEventTimeLocked()
+            // Camera sensor timestamps are only comparable with the event clock when both use the
+            // same time base. Outside a short window, treat the frame as fresh and rely on the
+            // analyzer's own keep-latest and stale-frame handling instead of the reducer's.
+            val frame = if (frameTimestampNanos in (received - COMPARABLE_FRAME_CLOCK_WINDOW_NANOS)..received) {
+                frameTimestampNanos
+            } else {
+                received
+            }
+            var transition = reducer.reduce(
+                shootState,
+                ShootEvent.FrameObserved(match, frame, received),
+            )
+            shootState = transition.nextState
+            var effect: ShootEffect.CaptureCommand? = null
+            if (shootState.mode is ShootMode.Locked) {
+                transition = reducer.reduce(
+                    shootState,
+                    ShootEvent.AutomaticCaptureRequested(nextEventTimeLocked()),
+                )
+                shootState = transition.nextState
+                effect = transition.effects.singleOrNull() as? ShootEffect.CaptureCommand
+            }
+            matchPhase = matchPhaseFor(shootState.mode)
+            overallMatch = evidence.matchResult?.overallMatch
+            publishLocked(
+                if (effect != null) GuidedCameraPhase.CAPTURING else GuidedCameraPhase.READY,
+                reference,
+            )
+            effect
+        } ?: return
+        launchCapture(command)
+    }
+
+    private fun launchCapture(command: ShootEffect.CaptureCommand) {
         val job = viewModelScope.launch(dispatcher, start = CoroutineStart.LAZY) {
             val submission = workflow.capture(shootState.sessionId, command) { result ->
                 viewModelScope.launch(dispatcher) { handleCaptureResult(result) }
@@ -174,6 +248,7 @@ internal class GuidedCameraViewModel(
                     is GuidedCurrentReferenceResult.Ready -> if (
                         result.reference.poseId == shootState.currentPoseId
                     ) {
+                        resetMatchLocked()
                         publishLocked(GuidedCameraPhase.READY, result.reference)
                     } else {
                         publishLocked(GuidedCameraPhase.UNAVAILABLE, null)
@@ -209,6 +284,7 @@ internal class GuidedCameraViewModel(
                     ),
                 )
                 shootState = transition.nextState
+                resetMatchLocked()
                 publishLocked(
                     if (stopRequested) GuidedCameraPhase.STOPPED else GuidedCameraPhase.READY,
                     _state.value.reference,
@@ -287,6 +363,7 @@ internal class GuidedCameraViewModel(
                         }
                     }
                 }
+                loadCaptureThumbnails(result.token)
                 if (loadNext) loadReference()
             }
             is JournaledConfirmationResult.ReconciliationRequired -> synchronized(lock) {
@@ -339,6 +416,28 @@ internal class GuidedCameraViewModel(
         }
     }
 
+    private fun loadCaptureThumbnails(token: CaptureToken) {
+        viewModelScope.launch(dispatcher) {
+            val thumbnails = try {
+                workflow.loadCaptureThumbnails(token)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: RuntimeException) {
+                emptyList()
+            }
+            synchronized(lock) {
+                if (cleared) return@launch
+                lastCapture = thumbnails
+                publishLocked(_state.value.phase, _state.value.reference)
+            }
+        }
+    }
+
+    private fun resetMatchLocked() {
+        matchPhase = GuidedMatchPhase.IDLE
+        overallMatch = null
+    }
+
     private fun nextEventTimeLocked(): Long {
         val floor = shootState.lastReducerTimestampNanos ?: -1L
         val supplied = try {
@@ -364,6 +463,9 @@ internal class GuidedCameraViewModel(
             poseCount = shootState.poseIds.size,
             reference = reference,
             cameraReady = cameraReady,
+            matchPhase = matchPhase,
+            overallMatch = overallMatch,
+            lastCapture = lastCapture,
         )
     }
 
@@ -381,4 +483,43 @@ internal class GuidedCameraViewModel(
     }
 
     override fun toString(): String = "GuidedCameraViewModel(redacted)"
+
+    private companion object {
+        const val COMPARABLE_FRAME_CLOCK_WINDOW_NANOS = 2_000_000_000L
+    }
+}
+
+private fun matchPhaseFor(mode: ShootMode): GuidedMatchPhase = when (mode) {
+    ShootMode.SearchingForPerson -> GuidedMatchPhase.SEARCHING
+    ShootMode.Framing -> GuidedMatchPhase.FRAMING
+    ShootMode.Coaching -> GuidedMatchPhase.COACHING
+    is ShootMode.LockCandidate -> GuidedMatchPhase.LOCK_CANDIDATE
+    is ShootMode.Locked,
+    is ShootMode.Capturing,
+    is ShootMode.ConfirmingAndAdvancing,
+    -> GuidedMatchPhase.LOCKED
+    else -> GuidedMatchPhase.IDLE
+}
+
+/** A frame the evidence path could not evaluate must still move the reducer to a safe phase. */
+private fun failClosedMatch(status: ReferenceMatchStatus): MatchResult {
+    val failure = when (status) {
+        ReferenceMatchStatus.MULTIPLE_PEOPLE -> MatchGateFailure.MULTIPLE_PEOPLE
+        ReferenceMatchStatus.CANONICALIZATION_FAILED -> MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE
+        ReferenceMatchStatus.WAITING_FOR_REFERENCE,
+        ReferenceMatchStatus.WAITING_FOR_FRAME,
+        ReferenceMatchStatus.NO_PERSON,
+        ReferenceMatchStatus.EVALUATED,
+        -> MatchGateFailure.NO_PERSON
+    }
+    return MatchResult(
+        landmarkCoverage = 0.0,
+        framingScore = 0.0,
+        angularSimilarity = 0.0,
+        positionalSimilarity = 0.0,
+        overallMatch = 0.0,
+        gateFailures = setOf(failure),
+        mirrorUsed = false,
+        eligibleForLock = false,
+    )
 }

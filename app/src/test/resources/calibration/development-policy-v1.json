@@ -9,14 +9,14 @@
   },
   "match": {
     "minimumLandmarkCoverage": 0.75,
-    "minimumFramingScore": 0.8,
+    "minimumFramingScore": 0.0,
     "minimumAngularSimilarity": 0.85,
-    "minimumPositionalSimilarity": 0.8,
+    "minimumPositionalSimilarity": 0.0,
     "minimumOverallMatch": 0.825,
     "releaseMinimumLandmarkCoverage": 0.7,
-    "releaseMinimumFramingScore": 0.75,
+    "releaseMinimumFramingScore": 0.0,
     "releaseMinimumAngularSimilarity": 0.8,
-    "releaseMinimumPositionalSimilarity": 0.75,
+    "releaseMinimumPositionalSimilarity": 0.0,
     "releaseMinimumOverallMatch": 0.775
   },
   "timing": {

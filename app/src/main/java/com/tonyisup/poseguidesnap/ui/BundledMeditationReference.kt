@@ -7,9 +7,11 @@ import com.tonyisup.poseguidesnap.domain.match.MatchPolicy
 import com.tonyisup.poseguidesnap.domain.match.PoseCanonicalizationResult
 import com.tonyisup.poseguidesnap.domain.match.PoseCanonicalizer
 import com.tonyisup.poseguidesnap.domain.match.PoseFeatures
+import com.tonyisup.poseguidesnap.domain.match.FramingEvidenceStatus
 import com.tonyisup.poseguidesnap.domain.match.PoseFramingEvaluator
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.MatchGateFailure
+import com.tonyisup.poseguidesnap.domain.model.MatchResult
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
 import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
@@ -86,7 +88,8 @@ enum class MirrorSelection {
 }
 
 enum class LockCaptureState {
-    DISABLED,
+    /** The reducer may request automatic capture from a held lock; thresholds are uncalibrated. */
+    ARMED,
 }
 
 data class NamedPrototypeGateEvidence(
@@ -102,8 +105,9 @@ data class NamedPrototypeGateEvidence(
 }
 
 /**
- * Named, deliberately uncalibrated match evidence. This is display evidence only: automatic
- * capture stays disabled, even when all prototype pose and framing gates pass.
+ * Named, deliberately uncalibrated match evidence for display, plus the underlying [matchResult]
+ * that the guided-camera ViewModel feeds to the shoot reducer. [matchResult] is null whenever the
+ * frame could not be evaluated (no reference, no frame, wrong person count, canonicalization).
  */
 @ConsistentCopyVisibility
 data class BundledReferenceMatchEvidence private constructor(
@@ -119,6 +123,7 @@ data class BundledReferenceMatchEvidence private constructor(
     val lockCaptureState: LockCaptureState,
     val captureLockLabel: String,
     val labels: List<String>,
+    val matchResult: MatchResult?,
 ) {
     override fun toString(): String =
         "BundledReferenceMatchEvidence(status=${status.name}, redacted)"
@@ -228,6 +233,7 @@ data class BundledReferenceMatchEvidence private constructor(
                 mirrorAllowed = mirrorAllowed,
                 detectedPersonCount = live.detectedPersonCount,
                 framingScore = framingEvidence.framingScore,
+                bodyVisible = framingEvidence.status == FramingEvidenceStatus.EVALUATED,
             )
             val framing = evaluatedGate(
                 name = "Framing gate",
@@ -270,6 +276,7 @@ data class BundledReferenceMatchEvidence private constructor(
                 selectedMirror = selectedMirror,
                 mirrorLabel = mirrorLabel,
                 referenceLabel = referenceLabel,
+                matchResult = match,
             )
         }
 
@@ -312,8 +319,9 @@ data class BundledReferenceMatchEvidence private constructor(
             selectedMirror: MirrorSelection,
             mirrorLabel: String,
             referenceLabel: String,
+            matchResult: MatchResult? = null,
         ): BundledReferenceMatchEvidence {
-            val captureLockLabel = "Automatic capture: disabled pending calibration"
+            val captureLockLabel = "Automatic capture: armed with uncalibrated thresholds"
             val labels = Collections.unmodifiableList(
                 ArrayList(
                     listOf(
@@ -338,9 +346,10 @@ data class BundledReferenceMatchEvidence private constructor(
                 overall = overall,
                 selectedMirror = selectedMirror,
                 mirrorLabel = mirrorLabel,
-                lockCaptureState = LockCaptureState.DISABLED,
+                lockCaptureState = LockCaptureState.ARMED,
                 captureLockLabel = captureLockLabel,
                 labels = labels,
+                matchResult = matchResult,
             )
         }
 

@@ -36,7 +36,7 @@ class BundledMeditationReferenceTest {
             assertPassingGate("Positional gate", evidence.positional, 1e-9)
             assertPassingGate("Overall gate", evidence.overall, 1e-9)
             assertEquals(1.0, requireNotNull(evidence.overall.score), 1e-9)
-            assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
+            assertEquals(LockCaptureState.ARMED, evidence.lockCaptureState)
         }
     }
 
@@ -93,9 +93,9 @@ class BundledMeditationReferenceTest {
         assertPassingGate("Overall gate", evidence.overall)
         assertEquals(MirrorSelection.NORMAL, evidence.selectedMirror)
         assertEquals("Selected mirror: normal", evidence.mirrorLabel)
-        assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
+        assertEquals(LockCaptureState.ARMED, evidence.lockCaptureState)
         assertEquals(
-            "Automatic capture: disabled pending calibration",
+            "Automatic capture: armed with uncalibrated thresholds",
             evidence.captureLockLabel,
         )
         assertFalse(evidence.labels.any { "eligibleForLock" in it || "capture ready" in it.lowercase() })
@@ -188,9 +188,9 @@ class BundledMeditationReferenceTest {
         assertNull(evidence.framing.score)
         assertEquals("Framing gate: not evaluated", evidence.framing.label)
         assertEquals(MirrorSelection.NOT_EVALUATED, evidence.selectedMirror)
-        assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
+        assertEquals(LockCaptureState.ARMED, evidence.lockCaptureState)
         assertEquals(
-            "Automatic capture: disabled pending calibration",
+            "Automatic capture: armed with uncalibrated thresholds",
             evidence.captureLockLabel,
         )
     }

@@ -6,7 +6,6 @@ import com.tonyisup.poseguidesnap.camera.PixelSize
 import com.tonyisup.poseguidesnap.camera.PreviewFillCenterTransform
 import com.tonyisup.poseguidesnap.domain.match.FramingEvidenceStatus
 import com.tonyisup.poseguidesnap.domain.match.FramingPolicy
-import com.tonyisup.poseguidesnap.domain.match.MatchPolicy
 import com.tonyisup.poseguidesnap.domain.match.PoseFramingEvaluator
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
@@ -16,6 +15,13 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+/**
+ * Composition target used only by the debug calibration coaching. The production lock policy no
+ * longer gates on centre or scale similarity; this value exists so the coaching cues can still
+ * steer a participant toward the reference framing when a run wants that.
+ */
+internal const val CALIBRATION_ALIGNMENT_TARGET_SCORE = 0.8
 
 /** Debug display only. Never serialize or log transient participant geometry. */
 internal class AlignmentBounds(landmarks: List<Landmark>) {
@@ -62,7 +68,7 @@ internal class CalibrationAlignmentGuide {
     private val policy = FramingPolicy.developmentDefaults()
     private val evaluator = PoseFramingEvaluator(policy)
     private val armGuide = CalibrationArmPoseGuide()
-    private val minimumScore = MatchPolicy.developmentDefaults().minimumFramingScore
+    private val minimumScore = CALIBRATION_ALIGNMENT_TARGET_SCORE
     val targetBounds = AlignmentBounds(reference.landmarks)
     val referenceSize = reference.imageSize
 

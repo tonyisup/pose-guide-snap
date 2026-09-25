@@ -11,6 +11,10 @@ import kotlin.math.min
  *
  * The caller supplies image-level framing evidence and explicitly canonicalized unmirrored and
  * optional mirrored candidates. This class never reads image state or invents a mirror transform.
+ *
+ * [MatchGateFailure.POOR_FRAMING] fails when the caller reports that the required body regions are
+ * not visible, or when the composition score is below the policy threshold. With the default policy
+ * only body visibility gates acquisition; the composition score is reported for guidance.
  */
 class DefaultPoseMatcher(
     private val policy: MatchPolicy = MatchPolicy.developmentDefaults(),
@@ -22,6 +26,7 @@ class DefaultPoseMatcher(
         mirrorAllowed: Boolean,
         detectedPersonCount: Int,
         framingScore: Double,
+        bodyVisible: Boolean,
     ): MatchResult {
         require(!observed.mirrorUsed) { "observed must be the explicitly unmirrored candidate" }
         require(mirroredObserved == null || mirroredObserved.mirrorUsed) {
@@ -58,10 +63,10 @@ class DefaultPoseMatcher(
         if (selected.landmarkCoverage < policy.releaseMinimumLandmarkCoverage) {
             releaseFailures += MatchGateFailure.INSUFFICIENT_LANDMARK_COVERAGE
         }
-        if (framingScore < policy.minimumFramingScore) {
+        if (!bodyVisible || framingScore < policy.minimumFramingScore) {
             failures += MatchGateFailure.POOR_FRAMING
         }
-        if (framingScore < policy.releaseMinimumFramingScore) {
+        if (!bodyVisible || framingScore < policy.releaseMinimumFramingScore) {
             releaseFailures += MatchGateFailure.POOR_FRAMING
         }
         if (selected.angularSimilarity < policy.minimumAngularSimilarity) {

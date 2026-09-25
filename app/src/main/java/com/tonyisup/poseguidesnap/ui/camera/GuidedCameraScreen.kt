@@ -1,11 +1,13 @@
 package com.tonyisup.poseguidesnap.ui.camera
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -15,13 +17,17 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 
 @Composable
 internal fun GuidedCameraControls(
@@ -68,6 +74,21 @@ internal fun GuidedCameraControls(
                     contentDescription = "Capture status: ${guidedCameraStatusText(state)}"
                 },
             )
+            if (state.lastCapture.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.lastCapture.forEachIndexed { index, bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription =
+                                "Last capture, photo ${index + 1} of ${state.lastCapture.size}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                        )
+                    }
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick = onCapture,
@@ -102,10 +123,16 @@ internal fun GuidedCameraControls(
 
 internal fun guidedCameraStatusText(state: GuidedCameraUiState): String = when (state.phase) {
     GuidedCameraPhase.LOADING_REFERENCE -> "Loading the current reference"
-    GuidedCameraPhase.READY -> if (state.cameraReady) {
-        "Ready for a manual three-photo capture"
-    } else {
-        "Preparing the camera"
+    GuidedCameraPhase.READY -> when {
+        !state.cameraReady -> "Preparing the camera"
+        else -> when (state.matchPhase) {
+            GuidedMatchPhase.IDLE -> "Ready: match the reference pose, or capture manually"
+            GuidedMatchPhase.SEARCHING -> "Looking for you"
+            GuidedMatchPhase.FRAMING -> "Get your whole body in the frame"
+            GuidedMatchPhase.COACHING -> "Match the pose${matchPercent(state.overallMatch)}"
+            GuidedMatchPhase.LOCK_CANDIDATE -> "Hold it${matchPercent(state.overallMatch)}"
+            GuidedMatchPhase.LOCKED -> "Locked: capturing"
+        }
     }
     GuidedCameraPhase.CAPTURING -> "Taking three photos"
     GuidedCameraPhase.CONFIRMING -> "Saving the capture"
@@ -115,6 +142,9 @@ internal fun guidedCameraStatusText(state: GuidedCameraUiState): String = when (
     GuidedCameraPhase.NEEDS_REPAIR -> "Capture needs recovery before continuing"
     GuidedCameraPhase.UNAVAILABLE -> "Current reference is unavailable"
 }
+
+private fun matchPercent(overallMatch: Double?): String =
+    overallMatch?.let { " (${(it * 100.0).roundToInt()}%)" } ?: ""
 
 internal const val GUIDED_CAMERA_CONTROLS_TAG = "guided-camera-controls"
 internal const val GUIDED_CAPTURE_BUTTON_TAG = "guided-capture-button"

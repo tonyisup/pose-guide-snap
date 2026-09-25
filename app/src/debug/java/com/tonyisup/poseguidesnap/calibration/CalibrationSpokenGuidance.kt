@@ -1,7 +1,6 @@
 package com.tonyisup.poseguidesnap.calibration
 
 import com.tonyisup.poseguidesnap.domain.match.FramingPolicy
-import com.tonyisup.poseguidesnap.domain.match.MatchPolicy
 import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.math.abs
@@ -59,7 +58,7 @@ internal class CalibrationPreparationStatus(
 internal class CalibrationSpokenGuidance {
     private val targetBounds = CalibrationAlignmentGuide().targetBounds
     private val target = targetBounds.center
-    private val minimumScore = MatchPolicy.developmentDefaults().minimumFramingScore
+    private val minimumScore = CALIBRATION_ALIGNMENT_TARGET_SCORE
     // Equal per-axis error budgets fit inside the existing radial center tolerance.
     private val axisTolerance = (1 - minimumScore) *
         FramingPolicy.developmentDefaults().centerErrorAtZeroSimilarity / sqrt(2.0)

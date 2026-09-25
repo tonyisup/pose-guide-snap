@@ -1,5 +1,9 @@
 package com.tonyisup.poseguidesnap.ui.camera
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import com.tonyisup.poseguidesnap.camera.CaptureAttemptStartupReconciler
@@ -8,6 +12,7 @@ import com.tonyisup.poseguidesnap.camera.JournaledCaptureRecoveryPort
 import com.tonyisup.poseguidesnap.camera.JournaledCaptureResult
 import com.tonyisup.poseguidesnap.camera.JournaledCaptureSubmission
 import com.tonyisup.poseguidesnap.camera.JournaledConfirmationResult
+import com.tonyisup.poseguidesnap.camera.JournaledPrivateCaptureStore
 import com.tonyisup.poseguidesnap.camera.JournaledStillCaptureWriter
 import com.tonyisup.poseguidesnap.camera.JournaledThreePhotoCaptureCoordinator
 import com.tonyisup.poseguidesnap.camera.RoomJournaledCaptureAuthorityAdapter
@@ -16,6 +21,7 @@ import com.tonyisup.poseguidesnap.camera.androidJournaledPrivateCaptureStore
 import com.tonyisup.poseguidesnap.data.GuidedCurrentReferenceResult
 import com.tonyisup.poseguidesnap.data.RoomShootRepository
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
+import com.tonyisup.poseguidesnap.domain.session.CaptureToken
 import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 import java.io.File
 import java.io.FileOutputStream
@@ -28,6 +34,9 @@ import kotlinx.coroutines.withContext
 
 internal interface GuidedCaptureWorkflowPort : AutoCloseable {
     suspend fun loadCurrentReference(sessionId: String): GuidedCurrentReferenceResult
+
+    /** Downscaled copies of a confirmed capture's three photos, oldest first; empty if unavailable. */
+    suspend fun loadCaptureThumbnails(token: CaptureToken): List<Bitmap> = emptyList()
     fun attachWriter(writer: JournaledStillCaptureWriter)
     fun detachWriter(writer: JournaledStillCaptureWriter)
 
@@ -166,12 +175,24 @@ internal class RoomGuidedCaptureWorkflow(
     private val writer: AttachableJournaledStillCaptureWriter,
     private val coordinator: JournaledThreePhotoCaptureCoordinator,
     private val resources: GuidedCaptureResourceAuthority,
+    private val store: JournaledPrivateCaptureStore,
     private val blockingDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : GuidedCaptureWorkflowPort {
     override suspend fun loadCurrentReference(sessionId: String): GuidedCurrentReferenceResult {
         val lease = resources.tryAcquire() ?: return GuidedCurrentReferenceResult.AuthorityInvalid
         return try {
             withContext(blockingDispatcher) { repository.loadCurrentGuidedReference(sessionId) }
+        } finally {
+            lease.close()
+        }
+    }
+
+    override suspend fun loadCaptureThumbnails(token: CaptureToken): List<Bitmap> {
+        val lease = resources.tryAcquire() ?: return emptyList()
+        return try {
+            withContext(blockingDispatcher) {
+                store.finalFilesFor(token).mapNotNull(::decodeThumbnail)
+            }
         } finally {
             lease.close()
         }
@@ -258,7 +279,7 @@ internal fun createRoomGuidedCaptureWorkflow(
                 executor.shutdown()
             }
         }
-        return RoomGuidedCaptureWorkflow(repository, writer, coordinator, resources).also {
+        return RoomGuidedCaptureWorkflow(repository, writer, coordinator, resources, store).also {
             completed = true
         }
     } finally {
@@ -270,4 +291,48 @@ internal fun createRoomGuidedCaptureWorkflow(
             }
         }
     }
+}
+
+private const val THUMBNAIL_LONGEST_SIDE_PX = 384
+
+/** Decodes a downscaled, EXIF-upright copy of one private capture; null on any failure. */
+private fun decodeThumbnail(file: File): Bitmap? = try {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+        null
+    } else {
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sampleSize * 2) >= THUMBNAIL_LONGEST_SIDE_PX) {
+            sampleSize *= 2
+        }
+        val decoded = BitmapFactory.decodeFile(
+            file.path,
+            BitmapFactory.Options().apply { inSampleSize = sampleSize },
+        )
+        if (decoded == null) {
+            null
+        } else {
+            val rotationDegrees = when (
+                ExifInterface(file.path).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL,
+                )
+            ) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+            if (rotationDegrees == 0f) {
+                decoded
+            } else {
+                val matrix = Matrix().apply { postRotate(rotationDegrees) }
+                Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+                    .also { rotated -> if (rotated !== decoded) decoded.recycle() }
+            }
+        }
+    }
+} catch (_: Exception) {
+    null
 }

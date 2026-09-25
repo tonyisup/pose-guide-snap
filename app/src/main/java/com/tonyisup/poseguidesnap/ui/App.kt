@@ -274,6 +274,10 @@ private fun LiveCameraScreen(
             onFrame = { analyzedFrame ->
                 latestFrame = analyzedFrame
                 hasRecoverableFailure = false
+                owner.observeFrame(
+                    analyzedFrame.poseObservation,
+                    analyzedFrame.sourceMonotonicTimestampNanos,
+                )
             },
             onState = { state ->
                 cameraStatus = state.status

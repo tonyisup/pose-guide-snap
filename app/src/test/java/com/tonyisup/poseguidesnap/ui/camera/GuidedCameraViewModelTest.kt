@@ -12,7 +12,10 @@ import com.tonyisup.poseguidesnap.data.GuidedSessionSnapshot
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
+import com.tonyisup.poseguidesnap.domain.model.PoseObservation
+import com.tonyisup.poseguidesnap.domain.session.CaptureTrigger
 import com.tonyisup.poseguidesnap.domain.session.ShootEffect
+import com.tonyisup.poseguidesnap.ui.BundledMeditationReference
 import java.io.File
 import java.util.ArrayDeque
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,6 +25,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,6 +67,66 @@ class GuidedCameraViewModelTest {
         assertEquals(2, viewModel.state.value.currentPoseNumber)
         assertEquals("pose-1", viewModel.state.value.reference?.poseId)
         assertEquals(listOf(SESSION_ID, SESSION_ID), workflow.loadedSessions)
+    }
+
+    @Test
+    fun matchingFramesAcquireLockAndRequestAutomaticCaptureThroughTheJournaledPath() = runTest {
+        val workflow = FakeWorkflow(bundledReference("pose-0"))
+        val clock = IncreasingClock(stepNanos = 100_000_000L)
+        val viewModel = viewModel(workflow, snapshot(), clock)
+        runCurrent()
+        viewModel.setCameraReady(true)
+
+        viewModel.observeFrame(emptyScene(), clock.upcoming())
+        assertEquals(GuidedMatchPhase.SEARCHING, viewModel.state.value.matchPhase)
+        assertNull(viewModel.state.value.overallMatch)
+        assertNull(workflow.captureCommand)
+
+        viewModel.observeFrame(BundledMeditationReference.observation, clock.upcoming())
+        assertEquals(GuidedMatchPhase.LOCK_CANDIDATE, viewModel.state.value.matchPhase)
+        assertEquals(1.0, requireNotNull(viewModel.state.value.overallMatch), 1e-9)
+        assertNull(workflow.captureCommand)
+
+        repeat(6) { viewModel.observeFrame(BundledMeditationReference.observation, clock.upcoming()) }
+        runCurrent()
+
+        val command = requireNotNull(workflow.captureCommand)
+        assertEquals(CaptureTrigger.AUTOMATIC, command.trigger)
+        assertEquals(GuidedCameraPhase.CAPTURING, viewModel.state.value.phase)
+        assertEquals(GuidedMatchPhase.LOCKED, viewModel.state.value.matchPhase)
+
+        // Frames arriving while a capture is in flight are ignored, not re-captured.
+        viewModel.observeFrame(BundledMeditationReference.observation, clock.upcoming())
+        assertEquals(GuidedCameraPhase.CAPTURING, viewModel.state.value.phase)
+    }
+
+    @Test
+    fun framesThatLoseTheBodyNeverLockAndReportFraming() = runTest {
+        val workflow = FakeWorkflow(bundledReference("pose-0"))
+        val clock = IncreasingClock(stepNanos = 100_000_000L)
+        val viewModel = viewModel(workflow, snapshot(), clock)
+        runCurrent()
+        viewModel.setCameraReady(true)
+
+        val upperBodyOnly = BundledMeditationReference.observation.let { full ->
+            PoseObservation(
+                landmarks = full.landmarks.filter { landmark ->
+                    landmark.type != PoseLandmark.LEFT_KNEE &&
+                        landmark.type != PoseLandmark.RIGHT_KNEE &&
+                        landmark.type != PoseLandmark.LEFT_ANKLE &&
+                        landmark.type != PoseLandmark.RIGHT_ANKLE
+                },
+                monotonicTimestampNanos = full.monotonicTimestampNanos,
+                detectedPersonCount = 1,
+                imageSize = full.imageSize,
+            )
+        }
+        repeat(10) { viewModel.observeFrame(upperBodyOnly, clock.upcoming()) }
+        runCurrent()
+
+        assertEquals(GuidedMatchPhase.FRAMING, viewModel.state.value.matchPhase)
+        assertEquals(GuidedCameraPhase.READY, viewModel.state.value.phase)
+        assertNull(workflow.captureCommand)
     }
 
     @Test
@@ -156,10 +220,11 @@ class GuidedCameraViewModelTest {
     private fun kotlinx.coroutines.test.TestScope.viewModel(
         workflow: FakeWorkflow,
         snapshot: GuidedSessionSnapshot,
+        clock: IncreasingClock = IncreasingClock(),
     ) = GuidedCameraViewModel(
         snapshot = snapshot,
         workflow = workflow,
-        eventClockNanos = IncreasingClock()::next,
+        eventClockNanos = clock::next,
         dispatcher = StandardTestDispatcher(testScheduler),
     )
 
@@ -213,9 +278,10 @@ class GuidedCameraViewModelTest {
         }
     }
 
-    private class IncreasingClock {
+    private class IncreasingClock(private val stepNanos: Long = 1L) {
         private var value = 0L
-        fun next(): Long = value++
+        fun next(): Long = value.also { value += stepNanos }
+        fun upcoming(): Long = value
     }
 
     private fun snapshot(currentPoseIndex: Int = 0): GuidedSessionSnapshot {
@@ -248,6 +314,22 @@ class GuidedCameraViewModelTest {
             Landmark(PoseLandmark.NOSE, 0.5, 0.2, 0.0, 0.9, 0.9),
         ),
         imageSize = PoseImageSize(1920, 1080),
+    )
+
+    private fun bundledReference(poseId: String) = GuidedReferenceSnapshot(
+        poseId = poseId,
+        label = BundledMeditationReference.label,
+        relativeAssetPath = "reference-assets/assets/${"b".repeat(64)}.asset",
+        mirrorAllowed = BundledMeditationReference.mirrorAllowed,
+        landmarks = BundledMeditationReference.observation.landmarks,
+        imageSize = BundledMeditationReference.observation.imageSize,
+    )
+
+    private fun emptyScene() = PoseObservation(
+        landmarks = emptyList(),
+        monotonicTimestampNanos = 0L,
+        detectedPersonCount = 0,
+        imageSize = BundledMeditationReference.observation.imageSize,
     )
 
     private fun invokeOnCleared(viewModel: ViewModel) {
