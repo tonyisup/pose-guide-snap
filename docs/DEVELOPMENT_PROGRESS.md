@@ -1,4 +1,22 @@
-# Development checkpoint — 8 September 2026
+# Development progress
+
+This is the single place where the project's current state is recorded. Other documents link here instead of carrying their own status paragraph.
+
+## Status — 25 September 2026
+
+Everything produced between the 4 September audit and 25 September (Tasks 14B.1B–14B.3, 15A, and the 16A–16AD calibration series) is committed on `main` as `d227c6d` via [PR #1](https://github.com/tonyisup/pose-guide-snap/pull/1). Development continues on `claude/dev-takeover`, which adds CI, the review, and the changes below.
+
+**Implemented and device-verified:** shoot list, editor, reference import with recovery, Room V4 capture journal, and one manual rear-camera three-photo capture through Room confirmation and one advance (Task 15A).
+
+**Not yet in the production app:** spoken coaching (exists only in the debug/androidTest calibration collector and is worded for one bundled reference), MediaStore export (outbox rows are written but never consumed), physical deletion.
+
+**No automatic pose-match lock has ever occurred on the device.** Replaying every recorded calibration run showed the framing gate (a composition requirement) and the separate positional gate at 0.80 rejected every correct-pose frame recorded, while one blended overall score would have locked the three 25 September positive runs and rejected the one true negative. The evidence, the persistence-layer assessment, and the milestone order are in the [25 September 2026 review](PROJECT_REVIEW_2026-09-25.md).
+
+**Process changes made on 25 September:** CI runs the JVM tests, calibration-tool tests, lint, and debug assembly on every push; hardware authorization is once per working session rather than per APK digest ([TESTING.md](TESTING.md)); same-digest specification and security approval is reserved for the final Gate 4 acceptance; the pending Task 16AD hand-placement comparison is not run. The `positive-confirmed-landscape-b` local calibration report is the same data as `negative-arms-differ-landscape-a` (see the [Task 16T record](validation/2026-09-25-task16t-arm-coaching.md)) and has been set aside locally so it is not double-counted.
+
+**Milestone 1 (in progress):** wire camera frames through the matcher into the reducer in the production guided-camera screen, gate a lock on person count, body visibility, coverage, angular similarity, and the blended overall score only, show the three captured photos after confirmation, and obtain one real automatic capture on the Pixel 6.
+
+## Development checkpoint — 8 September 2026
 
 Branch: `codex/development-takeover`, based on `32a1429`.
 

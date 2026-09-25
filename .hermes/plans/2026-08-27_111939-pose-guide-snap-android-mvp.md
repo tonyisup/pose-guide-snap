@@ -1,6 +1,6 @@
 # Pose Guide Snap Android MVP Implementation Plan
 
-> **For Hermes:** Use the `software-development:subagent-driven-development` skill to implement this plan task-by-task. Require specification and quality/security approval of the same exact staged digest before each commit.
+> **Process (revised 25 September 2026):** Commit small, reviewable changes as they pass the host suite; CI runs the JVM tests, calibration-tool tests, lint, and debug assembly on every push. Same-digest specification and quality/security approval before each commit is no longer required and is reserved for the final Gate 4 acceptance. Hardware authorization is per working session (see [TESTING.md](../../docs/TESTING.md)). Do not start further Task 16 lettered sub-tasks in the debug calibration collector. The current milestone order is in the [25 September 2026 review](../../docs/PROJECT_REVIEW_2026-09-25.md).
 
 **Goal:** Build an Android-first, privacy-preserving guided selfie app that imports a sequence of reference-pose photos, coaches one person through the sequence over normal Android audio routing, and captures/advances automatically only after a stable, high-confidence pose match.
 

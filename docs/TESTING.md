@@ -19,10 +19,10 @@ The audit-repair batch passed 643/643 unit tests and six exact authorized Pixel 
 - Authority separation: all three app-private outputs and the Room confirmation/advance transaction complete before advancement; MediaStore export happens afterward and can never own or replay advancement.
 - Backup exclusion is defense in depth: source and merged manifests plus both rule resources must exclude sensitive data from cloud, device-to-device, and supported cross-platform transfer; absent `INTERNET` permission is not evidence of this boundary.
 - External identity is exact: only a durable per-output MediaStore URI can authorize automatic update/delete; metadata matching must preserve foreign rows.
-- Same-artifact evidence: final functional, privacy, audio-route, and quality/security review must use the exact same APK digest.
+- Same-artifact evidence at release: the final Gate 4 functional, privacy, audio-route, and quality/security acceptance must use the exact same APK digest. Development and calibration runs do not need same-digest review or per-digest re-authorization.
 - Truthful evidence: automated replay, instrumentation, emulator, and authorized real-device results must be labeled separately.
 - No threshold by intuition: production lock thresholds require a documented positive/negative separation report and real-device calibration.
-- Private hardware gate: use of the Pixel 6, earbuds, or private images requires explicit permission when that test begins.
+- Private hardware gate: the user authorizes Pixel 6, earbud, or private-image use once per working session. Re-ask only when the scope changes within that session: first camera use, first MediaStore write, first access to personal media, or a release deployment. A changed APK digest or test-fixture edit does not by itself require fresh authorization; record the digest in the run record instead.
 
 ## Planned quality gates
 
@@ -257,7 +257,7 @@ The exact candidate APK digest must be recorded and used for every item below:
 - Sustained 15-minute camera analysis with inference latency, dropped frames, allocations/GC pressure, thermal behavior, battery impact, and analysis-resource cleanup recorded.
 - Storage and log inspection confirming that analysis frames, raw landmark arrays, private paths, and MediaStore URIs are not retained or logged contrary to [the privacy contract](PRIVACY.md).
 
-Failure must be recorded honestly. Thresholds may not be lowered merely to manufacture a pass. Any code change creates a new APK digest and requires the affected same-digest reviews to run again.
+Failure must be recorded honestly. Thresholds may not be lowered merely to manufacture a pass; they may be changed on the basis of a documented positive/negative replay. For the final Gate 4 acceptance only, any code change creates a new APK digest and requires the affected same-digest acceptance items to run again.
 
 ## Match calibration evidence
 
