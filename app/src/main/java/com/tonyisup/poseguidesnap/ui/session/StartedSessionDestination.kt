@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -26,8 +27,15 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.tonyisup.poseguidesnap.data.GuidedSessionSnapshot
 import com.tonyisup.poseguidesnap.ui.StartedSessionCameraDestination
+import com.tonyisup.poseguidesnap.ui.camera.GuidedCameraViewModel
+import com.tonyisup.poseguidesnap.ui.camera.createGuidedCameraViewModel
 
 internal class StartedSessionStatusPresentation(
     val heading: String,
@@ -94,11 +102,27 @@ internal fun StartedSessionDestination(
     onBack: () -> Unit,
 ) {
     val state by owner.state.collectAsStateWithLifecycle()
+    val applicationContext = LocalContext.current.applicationContext
     StartedSessionScreen(
         state = state,
         onRetry = owner::retry,
         onBack = onBack,
-        cameraContent = { StartedSessionCameraDestination(lifecycleOwner) },
+        cameraContent = { snapshot ->
+            val factory: ViewModelProvider.Factory = viewModelFactory {
+                initializer {
+                    createGuidedCameraViewModel(applicationContext, snapshot)
+                }
+            }
+            val guidedOwner: GuidedCameraViewModel = viewModel(
+                key = "guided-camera-${snapshot.sessionId}",
+                factory = factory,
+            )
+            StartedSessionCameraDestination(
+                lifecycleOwner = lifecycleOwner,
+                owner = guidedOwner,
+                onStop = onBack,
+            )
+        },
     )
 }
 
@@ -107,10 +131,10 @@ internal fun StartedSessionScreen(
     state: StartedSessionBootstrapState,
     onRetry: () -> Unit,
     onBack: () -> Unit,
-    cameraContent: @Composable () -> Unit,
+    cameraContent: @Composable (GuidedSessionSnapshot) -> Unit,
 ) {
-    if (startedSessionAuthorizesCamera(state)) {
-        cameraContent()
+    if (state is StartedSessionBootstrapState.Ready && startedSessionAuthorizesCamera(state)) {
+        cameraContent(state.snapshot)
         return
     }
 

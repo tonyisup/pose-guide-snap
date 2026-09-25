@@ -179,14 +179,18 @@ class ShootEditorDestinationSourceContractTest {
         listOf(
             "owner.state.collectAsStateWithLifecycle()",
             "startedSessionAuthorizesCamera(state)",
-            "cameraContent()",
-            "StartedSessionCameraDestination(lifecycleOwner)",
+            "cameraContent(state.snapshot)",
+            "createGuidedCameraViewModel(applicationContext, snapshot)",
+            "StartedSessionCameraDestination(",
+            "owner = guidedOwner",
         ).forEach { marker ->
             assertTrue("Ready-only started destination chain missing: $marker", marker in startedDestination)
         }
         assertTrue(
             "camera destination remains sole camera gate caller",
-            "CameraPermissionGate(lifecycleOwner = lifecycleOwner)" in cameraDestination,
+            "CameraPermissionGate(" in cameraDestination &&
+                "owner = owner" in cameraDestination &&
+                "onStop = onStop" in cameraDestination,
         )
         listOf("DisposableEffect", "owner.close(", "pickerCoordinator.close(")
             .forEach { forbidden ->

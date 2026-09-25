@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import java.util.concurrent.Executor
 
 @Database(
     entities = [
@@ -339,13 +340,27 @@ abstract class AppDatabase : RoomDatabase() {
         internal fun create(
             context: Context,
             databaseName: String,
-        ): AppDatabase =
+        ): AppDatabase = databaseBuilder(context, databaseName).build()
+
+        internal fun create(
+            context: Context,
+            databaseName: String,
+            queryCallback: QueryCallback,
+            queryCallbackExecutor: Executor,
+        ): AppDatabase = databaseBuilder(context, databaseName)
+            .setQueryCallback(queryCallback, queryCallbackExecutor)
+            .build()
+
+        private fun databaseBuilder(
+            context: Context,
+            databaseName: String,
+        ) =
             Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 databaseName,
             ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(AUTHORITY_SCHEMA_CALLBACK)
-                .build()
+                .enableMultiInstanceInvalidation()
     }
 }

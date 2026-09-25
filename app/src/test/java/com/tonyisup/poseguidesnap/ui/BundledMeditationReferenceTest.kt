@@ -4,6 +4,7 @@ import com.tonyisup.poseguidesnap.camera.PixelSize
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
+import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import java.io.File
 import java.lang.reflect.Modifier
 import java.security.MessageDigest
@@ -15,6 +16,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BundledMeditationReferenceTest {
+    @Test
+    fun identicalPixelPosePassesAcrossAspectRatiosAndCrops() {
+        val reference = BundledMeditationReference.observation
+        for (size in listOf(PoseImageSize(574, 1024), PoseImageSize(1024, 1024), PoseImageSize(1200, 700))) {
+            val live = PoseObservation(
+                landmarks = reference.landmarks.map { point ->
+                    point.copy(
+                        x = (point.x - 0.4) * 1024 / size.width + 0.5,
+                        y = (point.y - 0.5) * 574 / size.height + 0.5,
+                    )
+                },
+                monotonicTimestampNanos = 1L,
+                detectedPersonCount = 1,
+                imageSize = size,
+            )
+            val evidence = BundledReferenceMatchEvidence.evaluate(live)
+            assertPassingGate("Angular gate", evidence.angular, 1e-9)
+            assertPassingGate("Positional gate", evidence.positional, 1e-9)
+            assertPassingGate("Overall gate", evidence.overall, 1e-9)
+            assertEquals(1.0, requireNotNull(evidence.overall.score), 1e-9)
+            assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
+        }
+    }
+
     @Test
     fun bundledReferenceContainsExactPixelMappedMoveNetObservation() {
         assertEquals("Bundled meditation pose", BundledMeditationReference.label)
@@ -48,6 +73,11 @@ class BundledMeditationReferenceTest {
                 .filterNot { it.isSynthetic || Modifier.isStatic(it.modifiers) }
                 .all { Modifier.isFinal(it.modifiers) },
         )
+        assertEquals(
+            "BundledReferenceMatchEvidence(status=EVALUATED, redacted)",
+            BundledReferenceMatchEvidence.evaluate(BundledMeditationReference.observation)
+                .toString(),
+        )
     }
 
     @Test
@@ -56,9 +86,7 @@ class BundledMeditationReferenceTest {
 
         assertEquals(ReferenceMatchStatus.EVALUATED, evidence.status)
         assertEquals("Reference loaded: Bundled meditation pose (17 landmarks)", evidence.referenceLabel)
-        assertEquals(PrototypeGateState.NOT_EVALUATED, evidence.framing.state)
-        assertNull(evidence.framing.score)
-        assertEquals("Framing gate: not evaluated", evidence.framing.label)
+        assertPassingGate("Framing gate", evidence.framing)
         assertPassingGate("Coverage gate", evidence.coverage)
         assertPassingGate("Angular gate", evidence.angular)
         assertPassingGate("Positional gate", evidence.positional)
@@ -66,7 +94,10 @@ class BundledMeditationReferenceTest {
         assertEquals(MirrorSelection.NORMAL, evidence.selectedMirror)
         assertEquals("Selected mirror: normal", evidence.mirrorLabel)
         assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
-        assertEquals("Capture lock: disabled in Task 10", evidence.captureLockLabel)
+        assertEquals(
+            "Automatic capture: disabled pending calibration",
+            evidence.captureLockLabel,
+        )
         assertFalse(evidence.labels.any { "eligibleForLock" in it || "capture ready" in it.lowercase() })
     }
 
@@ -136,9 +167,9 @@ class BundledMeditationReferenceTest {
         }
     }
 
-    private fun assertPassingGate(name: String, gate: NamedPrototypeGateEvidence) {
+    private fun assertPassingGate(name: String, gate: NamedPrototypeGateEvidence, tolerance: Double = 0.0) {
         assertEquals(PrototypeGateState.PASS, gate.state)
-        assertEquals(1.0, gate.score ?: Double.NaN, 0.0)
+        assertEquals(1.0, gate.score ?: Double.NaN, tolerance)
         assertEquals("$name: pass (uncalibrated)", gate.label)
     }
 
@@ -153,9 +184,15 @@ class BundledMeditationReferenceTest {
             assertNull(gate.score)
             assertTrue("Missing unevaluated reason in ${gate.label}", reason in gate.label)
         }
+        assertEquals(PrototypeGateState.NOT_EVALUATED, evidence.framing.state)
+        assertNull(evidence.framing.score)
+        assertEquals("Framing gate: not evaluated", evidence.framing.label)
         assertEquals(MirrorSelection.NOT_EVALUATED, evidence.selectedMirror)
         assertEquals(LockCaptureState.DISABLED, evidence.lockCaptureState)
-        assertEquals("Capture lock: disabled in Task 10", evidence.captureLockLabel)
+        assertEquals(
+            "Automatic capture: disabled pending calibration",
+            evidence.captureLockLabel,
+        )
     }
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")

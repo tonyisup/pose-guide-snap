@@ -49,8 +49,7 @@ object GuidedSessionBootstrapMapper {
         }
         if (
             lifecycle == GuidedSessionLifecycle.COMPLETED &&
-            (session.currentPoseIndex != rows.poses.lastIndex ||
-                session.nextAttemptNumber != rows.poses.size.toLong())
+            session.currentPoseIndex != rows.poses.lastIndex
         ) {
             return rejected(GuidedSessionBootstrapRejectionReason.AUTHORITY_INCONSISTENT)
         }
@@ -87,6 +86,7 @@ object GuidedSessionBootstrapMapper {
             .groupBy(GuidedCaptureFileOperationAuthorityRow::commandToken)
         var unresolvedExportCount = 0
         var confirmedAttemptCount = 0
+        var failedAttemptCount = 0
         val blockingAttempts = mutableListOf<GuidedAttemptAuthorityRow>()
 
         attempts.forEach { attempt ->
@@ -95,15 +95,25 @@ object GuidedSessionBootstrapMapper {
             val outboxes = outboxesByToken[attempt.commandToken].orEmpty()
             val exports = exportsByToken[attempt.commandToken].orEmpty()
             val captureFiles = captureFilesByToken[attempt.commandToken].orEmpty()
-            if (attempt.lifecycleState != CONFIRMED) {
-                val state = requireNotNull(attempt.stateOrNull())
-                if (!captureFiles.haveCoherentCaptureFileOperationShape(attempt, state)) {
-                    return rejected(
-                        GuidedSessionBootstrapRejectionReason
-                            .INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
-                    )
+            val state = requireNotNull(attempt.stateOrNull())
+            if (state != GuidedCaptureAttemptState.CONFIRMED) {
+                if (state == GuidedCaptureAttemptState.FAILED_CLEANED) {
+                    if (captureFiles.isNotEmpty()) {
+                        return rejected(
+                            GuidedSessionBootstrapRejectionReason
+                                .INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+                        )
+                    }
+                    failedAttemptCount += 1
+                } else {
+                    if (!captureFiles.haveCoherentCaptureFileOperationShape(attempt, state)) {
+                        return rejected(
+                            GuidedSessionBootstrapRejectionReason
+                                .INVALID_CAPTURE_FILE_OPERATION_AUTHORITY,
+                        )
+                    }
+                    blockingAttempts += attempt
                 }
-                blockingAttempts += attempt
                 if (privateOutputs.isNotEmpty()) {
                     return rejected(
                         GuidedSessionBootstrapRejectionReason.INVALID_PRIVATE_OUTPUT_AUTHORITY,
@@ -162,14 +172,12 @@ object GuidedSessionBootstrapMapper {
         if (blocking == null) {
             when (lifecycle) {
                 GuidedSessionLifecycle.ACTIVE -> if (
-                    session.nextAttemptNumber != session.currentPoseIndex.toLong() ||
                     confirmedAttemptCount != session.currentPoseIndex
                 ) {
                     return rejected(GuidedSessionBootstrapRejectionReason.AUTHORITY_INCONSISTENT)
                 }
                 GuidedSessionLifecycle.COMPLETED -> if (
                     session.currentPoseIndex != rows.poses.lastIndex ||
-                    session.nextAttemptNumber != rows.poses.size.toLong() ||
                     confirmedAttemptCount != rows.poses.size
                 ) {
                     return rejected(GuidedSessionBootstrapRejectionReason.AUTHORITY_INCONSISTENT)
@@ -195,6 +203,7 @@ object GuidedSessionBootstrapMapper {
                 .map(GuidedAttemptAuthorityRow::commandToken),
             unresolvedExportCount = unresolvedExportCount,
             blockingAttempt = blocking?.toSummary(),
+            failedAttemptCount = failedAttemptCount,
         )
         return when {
             blocking != null -> GuidedSessionBootstrapResult.ReconciliationRequired(snapshot)
@@ -263,13 +272,15 @@ object GuidedSessionBootstrapMapper {
     ): Boolean {
         if (size.toLong() != session.nextAttemptNumber) return false
         if (map(GuidedAttemptAuthorityRow::commandToken).distinct().size != size) return false
+        var derivedPoseIndex = 0
         return indices.all { index ->
             val attempt = this[index]
             val state = attempt.stateOrNull() ?: return@all false
-            attempt.attemptNumber == index.toLong() &&
+            val coherent = attempt.attemptNumber == index.toLong() &&
                 isValidCaptureToken(attempt.commandToken) &&
                 attempt.sessionId == session.sessionId &&
                 attempt.poseIndex in poses.indices &&
+                attempt.poseIndex == derivedPoseIndex &&
                 attempt.poseId == poses[attempt.poseIndex].poseId &&
                 attempt.triggerType in CAPTURE_TRIGGERS &&
                 attempt.capturedDeletionGeneration == shoot.deletionGeneration &&
@@ -279,14 +290,25 @@ object GuidedSessionBootstrapMapper {
                     GuidedCaptureAttemptState.CONFIRMED ->
                         !attempt.reconciliationRequired &&
                             attempt.confirmedAtEpochMillis != null &&
-                            attempt.confirmedAtEpochMillis == attempt.updatedAtEpochMillis &&
-                            attempt.poseIndex == index
+                            attempt.confirmedAtEpochMillis == attempt.updatedAtEpochMillis
+                    GuidedCaptureAttemptState.FAILED_CLEANED ->
+                        !attempt.reconciliationRequired &&
+                            attempt.confirmedAtEpochMillis == null
+                    GuidedCaptureAttemptState.RECONCILIATION_REQUIRED ->
+                        attempt.reconciliationRequired &&
+                            attempt.confirmedAtEpochMillis == null
                     GuidedCaptureAttemptState.REGISTERED ->
-                        attempt.confirmedAtEpochMillis == null &&
+                        !attempt.reconciliationRequired &&
+                            attempt.confirmedAtEpochMillis == null &&
                             attempt.updatedAtEpochMillis == attempt.createdAtEpochMillis
                     GuidedCaptureAttemptState.CAPTURING ->
-                        attempt.confirmedAtEpochMillis == null
+                        !attempt.reconciliationRequired &&
+                            attempt.confirmedAtEpochMillis == null
                 }
+            if (coherent && state == GuidedCaptureAttemptState.CONFIRMED) {
+                derivedPoseIndex += 1
+            }
+            coherent
         }
     }
 
@@ -316,8 +338,7 @@ object GuidedSessionBootstrapMapper {
                 operation.relativeTempPath == expectedPaths.relativeTempPath &&
                 operation.relativeQuarantinePath == expectedPaths.relativeQuarantinePath &&
                 operation.createdAtEpochMillis == attempt.createdAtEpochMillis &&
-                operation.updatedAtEpochMillis in
-                operation.createdAtEpochMillis..attempt.updatedAtEpochMillis &&
+                operation.updatedAtEpochMillis >= operation.createdAtEpochMillis &&
                 (
                     operation.capturedAtEpochMillis == null ||
                         operation.capturedAtEpochMillis in
@@ -343,10 +364,19 @@ object GuidedSessionBootstrapMapper {
                         !hasProgressed ||
                             (
                                 operation.updatedAtEpochMillis > operation.createdAtEpochMillis &&
-                                    operation.updatedAtEpochMillis == attempt.updatedAtEpochMillis
+                                    operation.updatedAtEpochMillis >= attempt.updatedAtEpochMillis &&
+                                    (
+                                        operation.capturedAtEpochMillis == null ||
+                                            operation.capturedAtEpochMillis >= attempt.updatedAtEpochMillis
+                                        )
                                 )
                     }
-                    GuidedCaptureAttemptState.CONFIRMED -> false
+                    GuidedCaptureAttemptState.RECONCILIATION_REQUIRED ->
+                        operation.updatedAtEpochMillis <= attempt.updatedAtEpochMillis ||
+                            stage in RECOVERY_CLEANUP_STAGES
+                    GuidedCaptureAttemptState.FAILED_CLEANED,
+                    GuidedCaptureAttemptState.CONFIRMED,
+                    -> false
                 }
         }
         return rowsAreCoherent
@@ -517,6 +547,11 @@ object GuidedSessionBootstrapMapper {
     private const val MAX_POSE_COUNT = 20
     private const val LANDMARK_PAYLOAD_PREFIX = "v1|"
     private val CAPTURE_TRIGGERS = setOf("MANUAL", "AUTOMATIC")
+    private val RECOVERY_CLEANUP_STAGES = setOf(
+        CaptureFileOperationStage.CLEANUP_REQUIRED,
+        CaptureFileOperationStage.CLEANUP_PENDING_SYNC,
+        CaptureFileOperationStage.CLEANED_DURABLE,
+    )
     private val VALIDATED_REFERENCE_ASSET_PATH =
         Regex("reference-assets/assets/[0-9a-f]{64}\\.asset")
     private val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*://")

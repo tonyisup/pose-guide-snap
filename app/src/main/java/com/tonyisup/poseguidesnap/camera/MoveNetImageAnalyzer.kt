@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.core.graphics.get
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
 import com.tonyisup.poseguidesnap.pose.movenet.MoveNetPoseDetector
 import com.tonyisup.poseguidesnap.pose.movenet.MoveNetResultMapper
@@ -23,6 +24,7 @@ class UprightBitmapFrame private constructor(
     internal val bitmap: Bitmap,
     val monotonicTimestampNanos: Long,
     val coordinateTransform: FrameCoordinateTransform,
+    val visualStatistics: FrameVisualStatistics,
 ) : AutoCloseable {
     private var closed = false
 
@@ -95,6 +97,7 @@ class UprightBitmapFrame private constructor(
                     bitmap = copy,
                     monotonicTimestampNanos = monotonicTimestampNanos,
                     coordinateTransform = transform,
+                    visualStatistics = copy.sampleVisualStatistics(),
                 ).also { cropCopy = null }
             } finally {
                 try {
@@ -107,15 +110,97 @@ class UprightBitmapFrame private constructor(
     }
 }
 
+/** Bounded non-image evidence derived from a fixed grid of transient RGB pixels. */
+data class FrameVisualStatistics(
+    val meanLuminance: Double,
+    val luminanceRange: Double,
+) {
+    init {
+        require(meanLuminance.isFinite() && meanLuminance in 0.0..1.0) {
+            "meanLuminance must be finite and in [0, 1]"
+        }
+        require(luminanceRange.isFinite() && luminanceRange in 0.0..1.0) {
+            "luminanceRange must be finite and in [0, 1]"
+        }
+    }
+
+    internal companion object {
+        fun fromArgbSamples(samples: IntArray): FrameVisualStatistics {
+            require(samples.isNotEmpty()) { "samples must not be empty" }
+            var sum = 0.0
+            var minimum = 1.0
+            var maximum = 0.0
+            samples.forEach { argb ->
+                val red = argb ushr 16 and 0xff
+                val green = argb ushr 8 and 0xff
+                val blue = argb and 0xff
+                val luminance = (
+                    RED_LUMINANCE_WEIGHT * red +
+                        GREEN_LUMINANCE_WEIGHT * green +
+                        BLUE_LUMINANCE_WEIGHT * blue
+                    ) / MAX_WEIGHTED_CHANNEL_VALUE
+                sum += luminance
+                minimum = minOf(minimum, luminance)
+                maximum = maxOf(maximum, luminance)
+            }
+            return FrameVisualStatistics(
+                meanLuminance = sum / samples.size,
+                luminanceRange = maximum - minimum,
+            )
+        }
+
+        private const val RED_LUMINANCE_WEIGHT = 2_126.0
+        private const val GREEN_LUMINANCE_WEIGHT = 7_152.0
+        private const val BLUE_LUMINANCE_WEIGHT = 722.0
+        private const val MAX_WEIGHTED_CHANNEL_VALUE = 10_000.0 * 255.0
+    }
+}
+
+private fun Bitmap.sampleVisualStatistics(): FrameVisualStatistics {
+    val sampleColumns = minOf(width, VISUAL_SAMPLE_GRID_SIZE)
+    val sampleRows = minOf(height, VISUAL_SAMPLE_GRID_SIZE)
+    val samples = IntArray(sampleColumns * sampleRows)
+    var sampleIndex = 0
+    repeat(sampleRows) { row ->
+        val y = sampleCoordinate(row, sampleRows, height)
+        repeat(sampleColumns) { column ->
+            val x = sampleCoordinate(column, sampleColumns, width)
+            samples[sampleIndex] = this[x, y]
+            sampleIndex += 1
+        }
+    }
+    return FrameVisualStatistics.fromArgbSamples(samples)
+}
+
+private fun sampleCoordinate(index: Int, sampleCount: Int, dimension: Int): Int =
+    if (sampleCount == 1) 0 else index * (dimension - 1) / (sampleCount - 1)
+
+private const val VISUAL_SAMPLE_GRID_SIZE = 16
+
 /** Immutable analysis output; no image, bitmap, or mutable model tensor is retained. */
 data class AnalyzedCameraFrame(
     val poseObservation: PoseObservation,
     val coordinateTransform: FrameCoordinateTransform,
     val sourceMonotonicTimestampNanos: Long,
+    val maximumValidPersonScore: Double?,
+    val maximumValidKeypointScore: Double?,
+    val visualStatistics: FrameVisualStatistics,
 ) {
     init {
         require(sourceMonotonicTimestampNanos >= 0) {
             "sourceMonotonicTimestampNanos must be nonnegative"
+        }
+        require(
+            maximumValidPersonScore == null ||
+                maximumValidPersonScore.isFinite() && maximumValidPersonScore in 0.0..1.0,
+        ) {
+            "maximumValidPersonScore must be null or finite and in [0, 1]"
+        }
+        require(
+            maximumValidKeypointScore == null ||
+                maximumValidKeypointScore.isFinite() && maximumValidKeypointScore in 0.0..1.0,
+        ) {
+            "maximumValidKeypointScore must be null or finite and in [0, 1]"
         }
     }
 }
@@ -150,6 +235,9 @@ class MoveNetFrameEngine private constructor(
                 poseObservation = observation,
                 coordinateTransform = frame.coordinateTransform,
                 sourceMonotonicTimestampNanos = frame.monotonicTimestampNanos,
+                maximumValidPersonScore = detection.rawOutput.maximumValidInstanceScore(),
+                maximumValidKeypointScore = detection.rawOutput.maximumValidKeypointScore(),
+                visualStatistics = frame.visualStatistics,
             )
         },
         onResult = onResult,

@@ -1,0 +1,31 @@
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest:
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=calibration framing recordedFrames=96 evaluatedFrames=96 unavailableFrames=0 minimumCenterSimilarity=0.7439079712557108 maximumCenterSimilarity=0.7476720860196369 minimumScaleSimilarity=0.7342607037359387 maximumScaleSimilarity=0.7383490700524209
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration report file=calibration-sequence-v3.json sha256=ec7b3df672e8040ed4b74115db4b20165ce0e2206748a4b8c7c3147ffb82311f frames=96 dataset=pixel6-joint-guided-a sequence=positive-joint-guided-landscape-a
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration completed cues GOOD=0 LEFT_ELBOW_UP=0 LEFT_ELBOW_DOWN=0 LEFT_ELBOW_LEFT=0 LEFT_ELBOW_RIGHT=0 LEFT_WRIST_UP=1 LEFT_WRIST_DOWN=0 LEFT_WRIST_LEFT=0 LEFT_WRIST_RIGHT=0 RIGHT_ELBOW_UP=0 RIGHT_ELBOW_DOWN=0 RIGHT_ELBOW_LEFT=0 RIGHT_ELBOW_RIGHT=0 RIGHT_WRIST_UP=0 RIGHT_WRIST_DOWN=0 RIGHT_WRIST_LEFT=0 RIGHT_WRIST_RIGHT=0 FULL_BODY=0 ONE_PERSON=0 RIGHT=0 LEFT=0 TILT_DOWN=0 TILT_UP=0 CLOSER=0 FARTHER=0 ALIGNED=0 RESTART=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=calibration arm confirmation scope=joint samples=172 capped=false gaps=0 stableMaxMs=200 postSpeechWindowMinMs=15272 elbowMin=0.1731 elbowMax=0.3207 wristMin=0.2017 wristMax=1.0075 jointMin=0.2017 jointMax=1.0075 SPEAKING=21 UNAVAILABLE=0 MISMATCH=146 SETTLING=5 READY=0 EXPIRED=0
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: class=com.tonyisup.poseguidesnap.calibration.MatchCalibrationCollectionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=collectOneAuthorizedSpokenGuidedSequence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 48.45
+
+OK (1 test)
+
+
+INSTRUMENTATION_CODE: -1

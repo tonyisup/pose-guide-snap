@@ -25,6 +25,10 @@ class PoseCanonicalizer(
         observation: PoseObservation,
         mirror: Boolean = false,
     ): PoseCanonicalizationResult {
+        // Image-normalized x/y have different units on a non-square image. Convert both to
+        // image-height units before measuring distances and angles; overlays keep original x/y.
+        val aspectRatio = observation.imageSize.aspectRatio
+        fun Landmark.metricVector() = Vector3(x * aspectRatio, y, z * aspectRatio)
         val retained = observation.landmarks
             .filter { it.confidence >= minimumConfidence }
             .associateByTo(linkedMapOf(), Landmark::type)
@@ -37,12 +41,12 @@ class PoseCanonicalizer(
         }
 
         val shoulderMidpoint = midpoint(
-            retained.getValue(PoseLandmark.LEFT_SHOULDER).vector,
-            retained.getValue(PoseLandmark.RIGHT_SHOULDER).vector,
+            retained.getValue(PoseLandmark.LEFT_SHOULDER).metricVector(),
+            retained.getValue(PoseLandmark.RIGHT_SHOULDER).metricVector(),
         )
         val hipMidpoint = midpoint(
-            retained.getValue(PoseLandmark.LEFT_HIP).vector,
-            retained.getValue(PoseLandmark.RIGHT_HIP).vector,
+            retained.getValue(PoseLandmark.LEFT_HIP).metricVector(),
+            retained.getValue(PoseLandmark.RIGHT_HIP).metricVector(),
         )
         val scale = (shoulderMidpoint - hipMidpoint).magnitude()
         if (!scale.isFinite() || scale <= minimumTorsoScale) {
@@ -54,7 +58,7 @@ class PoseCanonicalizer(
 
         val canonicalPoints = linkedMapOf<PoseLandmark, CanonicalPoint>()
         retained.values.forEach { landmark ->
-            val normalized = (landmark.vector - torsoCenter) / scale
+            val normalized = (landmark.metricVector() - torsoCenter) / scale
             if (normalized.isFinite()) {
                 val outputType = if (mirror) mirroredIdentity(landmark.type) else landmark.type
                 canonicalPoints[outputType] = CanonicalPoint(
@@ -167,9 +171,6 @@ sealed interface PoseCanonicalizationResult {
 
 private val Landmark.confidence: Double
     get() = minOf(visibility, presence)
-
-private val Landmark.vector: Vector3
-    get() = Vector3(x, y, z)
 
 private data class Vector3(val x: Double, val y: Double, val z: Double) {
     operator fun minus(other: Vector3): Vector3 = Vector3(x - other.x, y - other.y, z - other.z)

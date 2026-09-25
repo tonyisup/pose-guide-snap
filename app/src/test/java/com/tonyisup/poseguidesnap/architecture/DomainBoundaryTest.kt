@@ -498,6 +498,8 @@ class DomainBoundaryTest {
         assertEquals(setOf(MatchGateFailure.POOR_FRAMING), blocked.gateFailures)
         assertTrue(blocked.mirrorUsed)
         assertFalse(blocked.eligibleForLock)
+        assertEquals(setOf(MatchGateFailure.POOR_FRAMING), blocked.releaseGateFailures)
+        assertFalse(blocked.eligibleForLockRetention)
         assertThrows(UnsupportedOperationException::class.java) {
             (blocked.gateFailures as MutableSet).add(MatchGateFailure.NO_PERSON)
         }
@@ -505,6 +507,25 @@ class DomainBoundaryTest {
             matchResult(
                 gateFailures = setOf(MatchGateFailure.MULTIPLE_PEOPLE),
                 eligibleForLock = true,
+            )
+        }
+        assertRejects {
+            matchResult(
+                gateFailures = emptySet(),
+                releaseGateFailures = setOf(MatchGateFailure.POOR_FRAMING),
+            )
+        }
+        assertRejects {
+            matchResult(
+                gateFailures = setOf(MatchGateFailure.POOR_FRAMING),
+                releaseGateFailures = setOf(MatchGateFailure.POOR_FRAMING),
+                eligibleForLockRetention = true,
+            )
+        }
+        assertRejects {
+            matchResult(
+                eligibleForLock = true,
+                eligibleForLockRetention = false,
             )
         }
 
@@ -519,7 +540,9 @@ class DomainBoundaryTest {
 
         val eligible = matchResult(eligibleForLock = true)
         assertTrue(eligible.eligibleForLock)
+        assertTrue(eligible.eligibleForLockRetention)
         assertTrue(eligible.gateFailures.isEmpty())
+        assertTrue(eligible.releaseGateFailures.isEmpty())
     }
 
     @Test
@@ -625,6 +648,8 @@ class DomainBoundaryTest {
         gateFailures: Iterable<MatchGateFailure> = emptySet(),
         mirrorUsed: Boolean = false,
         eligibleForLock: Boolean = false,
+        releaseGateFailures: Iterable<MatchGateFailure> = gateFailures,
+        eligibleForLockRetention: Boolean = eligibleForLock,
     ): MatchResult = MatchResult(
         landmarkCoverage = landmarkCoverage,
         framingScore = framingScore,
@@ -634,6 +659,8 @@ class DomainBoundaryTest {
         gateFailures = gateFailures,
         mirrorUsed = mirrorUsed,
         eligibleForLock = eligibleForLock,
+        releaseGateFailures = releaseGateFailures,
+        eligibleForLockRetention = eligibleForLockRetention,
     )
 
     private fun shoot(

@@ -11,13 +11,26 @@ import org.junit.Test
 
 class CaptureConfirmationPolicyTest {
     @Test
+    fun confirmationApiCannotReceiveCallerPrivateOutputAuthority() {
+        val confirmationMethods = RoomShootRepository::class.java.declaredMethods
+            .filter { method -> method.name == "confirmAndAdvance" }
+
+        assertEquals(1, confirmationMethods.size)
+        assertEquals(3, confirmationMethods.single().parameterCount)
+        assertFalse(
+            confirmationMethods.single().genericParameterTypes
+                .joinToString(separator = "|")
+                .contains("DurablePrivateOutput"),
+        )
+    }
+
+    @Test
     fun validConfirmationRequestIsAccepted() {
         val command = command()
 
         assertNull(
             CaptureConfirmationPolicy.validate(
                 command = command,
-                privateOutputs = privateOutputs(command.token),
                 exportTargets = exportTargets(command.token),
                 confirmedAtEpochMillis = 0L,
             ),
@@ -32,38 +45,10 @@ class CaptureConfirmationPolicyTest {
             CaptureConfirmationRejectionReason.INVALID_TIMESTAMP,
             CaptureConfirmationPolicy.validate(
                 command,
-                privateOutputs(command.token),
                 exportTargets(command.token),
                 -1L,
             ),
         )
-    }
-
-    @Test
-    fun malformedPrivateOutputIdentityFamiliesFailClosed() {
-        val command = command()
-        val expected = identities(command.token)
-        val foreign = identities(CaptureToken("foreign-private-token"))
-        val malformedFamilies = listOf(
-            expected.take(2),
-            expected + expected.last(),
-            expected.reversed(),
-            listOf(expected[0], expected[1], expected[1]),
-            foreign,
-        )
-
-        malformedFamilies.forEach { identities ->
-            assertEquals(
-                "private identity family $identities must be rejected",
-                CaptureConfirmationRejectionReason.INVALID_PRIVATE_OUTPUTS,
-                CaptureConfirmationPolicy.validate(
-                    command,
-                    identities.mapIndexed { index, identity -> privateOutput(index, identity) },
-                    exportTargets(command.token),
-                    1L,
-                ),
-            )
-        }
     }
 
     @Test
@@ -85,7 +70,6 @@ class CaptureConfirmationPolicyTest {
                 CaptureConfirmationRejectionReason.INVALID_EXPORT_TARGETS,
                 CaptureConfirmationPolicy.validate(
                     command,
-                    privateOutputs(command.token),
                     identities.mapIndexed { index, identity -> exportTarget(index, identity) },
                     1L,
                 ),

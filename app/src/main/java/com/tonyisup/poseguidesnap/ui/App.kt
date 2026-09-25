@@ -1,16 +1,21 @@
 package com.tonyisup.poseguidesnap.ui
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.util.Rational
 import android.view.Surface
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ViewPort
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,8 +28,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -45,10 +51,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -57,19 +61,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
-import com.tonyisup.poseguidesnap.R
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tonyisup.poseguidesnap.camera.AnalyzedCameraFrame
 import com.tonyisup.poseguidesnap.camera.CameraControllerStatus
 import com.tonyisup.poseguidesnap.camera.CameraXController
 import com.tonyisup.poseguidesnap.camera.NormalizedPoint
 import com.tonyisup.poseguidesnap.camera.PixelSize
 import com.tonyisup.poseguidesnap.camera.PreviewFillCenterTransform
+import com.tonyisup.poseguidesnap.data.GuidedReferenceSnapshot
 import com.tonyisup.poseguidesnap.domain.model.Landmark
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.ui.navigation.AppNavHost
+import com.tonyisup.poseguidesnap.ui.camera.CameraXJournaledStillCaptureWriter
+import com.tonyisup.poseguidesnap.ui.camera.GuidedCameraControls
+import com.tonyisup.poseguidesnap.ui.camera.GuidedCameraPhase
+import com.tonyisup.poseguidesnap.ui.camera.GuidedCameraViewModel
 
 private val WarmNearBlack = Color(0xFF171411)
 private val WarmPanel = Color(0xEB211D19)
@@ -99,13 +109,32 @@ fun App(lifecycleOwner: LifecycleOwner) {
 }
 
 @Composable
-internal fun StartedSessionCameraDestination(lifecycleOwner: LifecycleOwner) {
-    CameraPermissionGate(lifecycleOwner = lifecycleOwner)
+internal fun StartedSessionCameraDestination(
+    lifecycleOwner: LifecycleOwner,
+    owner: GuidedCameraViewModel,
+    onStop: () -> Unit,
+) {
+    CameraPermissionGate(
+        lifecycleOwner = lifecycleOwner,
+        owner = owner,
+        onStop = onStop,
+    )
 }
 
 @Composable
-private fun CameraPermissionGate(lifecycleOwner: LifecycleOwner) {
+private fun CameraPermissionGate(
+    lifecycleOwner: LifecycleOwner,
+    owner: GuidedCameraViewModel,
+    onStop: () -> Unit,
+) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
+    val preferences = remember(context) { context.getSharedPreferences("camera-permission", Context.MODE_PRIVATE) }
+    var hasRequested by remember(preferences) { mutableStateOf(preferences.getBoolean("requested", false)) }
+    var shouldShowRationale by remember(activity) {
+        mutableStateOf(activity?.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) == true)
+    }
+    var settingsUnavailable by remember { mutableStateOf(false) }
     var hasCameraPermission by remember(context) {
         mutableStateOf(isCameraPermissionGranted(context))
     }
@@ -113,15 +142,19 @@ private fun CameraPermissionGate(lifecycleOwner: LifecycleOwner) {
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         hasCameraPermission = granted
+        hasRequested = true
+        preferences.edit { putBoolean("requested", true) }
+        shouldShowRationale = activity?.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) == true
     }
 
-    DisposableEffect(lifecycleOwner, context) {
+    DisposableEffect(lifecycleOwner, context, activity) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasCameraPermission = ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.CAMERA,
                 ) == PackageManager.PERMISSION_GRANTED
+                shouldShowRationale = activity?.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) == true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -130,23 +163,45 @@ private fun CameraPermissionGate(lifecycleOwner: LifecycleOwner) {
 
     if (!hasCameraPermission) {
         CameraPermissionScreen(
+            recovery = cameraPermissionRecovery(hasRequested, shouldShowRationale),
+            settingsUnavailable = settingsUnavailable,
             onAllowCamera = {
                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             },
+            onOpenSettings = {
+                try {
+                    context.startActivity(Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null),
+                    ))
+                } catch (_: ActivityNotFoundException) {
+                    settingsUnavailable = true
+                }
+            },
         )
     } else {
-        LiveCameraScreen(lifecycleOwner = lifecycleOwner)
+        LiveCameraScreen(
+            lifecycleOwner = lifecycleOwner,
+            owner = owner,
+            onStop = onStop,
+        )
     }
 }
 
 @Composable
-private fun CameraPermissionScreen(onAllowCamera: () -> Unit) {
+internal fun CameraPermissionScreen(
+    recovery: CameraPermissionRecovery,
+    settingsUnavailable: Boolean = false,
+    onAllowCamera: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(WarmNearBlack)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 28.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.Start,
@@ -162,18 +217,32 @@ private fun CameraPermissionScreen(onAllowCamera: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Live camera is needed to show the rear preview and on-device pose landmarks. No photo is taken in this manual slice.",
+            text = "Live camera is needed to show the rear preview and on-device pose landmarks. When you choose Capture, the app takes three private photos for this pose.",
             color = WarmMuted,
             fontSize = 17.sp,
             lineHeight = 24.sp,
         )
+        if (recovery != CameraPermissionRecovery.INITIAL) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = if (recovery == CameraPermissionRecovery.SETTINGS) {
+                    "Camera access is off. You can enable Camera in this app's permissions in Settings, then return here."
+                } else {
+                    "Camera access was denied. You can try again when you're ready, or go back to your shoots."
+                },
+                color = WarmMuted,
+            )
+        }
+        if (settingsUnavailable) {
+            Text("Open your phone's Settings, choose Apps, then Pose Guide Snap → Permissions → Camera.", color = WarmMuted)
+        }
         Spacer(Modifier.height(28.dp))
         Button(
-            onClick = onAllowCamera,
+            onClick = if (recovery == CameraPermissionRecovery.SETTINGS) onOpenSettings else onAllowCamera,
             modifier = Modifier
                 .heightIn(min = 48.dp)
                 .semantics {
-                    contentDescription = "Permission action: Allow camera"
+                    contentDescription = "Permission action: ${recovery.actionLabel}"
                 },
             colors = ButtonDefaults.buttonColors(
                 containerColor = WarmAccent,
@@ -181,19 +250,24 @@ private fun CameraPermissionScreen(onAllowCamera: () -> Unit) {
             ),
             shape = RoundedCornerShape(10.dp),
         ) {
-            Text("Allow camera", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(recovery.actionLabel, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
 @Composable
-private fun LiveCameraScreen(lifecycleOwner: LifecycleOwner) {
+private fun LiveCameraScreen(
+    lifecycleOwner: LifecycleOwner,
+    owner: GuidedCameraViewModel,
+    onStop: () -> Unit,
+) {
     val context = LocalContext.current
     val applicationContext = context.applicationContext
     var latestFrame by remember { mutableStateOf<AnalyzedCameraFrame?>(null) }
     var cameraStatus by remember { mutableStateOf(CameraControllerStatus.IDLE) }
     var hasRecoverableFailure by remember { mutableStateOf(false) }
     var retryRequest by remember { mutableIntStateOf(0) }
+    val guidedState by owner.state.collectAsStateWithLifecycle()
     val controller = remember(applicationContext) {
         CameraXController.create(
             context = applicationContext,
@@ -203,20 +277,45 @@ private fun LiveCameraScreen(lifecycleOwner: LifecycleOwner) {
             },
             onState = { state ->
                 cameraStatus = state.status
+                owner.setCameraReady(state.status == CameraControllerStatus.READY)
             },
             onFailure = {
                 hasRecoverableFailure = true
+                owner.setCameraReady(false)
             },
         )
     }
+    val mainExecutor = remember(applicationContext) {
+        ContextCompat.getMainExecutor(applicationContext)
+    }
+    val captureWriter = remember(controller, mainExecutor) {
+        CameraXJournaledStillCaptureWriter(
+            imageCapture = controller::requireImageCapture,
+            mainExecutor = mainExecutor,
+            callbackExecutor = mainExecutor,
+        )
+    }
 
-    DisposableEffect(controller) {
-        onDispose { controller.close() }
+    DisposableEffect(controller, owner, captureWriter) {
+        owner.attachWriter(captureWriter)
+        onDispose {
+            owner.detachWriter(captureWriter)
+            owner.setCameraReady(false)
+            controller.close()
+        }
+    }
+
+    LaunchedEffect(guidedState.phase) {
+        if (guidedState.phase == GuidedCameraPhase.STOPPED) onStop()
+    }
+    BackHandler(enabled = guidedState.phase != GuidedCameraPhase.STOPPED) {
+        owner.stop()
     }
 
     val diagnostics = LiveCameraDiagnostics.from(
         cameraStatus = cameraStatus,
         poseObservation = latestFrame?.poseObservation,
+        reference = guidedState.reference,
         hasRecoverableFailure = hasRecoverableFailure,
     )
 
@@ -229,11 +328,15 @@ private fun LiveCameraScreen(lifecycleOwner: LifecycleOwner) {
             controller = controller,
             lifecycleOwner = lifecycleOwner,
             frame = latestFrame,
+            reference = guidedState.reference,
             retryRequest = retryRequest,
         )
-        BundledReferenceCard(
+        GuidedCameraControls(
+            state = guidedState,
+            onCapture = owner::manualCapture,
+            onStop = owner::stop,
             modifier = Modifier
-                .align(Alignment.BottomEnd)
+                .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(16.dp),
         )
@@ -253,6 +356,7 @@ private fun CameraPreview(
     controller: CameraXController,
     lifecycleOwner: LifecycleOwner,
     frame: AnalyzedCameraFrame?,
+    reference: GuidedReferenceSnapshot?,
     retryRequest: Int,
 ) {
     val context = LocalContext.current
@@ -287,6 +391,7 @@ private fun CameraPreview(
 
         PoseOverlay(
             frame = frame,
+            reference = reference,
             modifier = Modifier.matchParentSize(),
         )
     }
@@ -330,37 +435,45 @@ private fun CameraPreview(
 @Composable
 private fun PoseOverlay(
     frame: AnalyzedCameraFrame?,
-    reference: BundledMeditationReference = BundledMeditationReference,
+    reference: GuidedReferenceSnapshot?,
     modifier: Modifier = Modifier,
 ) {
     val liveLandmarks = frame?.poseObservation?.landmarks.orEmpty()
+    val referenceLandmarks = reference?.landmarks.orEmpty()
     Canvas(
         modifier = modifier.semantics {
             contentDescription =
-                "Pose overlay: reference ${reference.observation.landmarks.size} landmarks; live ${liveLandmarks.size} landmarks"
+                "Pose overlay: reference ${referenceLandmarks.size} landmarks; live ${liveLandmarks.size} landmarks"
         },
     ) {
         if (size.width <= 0f || size.height <= 0f) return@Canvas
-        val transform = PreviewFillCenterTransform(
-            frame?.coordinateTransform?.uprightContentPixelSize ?: reference.pixelSize,
-            PixelSize(size.width.toDouble(), size.height.toDouble()),
-        )
-        drawSkeleton(
-            landmarks = reference.observation.landmarks,
-            transform = transform,
-            lineColor = WarmAccent.copy(alpha = 0.38f),
-            pointColor = WarmMuted.copy(alpha = 0.55f),
-            lineWidth = 5.dp.toPx(),
-            pointRadius = 6.dp.toPx(),
-        )
-        drawSkeleton(
-            landmarks = liveLandmarks,
-            transform = transform,
-            lineColor = WarmAccent,
-            pointColor = WarmOffWhite,
-            lineWidth = 4.dp.toPx(),
-            pointRadius = 5.dp.toPx(),
-        )
+        val previewSize = PixelSize(size.width.toDouble(), size.height.toDouble())
+        reference?.let {
+            drawSkeleton(
+                landmarks = referenceLandmarks,
+                transform = PreviewFillCenterTransform(
+                    PixelSize(it.imageSize.width.toDouble(), it.imageSize.height.toDouble()),
+                    previewSize,
+                ),
+                lineColor = WarmAccent.copy(alpha = 0.38f),
+                pointColor = WarmMuted.copy(alpha = 0.55f),
+                lineWidth = 5.dp.toPx(),
+                pointRadius = 6.dp.toPx(),
+            )
+        }
+        frame?.let {
+            drawSkeleton(
+                landmarks = liveLandmarks,
+                transform = PreviewFillCenterTransform(
+                    it.coordinateTransform.uprightContentPixelSize,
+                    previewSize,
+                ),
+                lineColor = WarmAccent,
+                pointColor = WarmOffWhite,
+                lineWidth = 4.dp.toPx(),
+                pointRadius = 5.dp.toPx(),
+            )
+        }
     }
 }
 
@@ -392,43 +505,6 @@ private fun DrawScope.drawSkeleton(
             color = pointColor,
             radius = pointRadius,
             center = Offset(point.x.toFloat(), point.y.toFloat()),
-        )
-    }
-}
-
-@Composable
-private fun BundledReferenceCard(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .widthIn(max = 180.dp)
-            .heightIn(max = 160.dp)
-            .background(WarmPanel, RoundedCornerShape(10.dp))
-            .padding(8.dp)
-            .semantics {
-                contentDescription =
-                    "Bundled reference image: ${BundledMeditationReference.label}"
-            },
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Image(
-            painter = painterResource(R.drawable.meditation_pose),
-            contentDescription = null,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = false),
-            contentScale = ContentScale.Fit,
-        )
-        Text(
-            text = BundledMeditationReference.label,
-            color = WarmOffWhite,
-            fontSize = 12.sp,
-            lineHeight = 14.sp,
-        )
-        Text(
-            text = "Google AI Edge · CC BY 4.0",
-            color = WarmMuted,
-            fontSize = 10.sp,
-            lineHeight = 12.sp,
         )
     }
 }

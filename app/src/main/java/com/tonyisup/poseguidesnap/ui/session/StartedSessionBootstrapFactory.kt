@@ -1,6 +1,10 @@
 package com.tonyisup.poseguidesnap.ui.session
 
 import android.content.Context
+import com.tonyisup.poseguidesnap.camera.CaptureAttemptStartupReconciler
+import com.tonyisup.poseguidesnap.camera.GuidedSessionStartupReconciler
+import com.tonyisup.poseguidesnap.camera.SystemCaptureOperationClock
+import com.tonyisup.poseguidesnap.camera.androidJournaledPrivateCaptureStore
 import com.tonyisup.poseguidesnap.data.RoomShootRepository
 import com.tonyisup.poseguidesnap.data.db.AppDatabase
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
@@ -9,7 +13,7 @@ internal class StartedSessionBootstrapInitializationSeams<Database, Repository, 
     val createDatabase: () -> Database,
     val closeDatabase: (Database) -> Unit,
     val createRepository: (Database) -> Repository,
-    val createWorkflow: (Repository, StartedSessionResourceAuthority) -> Workflow,
+    val createWorkflow: (Database, Repository, StartedSessionResourceAuthority) -> Workflow,
     val createOwner: (Workflow) -> Owner,
 ) where Workflow : OwnedStartedSessionBootstrapWorkflow
 
@@ -21,7 +25,7 @@ internal fun <Database, Repository, Workflow, Owner> initializeOwnedStartedSessi
     var ownershipTransferred = false
     try {
         val repository = seams.createRepository(database)
-        val workflow = seams.createWorkflow(repository, authority)
+        val workflow = seams.createWorkflow(database, repository, authority)
         val owner = seams.createOwner(workflow)
         ownershipTransferred = true
         return owner
@@ -46,10 +50,28 @@ internal fun createStartedSessionBootstrapViewModel(
         createDatabase = { AppDatabase.create(applicationContext) },
         closeDatabase = AppDatabase::close,
         createRepository = ::RoomShootRepository,
-        createWorkflow = { repository, authority ->
+        createWorkflow = { database, repository, authority ->
+            val clock = SystemCaptureOperationClock()
+            val attemptRecovery = CaptureAttemptStartupReconciler(
+                repository = repository,
+                database = database,
+                store = androidJournaledPrivateCaptureStore(
+                    applicationContext.noBackupFilesDir,
+                ),
+                clock = clock,
+            )
+            val startupRecovery = GuidedSessionStartupReconciler(
+                attemptRecovery = attemptRecovery,
+                repository = repository,
+                database = database,
+                clock = clock,
+            )
             RoomStartedSessionBootstrapWorkflow(
                 repository = RoomStartedSessionBootstrapRepositoryAdapter(repository),
                 authority = authority,
+                startupRecovery = StartedSessionStartupRecoveryPort(
+                    startupRecovery::reconcile,
+                ),
             )
         },
         createOwner = { workflow ->

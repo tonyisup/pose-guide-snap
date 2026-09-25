@@ -2,6 +2,7 @@ package com.tonyisup.poseguidesnap.ui.session
 
 import com.tonyisup.poseguidesnap.data.GuidedSessionBootstrapResult
 import com.tonyisup.poseguidesnap.data.RoomShootRepository
+import com.tonyisup.poseguidesnap.camera.GuidedSessionStartupRecoveryResult
 import com.tonyisup.poseguidesnap.ui.editor.StartedSessionHandle
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +74,8 @@ internal class RoomStartedSessionBootstrapWorkflow(
     private val repository: StartedSessionBootstrapRepositoryPort,
     private val authority: StartedSessionResourceAuthority,
     private val blockingDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val startupRecovery: StartedSessionStartupRecoveryPort =
+        StartedSessionStartupRecoveryPort { GuidedSessionStartupRecoveryResult.SETTLED },
 ) : OwnedStartedSessionBootstrapWorkflow {
     override suspend fun load(handle: StartedSessionHandle): StartedSessionBootstrapState =
         withContext(blockingDispatcher) {
@@ -80,6 +83,12 @@ internal class RoomStartedSessionBootstrapWorkflow(
                 ?: return@withContext StartedSessionBootstrapState.Unavailable(canRetry = true)
             try {
                 val result = try {
+                    if (
+                        startupRecovery.reconcile(handle.navigationKey) !=
+                        GuidedSessionStartupRecoveryResult.SETTLED
+                    ) {
+                        return@withContext StartedSessionBootstrapState.ReconciliationRequired
+                    }
                     repository.loadGuidedSessionBootstrap(handle.navigationKey)
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error

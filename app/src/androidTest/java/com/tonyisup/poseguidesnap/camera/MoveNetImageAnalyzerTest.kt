@@ -55,6 +55,8 @@ class MoveNetImageAnalyzerTest {
         assertEquals(17L, frame.monotonicTimestampNanos)
         assertEquals(0, frame.coordinateTransform.rotationDegrees)
         assertFalse(frame.coordinateTransform.mirroredHorizontally)
+        assertEquals(0.5, frame.visualStatistics.meanLuminance, 0.001)
+        assertEquals(0.9278, frame.visualStatistics.luminanceRange, 0.001)
 
         frame.close()
         assertTrue(frame.bitmap.isRecycled)
@@ -188,6 +190,10 @@ class MoveNetImageAnalyzerTest {
             assertTrue(analyzed.poseObservation.landmarks.isEmpty())
             assertEquals(101L, analyzed.poseObservation.monotonicTimestampNanos)
             assertEquals(101L, analyzed.sourceMonotonicTimestampNanos)
+            assertTrue(requireNotNull(analyzed.maximumValidPersonScore) in 0.0..1.0)
+            assertTrue(requireNotNull(analyzed.maximumValidKeypointScore) in 0.0..1.0)
+            assertEquals(0.0, analyzed.visualStatistics.meanLuminance, 0.0)
+            assertEquals(0.0, analyzed.visualStatistics.luminanceRange, 0.0)
             assertSame(frame.coordinateTransform, analyzed.coordinateTransform)
             assertTrue(frame.bitmap.isRecycled)
 

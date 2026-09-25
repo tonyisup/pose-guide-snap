@@ -1,6 +1,7 @@
 package com.tonyisup.poseguidesnap.ui
 
 import com.tonyisup.poseguidesnap.camera.CameraControllerStatus
+import com.tonyisup.poseguidesnap.data.GuidedReferenceSnapshot
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
 import com.tonyisup.poseguidesnap.domain.model.PoseObservation
 
@@ -29,10 +30,16 @@ data class LiveCameraDiagnostics(
     val captureLockLabel: String,
     val recoverableActionText: String?,
 ) {
+    override fun toString(): String =
+        "LiveCameraDiagnostics(cameraStatus=${cameraStatus.name}, " +
+            "personState=${personState.name}, detectedPersonCount=$detectedPersonCount, " +
+            "observedLandmarkCount=$observedLandmarkCount, redacted)"
+
     companion object {
         fun from(
             cameraStatus: CameraControllerStatus,
             poseObservation: PoseObservation?,
+            reference: GuidedReferenceSnapshot?,
             hasRecoverableFailure: Boolean,
         ): LiveCameraDiagnostics {
             val detectedPersonCount = poseObservation?.detectedPersonCount ?: 0
@@ -47,7 +54,10 @@ data class LiveCameraDiagnostics(
                 ?: 0
             val recoverableFailure =
                 hasRecoverableFailure || cameraStatus == CameraControllerStatus.FAILED
-            val referenceEvidence = BundledReferenceMatchEvidence.evaluate(poseObservation)
+            val referenceEvidence = BundledReferenceMatchEvidence.evaluate(
+                reference = reference,
+                live = poseObservation,
+            )
 
             return LiveCameraDiagnostics(
                 cameraStatus = cameraStatus,

@@ -2,6 +2,7 @@ package com.tonyisup.poseguidesnap.pose.movenet
 
 import com.tonyisup.poseguidesnap.architecture.KotlinDomainBoundaryAnalyzer
 import com.tonyisup.poseguidesnap.domain.model.PoseLandmark
+import com.tonyisup.poseguidesnap.domain.model.PoseImageSize
 import java.io.File
 import java.nio.file.Files
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
@@ -16,6 +17,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MoveNetResultMapperTest {
+    @Test
+    fun observationsCarryUprightSourceDimensionsForMatchingIncludingEmptyFrames() {
+        val geometry = MoveNetLetterboxGeometry(574, 1024)
+        val empty = mapper().map(MoveNetRawOutput(List(6) { FloatArray(56) }), geometry, 1L)
+        assertEquals(PoseImageSize(574, 1024), empty.imageSize)
+        val person = mapper().map(
+            MoveNetRawOutput(List(6) { if (it == 0) validSlot(instanceScore = 0.8f, x = 0.5f) else FloatArray(56) }),
+            geometry,
+            2L,
+        )
+        assertEquals(PoseImageSize(574, 1024), person.imageSize)
+        assertEquals(17, person.landmarks.size)
+        assertThrows(IllegalArgumentException::class.java) { PoseImageSize(0, 1) }
+        assertThrows(IllegalArgumentException::class.java) { PoseImageSize(1, -1) }
+    }
+
     @Test
     fun rawOutputRequiresExactlySixSlotsOfExactlyFiftySixValues() {
         assertRejects { MoveNetRawOutput(List(5) { FloatArray(56) }) }
@@ -46,6 +63,70 @@ class MoveNetResultMapperTest {
                     Collection::class.java.isAssignableFrom(method.returnType)
             },
         )
+    }
+
+    @Test
+    fun rawOutputReportsOnlyTheMaximumValidInstanceScore() {
+        val scores = listOf(
+            Float.NaN,
+            -0.1f,
+            0.1f,
+            0.249f,
+            0.9f,
+            1.1f,
+        )
+        val slots = scores.map { score ->
+            FloatArray(56).apply { this[MoveNetRawOutput.INSTANCE_SCORE_INDEX] = score }
+        }
+
+        assertEquals(
+            0.9f.toDouble(),
+            requireNotNull(MoveNetRawOutput(slots).maximumValidInstanceScore()),
+            0.0,
+        )
+
+        val unavailable = List(6) {
+            FloatArray(56).apply {
+                this[MoveNetRawOutput.INSTANCE_SCORE_INDEX] = Float.NaN
+            }
+        }
+        assertEquals(null, MoveNetRawOutput(unavailable).maximumValidInstanceScore())
+    }
+
+    @Test
+    fun rawOutputReportsOnlyTheMaximumValidKeypointScore() {
+        val slots = List(6) { FloatArray(56) }.toMutableList()
+        slots[0][MoveNetRawOutput.KEYPOINT_SCORE_OFFSET] = 0.2f
+        slots[2][MoveNetRawOutput.KEYPOINT_SCORE_OFFSET + 6] = 0.85f
+        slots[4][MoveNetRawOutput.KEYPOINT_SCORE_OFFSET + 12] = Float.NaN
+        slots[5][MoveNetRawOutput.KEYPOINT_SCORE_OFFSET + 15] = 1.1f
+        slots.forEach { slot ->
+            for (boundingBoxIndex in MoveNetRawOutput.KEYPOINT_VALUE_COUNT until MoveNetRawOutput.INSTANCE_SCORE_INDEX) {
+                slot[boundingBoxIndex] = 1.0f
+            }
+        }
+
+        assertEquals(
+            0.85f.toDouble(),
+            requireNotNull(MoveNetRawOutput(slots).maximumValidKeypointScore()),
+            0.0,
+        )
+
+        val unavailable = List(6) {
+            FloatArray(56).apply {
+                for (
+                    index in MoveNetRawOutput.KEYPOINT_SCORE_OFFSET until
+                        MoveNetRawOutput.KEYPOINT_VALUE_COUNT step
+                        MoveNetRawOutput.VALUES_PER_KEYPOINT
+                ) {
+                    this[index] = Float.NaN
+                }
+                for (boundingBoxIndex in MoveNetRawOutput.KEYPOINT_VALUE_COUNT until MoveNetRawOutput.INSTANCE_SCORE_INDEX) {
+                    this[boundingBoxIndex] = 1.0f
+                }
+            }
+        }
+        assertEquals(null, MoveNetRawOutput(unavailable).maximumValidKeypointScore())
     }
 
     @Test

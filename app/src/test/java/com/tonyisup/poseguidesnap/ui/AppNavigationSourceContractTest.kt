@@ -42,7 +42,9 @@ class AppNavigationSourceContractTest {
 
         listOf(
             "internal fun StartedSessionCameraDestination",
-            "CameraPermissionGate(lifecycleOwner = lifecycleOwner)",
+            "CameraPermissionGate(",
+            "owner = owner",
+            "onStop = onStop",
         ).forEach { marker -> assertTrue("Missing camera destination marker: $marker", marker in app) }
         listOf(
             "private const val LIST_ROUTE",
@@ -99,13 +101,18 @@ class AppNavigationSourceContractTest {
             "owner.state.collectAsStateWithLifecycle()",
             "StartedSessionScreen(",
             "onRetry = owner::retry",
-            "StartedSessionCameraDestination(lifecycleOwner)",
+            "cameraContent = { snapshot ->",
+            "createGuidedCameraViewModel(applicationContext, snapshot)",
+            "key = \"guided-camera-${'$'}{snapshot.sessionId}\"",
+            "StartedSessionCameraDestination(",
+            "owner = guidedOwner",
         ).forEach { marker ->
             assertTrue("started wrapper must preserve retained camera chain: $marker", marker in destinationWrapper)
         }
         listOf(
+            "state is StartedSessionBootstrapState.Ready",
             "startedSessionAuthorizesCamera(state)",
-            "cameraContent()",
+            "cameraContent(state.snapshot)",
         ).forEach { marker ->
             assertTrue("started screen must preserve Ready-only camera gate: $marker", marker in destinationScreen)
         }
@@ -114,7 +121,8 @@ class AppNavigationSourceContractTest {
             "production camera destination must appear exactly once as the injected screen callback",
             destinationBody.windowed("StartedSessionCameraDestination".length)
                 .count { it == "StartedSessionCameraDestination" } == 1 &&
-                "cameraContent = { StartedSessionCameraDestination(lifecycleOwner) }" in destinationWrapper,
+                "cameraContent = { snapshot ->" in destinationWrapper &&
+                "createGuidedCameraViewModel(applicationContext, snapshot)" in destinationWrapper,
         )
 
         val listDestination = bounded(navigation, "composable(LIST_ROUTE)", "composable(EDITOR_ROUTE)")

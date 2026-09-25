@@ -36,6 +36,55 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ReferenceImportStartupReconcilerAndroidTest {
     @Test
+    fun productionRuntimeRecoversAbandonedReservationAndUnblocksOtherShootsAfterReopen() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "reference_import_recovery_android_test_${UUID.randomUUID()}.db"
+        val root = context.noBackupFilesDir.resolve("reference-import-recovery-${UUID.randomUUID()}")
+        assertTrue(root.mkdirs())
+        var database: AppDatabase? = null
+        try {
+            database = AppDatabase.create(context, databaseName)
+            seedShoot(database.openHelper.writableDatabase, DIRTY_SHOOT)
+            seedShoot(database.openHelper.writableDatabase, SYNCED_SHOOT)
+            val interrupted = reservation(DIRTY_TOKEN, DIRTY_SHOOT, "pose-interrupted")
+            val next = reservation(SYNCED_TOKEN, SYNCED_SHOOT, "pose-next")
+            val repository = RoomReferenceImportRepository(database)
+            assertEquals(ReferenceImportReserveResult.Reserved, repository.reserveImport(interrupted, 10L))
+            assertTrue(repository.reserveImport(next, 20L) is ReferenceImportReserveResult.Rejected)
+            database.close()
+
+            database = AppDatabase.create(context, databaseName)
+            val runtime = createReferenceImportRuntime(
+                database = database,
+                noBackupFilesDirectory = root,
+                analyzer = ReferenceImportAnalyzerPort { error("Recovery must not analyze or read a provider") },
+                nowEpochMillis = { 100L },
+            )
+            runtime.recover()
+            assertEquals("REJECTED_CLEANED", intentState(database.openHelper.writableDatabase, DIRTY_TOKEN))
+            assertEquals(
+                ReferenceImportFileOperationStage.CLEANED_DURABLE,
+                RoomReferenceImportFileJournal(database).snapshot(interrupted.importToken)?.stage,
+            )
+            // A second observation is harmless and must not resurrect a terminal import.
+            runtime.recover()
+            assertEquals(
+                ReferenceImportReserveResult.Reserved,
+                RoomReferenceImportRepository(database).reserveImport(next, 200L),
+            )
+            assertFalse(fileFor(root, interrupted.importToken, "asset").exists())
+            assertFalse(fileFor(root, interrupted.importToken, "temp").exists())
+            assertFalse(fileFor(root, interrupted.importToken, "quarantine").exists())
+        } finally {
+            database?.close()
+            context.deleteRoomTestDatabase(databaseName)
+            root.deleteRecursively()
+            assertTrue(context.roomTestDatabaseResidue(databaseName).isEmpty())
+            assertFalse(root.exists())
+        }
+    }
+
+    @Test
     fun forceCloseReopenResumesDirtyCleanupAndSyncedQuarantineFromRoomLedger() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val databaseName = "reference_import_recovery_android_test_${UUID.randomUUID()}.db"

@@ -1,0 +1,9 @@
+# Task 16AB — supported hand cues
+
+Participant heard Good in Task 16AA but followed the directions into a hovering hand position, with no instruction to rest it on a knee. Implemented explicit same-side knee/palm-up/rest cues for wrists, supported-hand reminders during elbow directions, and an initial resting-pose instruction. Position/motion tolerances and 30–60-second readiness bounds are unchanged; contact/palm orientation are instructions, not detector-verified facts.
+
+Added a fixed terminal preparation result/reason summary for any remaining readiness blocker. One new cue regression failed before the change; full build/lint passes 768/768 tests with zero lint errors/nine warnings. No camera/audio/native collection ran during implementation.
+
+The subsequent Ready-authorized [Pixel run](../../docs/validation/2026-09-25-task16ab-supported-hands-pixel6.md) repeated RIGHT_HAND_ON_KNEE three times with no Good, then stopped before hold/measurement. Terminal flags were DEADLINE, ARM_POSITION, FRAMING and UNCONFIRMED_ADJUSTMENT; tracking and stillness passed at that moment. Right-wrist error stayed above 0.25 in eligible diagnostic samples. Participant reported the hand already resting on the knee at the first instruction and being unable to work out an adjustment from the repeated cue. Task 16AC follows up the target/instruction inconsistency and repeated-command loop. Do not infer contact from the detector or widen thresholds from these aggregates.
+
+Use the [validation record](../../docs/validation/2026-09-25-task16ab-supported-hand-coaching.md) for hashes and protocol. Dataset pixel6-supported-hands-a and sequence positive-supported-hands-landscape-a are consumed. Main/data and verified installed hash preserved; test/export absent and no own camera client after exact cleanup. No automatic rerun; fresh Ready and new output identifiers required. Solo phone-adjustment workflow remains deferred.

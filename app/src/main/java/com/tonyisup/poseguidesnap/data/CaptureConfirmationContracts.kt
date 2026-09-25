@@ -3,7 +3,7 @@ package com.tonyisup.poseguidesnap.data
 import com.tonyisup.poseguidesnap.domain.session.PrivateOutputIdentity
 import com.tonyisup.poseguidesnap.domain.session.ShootEffect
 
-data class DurablePrivateOutput(
+internal data class DurablePrivateOutput(
     val identity: PrivateOutputIdentity,
     val relativePath: String,
     val byteCount: Long,
@@ -72,7 +72,6 @@ sealed interface CaptureConfirmationResult {
 
 enum class CaptureConfirmationRejectionReason {
     INVALID_TIMESTAMP,
-    INVALID_PRIVATE_OUTPUTS,
     INVALID_EXPORT_TARGETS,
     UNKNOWN_ATTEMPT,
     TOKEN_POSE_CONFLICT,
@@ -81,14 +80,12 @@ enum class CaptureConfirmationRejectionReason {
     STALE_POSE,
     TRANSACTION_CAS_FAILED,
     TRANSACTION_CARDINALITY_FAILURE,
-    JOURNAL_CONFIRMATION_NOT_AVAILABLE,
     JOURNAL_AUTHORITY_INVALID,
 }
 
 internal object CaptureConfirmationPolicy {
     fun validate(
         command: ShootEffect.ConfirmAndAdvanceCapture,
-        privateOutputs: List<DurablePrivateOutput>,
         exportTargets: List<CaptureExportTarget>,
         confirmedAtEpochMillis: Long,
     ): CaptureConfirmationRejectionReason? {
@@ -99,13 +96,8 @@ internal object CaptureConfirmationPolicy {
         val expectedIdentities = (0..2).map { ordinal ->
             PrivateOutputIdentity(command.token, ordinal)
         }
-        val privateIdentities = privateOutputs.map(DurablePrivateOutput::identity)
-        if (privateIdentities != expectedIdentities) {
-            return CaptureConfirmationRejectionReason.INVALID_PRIVATE_OUTPUTS
-        }
-
         val exportIdentities = exportTargets.map(CaptureExportTarget::identity)
-        if (exportIdentities != expectedIdentities || exportIdentities != privateIdentities) {
+        if (exportIdentities != expectedIdentities) {
             return CaptureConfirmationRejectionReason.INVALID_EXPORT_TARGETS
         }
         return null

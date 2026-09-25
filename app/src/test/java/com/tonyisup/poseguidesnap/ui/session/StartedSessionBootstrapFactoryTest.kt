@@ -66,7 +66,7 @@ class StartedSessionBootstrapFactoryTest {
             createRepository = {
                 if (failureStage == FailureStage.REPOSITORY) error("primary-$failureStage")
             },
-            createWorkflow = { _, authority ->
+            createWorkflow = { _, _, authority ->
                 if (failureStage == FailureStage.WORKFLOW) error("primary-$failureStage")
                 FakeWorkflow(authority)
             },

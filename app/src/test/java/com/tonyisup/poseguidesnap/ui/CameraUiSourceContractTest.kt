@@ -23,7 +23,7 @@ class CameraUiSourceContractTest {
 
     @Test
     fun permissionGateUsesRememberedRequestPermissionAndResumeRecheck() {
-        val permissionGate = appSlice("private fun CameraPermissionGate(", "private fun CameraPermissionScreen(")
+        val permissionGate = appSlice("private fun CameraPermissionGate(", "internal fun CameraPermissionScreen(")
 
         assertOrdered(
             permissionGate,
@@ -43,22 +43,22 @@ class CameraUiSourceContractTest {
 
     @Test
     fun deniedPermissionExplainsCameraNeedAndOffersReadableRetryAction() {
-        val screen = appSlice("private fun CameraPermissionScreen(", "private fun LiveCameraScreen(")
+        val screen = appSlice("internal fun CameraPermissionScreen(", "private fun LiveCameraScreen(")
 
         assertOrdered(
             screen,
             "Pose Guide Snap",
             "Live camera is needed",
             "Button(",
-            "onClick = onAllowCamera",
+            "onClick = if (recovery == CameraPermissionRecovery.SETTINGS) onOpenSettings else onAllowCamera",
             "heightIn(min = 48.dp)",
-            "Allow camera",
+            "recovery.actionLabel",
         )
-        assertTrue("Permission action needs semantics", "contentDescription = \"Permission action: Allow camera\"" in screen)
+        assertTrue("Permission action needs semantics", "Permission action:" in screen)
     }
 
     @Test
-    fun grantedScreenRemembersOneApplicationContextControllerAndClosesItOnDispose() {
+    fun grantedScreenOwnsOneControllerAndAttachesOneRouteCaptureWriter() {
         val screen = appSlice("private fun LiveCameraScreen(", "private fun CameraPreview(")
 
         assertOrdered(
@@ -69,10 +69,16 @@ class CameraUiSourceContractTest {
             "context = applicationContext",
             "onFrame = { analyzedFrame ->",
             "hasRecoverableFailure = false",
-            "DisposableEffect(controller)",
-            "onDispose { controller.close() }",
+            "val captureWriter = remember(controller, mainExecutor)",
+            "CameraXJournaledStillCaptureWriter(",
+            "DisposableEffect(controller, owner, captureWriter)",
+            "owner.attachWriter(captureWriter)",
+            "onDispose {",
+            "owner.detachWriter(captureWriter)",
+            "controller.close()",
         )
         assertEquals(1, screen.countOccurrences("CameraXController.create("))
+        assertEquals(1, screen.countOccurrences("CameraXJournaledStillCaptureWriter("))
         assertFalse("Controller must not retain an Activity context", "context = context" in screen)
     }
 
@@ -119,6 +125,7 @@ class CameraUiSourceContractTest {
             "onFailure = {",
             "hasRecoverableFailure = true",
             "LiveCameraDiagnostics.from(",
+            "reference = guidedState.reference",
             "hasRecoverableFailure = hasRecoverableFailure",
         )
         assertOrdered(
@@ -139,28 +146,29 @@ class CameraUiSourceContractTest {
     }
 
     @Test
-    fun overlayDrawsReferenceThenLiveThroughOneSharedFillCenterTransform() {
+    fun overlayDrawsPersistedReferenceThenLiveThroughTheirOwnFillCenterTransforms() {
         val overlay = appSlice("private fun PoseOverlay(", "private fun StatusPanel(")
 
         assertOrdered(
             overlay,
+            "val referenceLandmarks = reference?.landmarks.orEmpty()",
             "Canvas(",
-            "PreviewFillCenterTransform(",
-            "frame?.coordinateTransform?.uprightContentPixelSize ?: reference.pixelSize",
-            "PixelSize(size.width.toDouble(), size.height.toDouble())",
-            "drawSkeleton(",
-            "landmarks = reference.observation.landmarks",
+            "val previewSize = PixelSize(size.width.toDouble(), size.height.toDouble())",
+            "reference?.let",
+            "landmarks = referenceLandmarks",
+            "PixelSize(it.imageSize.width.toDouble(), it.imageSize.height.toDouble())",
             "lineColor = WarmAccent.copy(alpha = 0.38f)",
             "pointRadius = 6.dp.toPx()",
+            "frame?.let",
             "landmarks = liveLandmarks",
+            "it.coordinateTransform.uprightContentPixelSize",
             "pointColor = WarmOffWhite",
             "pointRadius = 5.dp.toPx()",
         )
-        assertEquals(1, overlay.countOccurrences("PreviewFillCenterTransform("))
-        assertEquals(2, overlay.countOccurrences("transform = transform"))
+        assertEquals(2, overlay.countOccurrences("PreviewFillCenterTransform("))
         assertTrue(
-            "Semantics must distinguish the fixed ghost from live landmarks",
-            "Pose overlay: reference ${'$'}{reference.observation.landmarks.size} landmarks; live ${'$'}{liveLandmarks.size} landmarks" in overlay,
+            "Semantics must distinguish the selected ghost from live landmarks",
+            "Pose overlay: reference ${'$'}{referenceLandmarks.size} landmarks; live ${'$'}{liveLandmarks.size} landmarks" in overlay,
         )
         assertFalse("Rear preview overlay must not be mirrored", "scale(-1" in overlay)
         assertFalse("Rear preview overlay must not request mirrored coordinates", "mirroredHorizontally = true" in overlay)
@@ -170,53 +178,60 @@ class CameraUiSourceContractTest {
     }
 
     @Test
-    fun compactBundledReferenceCardRendersTheActualDrawableWithFitScaling() {
+    fun manualControlsRenderTheCurrentPoseWithAccessibleCaptureAndStopActions() {
         val screen = appSlice("private fun LiveCameraScreen(", "private fun CameraPreview(")
-        val card = appSlice("private fun BundledReferenceCard(", "private fun StatusPanel(")
+        val controls = guidedCameraScreenSource()
 
-        assertTrue("Reference card must occupy a bottom corner", ".align(Alignment.BottomEnd)" in screen)
+        assertTrue("Guided controls must occupy the bottom of the preview", ".align(Alignment.BottomCenter)" in screen)
         assertOrdered(
-            card,
-            "Image(",
-            "painter = painterResource(R.drawable.meditation_pose)",
-            "contentDescription = null",
-            "contentScale = ContentScale.Fit",
-            "Google AI Edge · CC BY 4.0",
+            screen,
+            "GuidedCameraControls(",
+            "state = guidedState",
+            "onCapture = owner::manualCapture",
+            "onStop = owner::stop",
         )
-        assertTrue("Reference card must remain bounded", ".heightIn(max = 160.dp)" in card)
-        assertTrue(
-            "Reference card needs explicit semantics",
-            "Bundled reference image: ${'$'}{BundledMeditationReference.label}" in card,
-        )
+        listOf(
+            "Guided capture controls, pose",
+            "Current reference:",
+            "Capture status:",
+            "Capture three photos",
+            "Stop guided session",
+            "heightIn(min = 52.dp)",
+        ).forEach { marker -> assertTrue("Missing guided control marker: $marker", marker in controls) }
     }
 
     @Test
     fun semanticsIdentifyAllRequiredLiveUiEvidence() {
-        val app = appSource()
+        val ui = appSource() + guidedCameraScreenSource()
 
         listOf(
             "Title: Pose Guide Snap",
             "contentDescription = diagnostics.cameraLabel",
             "contentDescription = diagnostics.personLabel",
             "contentDescription = diagnostics.landmarkLabel",
-            "Permission action: Allow camera",
+            "Permission action:",
             "Pose overlay:",
-            "Bundled reference image:",
+            "Guided capture controls, pose",
+            "Current reference:",
+            "Capture status:",
+            "Capture three photos",
+            "Stop guided session",
             "contentDescription = diagnostics.coverageLabel",
             "contentDescription = diagnostics.angularLabel",
             "contentDescription = diagnostics.positionalLabel",
             "contentDescription = diagnostics.overallLabel",
             "contentDescription = diagnostics.captureLockLabel",
-        ).forEach { marker -> assertTrue("Missing semantics marker: $marker", marker in app) }
+        ).forEach { marker -> assertTrue("Missing semantics marker: $marker", marker in ui) }
     }
 
     @Test
-    fun uiContainsNoManualCapturePersistenceLoggingOrNetworkSurface() {
+    fun composableUiKeepsPersistenceLoggingAndNetworkAuthorityOutOfComposition() {
         val production = listOf(
             mainSource(),
             appSource(),
             diagnosticsSource(),
             bundledReferenceSource(),
+            guidedCameraScreenSource(),
         ).joinToString("\n")
 
         assertFalse("Stale inactive-reference copy must be removed", "Reference match: not active" in production)
@@ -225,7 +240,6 @@ class CameraUiSourceContractTest {
         assertFalse("Bundled reference must not run a detector", "MoveNetPoseDetector" in bundledReferenceSource())
         listOf(
             "takePicture(",
-            "ImageCapture",
             "CaptureSession",
             "ShootReducer",
             "java.io.",
@@ -274,6 +288,8 @@ class CameraUiSourceContractTest {
     private fun diagnosticsSource(): String = projectRoot().resolve(DIAGNOSTICS_SOURCE_PATH).readText()
     private fun bundledReferenceSource(): String =
         projectRoot().resolve(BUNDLED_REFERENCE_SOURCE_PATH).readText()
+    private fun guidedCameraScreenSource(): String =
+        projectRoot().resolve(GUIDED_CAMERA_SCREEN_SOURCE_PATH).readText()
 
     private fun projectRoot(): File {
         val userDir = requireNotNull(System.getProperty("user.dir"))
@@ -291,5 +307,7 @@ class CameraUiSourceContractTest {
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/LiveCameraDiagnostics.kt"
         const val BUNDLED_REFERENCE_SOURCE_PATH =
             "app/src/main/java/com/tonyisup/poseguidesnap/ui/BundledMeditationReference.kt"
+        const val GUIDED_CAMERA_SCREEN_SOURCE_PATH =
+            "app/src/main/java/com/tonyisup/poseguidesnap/ui/camera/GuidedCameraScreen.kt"
     }
 }

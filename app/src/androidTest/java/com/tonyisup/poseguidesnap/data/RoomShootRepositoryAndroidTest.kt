@@ -1265,6 +1265,7 @@ class RoomShootRepositoryAndroidTest {
             CaptureAttemptStartResult.Started,
             firstRepository.markCaptureAttemptStarted(SESSION_ID, capture.token, 20L),
         )
+        finalizeBootstrapCaptureJournal(firstDatabase, capture.token)
         val confirmation = ShootEffect.ConfirmAndAdvanceCapture(
             token = capture.token,
             poseId = capture.poseId,
@@ -1275,7 +1276,6 @@ class RoomShootRepositoryAndroidTest {
             CaptureConfirmationResult.Applied,
             firstRepository.confirmAndAdvance(
                 command = confirmation,
-                privateOutputs = bootstrapPrivateOutputs(capture.token),
                 exportTargets = bootstrapExportTargets(capture.token),
                 confirmedAtEpochMillis = 30L,
             ),
@@ -1890,16 +1890,67 @@ class RoomShootRepositoryAndroidTest {
         }
     }
 
-    private fun bootstrapPrivateOutputs(token: CaptureToken): List<DurablePrivateOutput> =
-        (0..2).map { ordinal ->
-            DurablePrivateOutput(
-                identity = PrivateOutputIdentity(token, ordinal),
-                relativePath = "private/${token.value}/$ordinal.jpg",
-                byteCount = 100L + ordinal,
-                capturedAtEpochMillis = 21L + ordinal,
-                integrityMetadata = null,
+    private fun finalizeBootstrapCaptureJournal(
+        appDatabase: AppDatabase,
+        token: CaptureToken,
+    ) {
+        val journal = RoomCaptureFileJournal(appDatabase)
+        (0..2).forEach { ordinal ->
+            val identity = PrivateOutputIdentity(token, ordinal)
+            val initial = requireNotNull(journal.snapshot(identity))
+            val writing = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    initial.stage,
+                    initial.updatedAtEpochMillis,
+                    CaptureFileOperationStage.WRITING_TEMP,
+                    null,
+                    null,
+                    null,
+                    21L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val synced = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    writing.stage,
+                    writing.updatedAtEpochMillis,
+                    CaptureFileOperationStage.TEMP_SYNCED,
+                    100L + ordinal,
+                    (ordinal + 1).toString(16).padStart(64, '0'),
+                    21L,
+                    22L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            val renamePending = (journal.advance(
+                CaptureFileAdvanceRequest(
+                    identity,
+                    synced.stage,
+                    synced.updatedAtEpochMillis,
+                    CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+                    synced.byteCount,
+                    synced.sha256,
+                    synced.capturedAtEpochMillis,
+                    23L,
+                ),
+            ) as CaptureFileJournalResult.Applied).snapshot
+            assertEquals(
+                CaptureFileOperationStage.FINAL_DURABLE,
+                (journal.advance(
+                    CaptureFileAdvanceRequest(
+                        identity,
+                        renamePending.stage,
+                        renamePending.updatedAtEpochMillis,
+                        CaptureFileOperationStage.FINAL_DURABLE,
+                        renamePending.byteCount,
+                        renamePending.sha256,
+                        renamePending.capturedAtEpochMillis,
+                        24L,
+                    ),
+                ) as CaptureFileJournalResult.Applied).snapshot.stage,
             )
         }
+    }
 
     private fun bootstrapExportTargets(token: CaptureToken): List<CaptureExportTarget> =
         (0..2).map { ordinal ->

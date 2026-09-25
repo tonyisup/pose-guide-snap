@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12 and 14A.1–14A.3 are implemented and boundedly verified. The Task 14B.1A Room V4 journal foundation landed at `57b33c9`, but final specification review returned `REQUEST_CHANGES`; an uncommitted local fail-closed repair is under review.** New attempts receive exactly three initial journal rows atomically, but logical `Started` state grants no camera, filesystem, or per-file effect authority. Unfinished confirmation is intentionally unavailable until Task 14B.1C. Gate 2 remains incomplete: there is no user-facing capture coordinator, capture-filesystem/Room integration, MediaStore I/O, audio, physical deletion flow, or end-to-end guided workflow. Repository landing is not a product-shipped claim.
+> **Project status: Tasks 1–12, 14A.1–14A.3, Task 14B.1B–14B.3, Task 15A manual guided capture, and Tasks 16A–16H are implemented. The last host gate passed 728/728 JVM and 14/14 Python tests with zero lint errors.** Task 16I's unchanged-build bright-light repeat detected one person with all 17 landmarks qualified in 96/96 frames. Task 16J's same-setup empty-scene control reported no person in 97/97 frames. Task 16K evaluated 97/97 intended reference-match frames but never locked; framing is the largest blocker. Task 16L identified center alignment as the lower component, with size also below the existing requirement. Further calibration remains needed; no threshold changed. Automatic capture, MediaStore execution, audio, physical deletion, calibrated matching, and the complete guided workflow remain open. Repository landing is not a product-shipped claim. Task 16M collected 97 fully evaluated frames with the flash cue: centering improved, but scale and pose criteria still prevented a lock. Exact cleanup passed; live alignment feedback is next. See the [Task 16M record](validation/2026-09-17-task16m-recentered-reference-match-pixel6.md).
 
 ## Product goal
 
@@ -59,9 +59,9 @@ Production thresholds cannot be accepted because they merely look reasonable. Th
 
 ## Current user-visible and shipping boundary
 
-Task 14B.1A changes local persistence and fail-closed recovery authority only. It adds no shutter, automatic capture, camera-to-file path, file publication, MediaStore behavior, guidance, or new user control. No production per-file effect-admission or journal-transition API exists, so a logically started attempt cannot authorize a physical effect. Confirmation of unfinished `REGISTERED` or `CAPTURING` attempts is blocked before caller-provided output/export metadata can be consumed; journal-owned first application remains deferred to Task 14B.1C.
+Task 15A composes the existing reducer, Room, file, recovery, and CameraX boundaries for a manual three-photo request. It loads the selected validated reference, renders its landmarks and uncalibrated evidence, advances only after journal-derived Room confirmation, and defers Stop while accepted work settles. A failed attempt becomes retryable only after exact cleanup is durable; uncertain bytes, unsafe paths, or quarantine remain blocking across restart.
 
-The candidate therefore is not a shippable guided-capture slice and does not advance Gate 2. It was verified against generated data and bounded Room/instrumentation scenarios without enabling camera/filesystem capture, accessing personal media, adding network or analytics behavior, or proving an end-to-end user journey.
+The candidate remains pre-release and does not complete Gate 2. The corrected Task 15A artifact passed one bounded real rear-camera three-photo capture through Room confirmation and one advance on the Pixel 6. Full production-UI traversal, interruption recovery on hardware, automatic matching calibration, export, audio, and the complete user journey still require separate evidence.
 
 ## Approved product policies
 
@@ -110,6 +110,12 @@ Deferral is not a promise that a feature will ship. Each item needs a new produc
 - [ADR 0004: Room V3 shoot-preparation authority](adr/0004-room-v3-shoot-preparation-authority.md)
 - [ADR 0005: Atomic Room V3 guided-session bootstrap](adr/0005-atomic-room-v3-guided-session-bootstrap.md)
 - [ADR 0006: Room V4 capture-file journal foundation](adr/0006-room-v4-capture-file-journal-foundation.md)
+- [ADR 0007: Room-owned capture-file admission](adr/0007-room-owned-capture-file-admission.md)
+- [ADR 0008: Journal-derived atomic confirmation](adr/0008-journal-derived-atomic-confirmation.md)
+- [ADR 0009: Room attempt settlement and restart reconstruction](adr/0009-room-attempt-settlement-and-restart-reconstruction.md)
+- [ADR 0010: Journaled private capture files and restart recovery](adr/0010-journaled-private-capture-files-and-restart-recovery.md)
+- [ADR 0011: Journaled manual guided capture](adr/0011-journaled-manual-guided-capture.md)
 - [Task 14A.1 validation](validation/2026-09-02-task14a1-atomic-room-v3-bootstrap-pixel6.md)
 - [Task 14A.2 validation](validation/2026-09-02-task14a2-active-session-discovery-pixel6.md)
 - [Task 14A.3 validation](validation/2026-09-02-task14a3-stale-safe-resume-pixel6.md)
+- [Task 14B.2 validation](validation/2026-09-04-task14b2-attempt-settlement-pixel6.md)

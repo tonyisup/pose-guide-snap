@@ -1,0 +1,7 @@
+# Task 16Y — directional joint coaching
+
+The user authorized this change. Implementation and host validation are complete: 752/752 tests, build/lint pass. Two regressions failed before the implementation and pass afterward. The main build is installed and its SHA-256 matches the validation record; the test APK is unchanged. The Ready-authorized first physical run passed collection with 96 fully evaluated frames, LEFT_WRIST_UP=1 and GOOD=0. Maximum in-tolerance stability was 200 ms; successful physical confirmation and participant feedback remain pending. See the [Pixel result](../../docs/validation/2026-09-25-task16y-directional-arm-pixel6.md). Sequence positive-joint-guided-landscape-a is consumed. Cleanup verified main app/data preserved, test/export absent and no Pose Guide Snap camera client.
+
+Use the [directional coaching record](../../docs/validation/2026-09-25-task16y-directional-arm-guidance.md) for hashes, unique labels and cleanup. Verify unlocked phone before launch. Speech now requests a specific elbow/hand and direction; Good confirms that joint, not the entire arm/pose. Do not loosen the radius or resume deferred solo camera-adjustment timing/process work. No retained signed geometry or photos.
+
+Participant feedback and the next implementation are recorded in [Task 16Z](2026-09-25-task16z-coaching-followup.md), which supersedes this task's APKs and 30000-ms spoken protocol.

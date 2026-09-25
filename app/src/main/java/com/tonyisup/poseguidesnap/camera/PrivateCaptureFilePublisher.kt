@@ -369,7 +369,7 @@ internal interface PrivateCaptureFileOps {
 private data class NioPrivateCaptureReservationIdentity(val fileKey: Any) :
     PrivateCaptureReservationIdentity
 
-private object NioPrivateCaptureFileOps : PrivateCaptureFileOps {
+internal object NioPrivateCaptureFileOps : PrivateCaptureFileOps {
     override fun reserve(finalPath: Path): PrivateCaptureReservationIdentity = withExclusiveMutation {
         var created = false
         try {

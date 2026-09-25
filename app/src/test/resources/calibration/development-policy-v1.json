@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "policyId": "development-defaults-v1",
+  "status": "uncalibrated",
+  "framing": {
+    "minimumLandmarkConfidence": 0.25,
+    "minimumSharedLandmarkCount": 13,
+    "centerErrorAtZeroSimilarity": 0.5
+  },
+  "match": {
+    "minimumLandmarkCoverage": 0.75,
+    "minimumFramingScore": 0.8,
+    "minimumAngularSimilarity": 0.85,
+    "minimumPositionalSimilarity": 0.8,
+    "minimumOverallMatch": 0.825,
+    "releaseMinimumLandmarkCoverage": 0.7,
+    "releaseMinimumFramingScore": 0.75,
+    "releaseMinimumAngularSimilarity": 0.8,
+    "releaseMinimumPositionalSimilarity": 0.75,
+    "releaseMinimumOverallMatch": 0.775
+  },
+  "timing": {
+    "acquireDwellMs": 500,
+    "releaseHysteresisMs": 200
+  }
+}

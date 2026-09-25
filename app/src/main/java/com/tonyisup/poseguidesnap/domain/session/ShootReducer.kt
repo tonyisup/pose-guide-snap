@@ -111,7 +111,12 @@ class ShootReducer(
             } else {
                 mode
             }
-            is ShootMode.Locked -> lockedFrameMode(mode, match.eligibleForLock, match.gateFailures, now)
+            is ShootMode.Locked -> lockedFrameMode(
+                mode,
+                match.eligibleForLockRetention,
+                match.releaseGateFailures,
+                now,
+            )
             else -> mode
         }
         return transition(state, now, mode = nextMode)

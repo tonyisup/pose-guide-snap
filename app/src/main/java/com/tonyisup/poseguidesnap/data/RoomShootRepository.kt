@@ -38,6 +38,7 @@ enum class AttemptRegistrationRejectionReason {
     FUTURE_ATTEMPT_NUMBER,
     TOKEN_CONFLICT,
     ATTEMPT_NUMBER_CONFLICT,
+    UNRESOLVED_ATTEMPT,
     COUNTER_CAS_FAILED,
     JOURNAL_AUTHORITY_INVALID,
 }
@@ -89,9 +90,19 @@ internal object CaptureAttemptStartPolicy {
     }
 }
 
-class RoomShootRepository(
+class RoomShootRepository internal constructor(
     database: AppDatabase,
+    private val beforeBeginDeletionTransaction: () -> Unit,
+    private val afterConfirmationJournalDelete: () -> Unit,
+    private val afterSettlementJournalDelete: () -> Unit = {},
 ) {
+    constructor(database: AppDatabase) : this(database, {}, {}, {})
+
+    internal constructor(
+        database: AppDatabase,
+        beforeBeginDeletionTransaction: () -> Unit,
+    ) : this(database, beforeBeginDeletionTransaction, {}, {})
+
     private val database = database
     private val captureAttemptDao = database.captureAttemptDao()
     private val captureConfirmationDao = database.captureConfirmationDao()
@@ -113,6 +124,19 @@ class RoomShootRepository(
             GuidedSessionBootstrapResult.Rejected(
                 GuidedSessionBootstrapRejectionReason.AUTHORITY_UNAVAILABLE,
             )
+        }
+    }
+
+    internal fun loadCurrentGuidedReference(sessionId: String): GuidedCurrentReferenceResult {
+        if (!ReferenceImportPolicy.validateOwnershipIdentity(sessionId)) {
+            return GuidedCurrentReferenceResult.AuthorityInvalid
+        }
+        return try {
+            GuidedReferenceMapper.map(
+                guidedSessionDao.loadGuidedSessionBootstrap(sessionId),
+            )
+        } catch (_: RuntimeException) {
+            GuidedCurrentReferenceResult.AuthorityInvalid
         }
     }
 
@@ -191,6 +215,146 @@ class RoomShootRepository(
         )
     }
 
+    fun settleCaptureAttemptFailure(
+        sessionId: String,
+        token: CaptureToken,
+        settledAtEpochMillis: Long,
+    ): CaptureAttemptSettlementResult {
+        CaptureAttemptSettlementPolicy.validate(sessionId, settledAtEpochMillis)
+            ?.let { reason -> return CaptureAttemptSettlementResult.Rejected(reason) }
+        if (!isWellFormedUtf16(token.value)) {
+            return CaptureAttemptSettlementResult.Rejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        return try {
+            database.runInTransaction(
+                Callable {
+                    settleCaptureAttemptFailureInTransaction(
+                        sessionId = sessionId,
+                        token = token,
+                        settledAtEpochMillis = settledAtEpochMillis,
+                    )
+                },
+            )
+        } catch (_: AttemptSettlementCasFailedException) {
+            CaptureAttemptSettlementResult.Rejected(
+                CaptureAttemptSettlementRejectionReason.CAS_FAILED,
+            )
+        } catch (_: IllegalArgumentException) {
+            CaptureAttemptSettlementResult.Rejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+    }
+
+    internal fun findJournalFreeCaptureAttemptForRecovery(
+        sessionId: String,
+    ): JournalFreeCaptureAttemptCandidateResult {
+        if (sessionId.isBlank()) return JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+        return database.runInTransaction(
+            Callable {
+                when (captureAttemptDao.classifyJournalFreeRecoveryCandidate(sessionId)) {
+                    JOURNAL_FREE_RECOVERY_ABSENT -> JournalFreeCaptureAttemptCandidateResult.None
+                    JOURNAL_FREE_RECOVERY_VALID -> {
+                        val session = captureAttemptDao.findSession(sessionId)
+                            ?: return@Callable JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+                        if (session.nextAttemptNumber <= 0L) {
+                            return@Callable JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+                        }
+                        val attempt = captureAttemptDao.findAttemptBySessionAndNumber(
+                            sessionId,
+                            session.nextAttemptNumber - 1L,
+                        ) ?: return@Callable JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+                        val shoot = captureAttemptDao.findShoot(session.shootId)
+                            ?: return@Callable JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+                        JournalFreeCaptureAttemptCandidateResult.Candidate(
+                            sessionId = sessionId,
+                            token = CaptureToken(attempt.commandToken),
+                            authorityUpdatedAtEpochMillis = maxOf(
+                                attempt.updatedAtEpochMillis,
+                                session.updatedAtEpochMillis,
+                                shoot.updatedAtEpochMillis,
+                            ),
+                        )
+                    }
+                    else -> JournalFreeCaptureAttemptCandidateResult.AuthorityInvalid
+                }
+            },
+        )
+    }
+
+    internal fun settleJournalFreeCaptureAttemptAfterAbsentFiles(
+        sessionId: String,
+        token: CaptureToken,
+        settledAtEpochMillis: Long,
+    ): CaptureAttemptSettlementResult {
+        CaptureAttemptSettlementPolicy.validate(sessionId, settledAtEpochMillis)
+            ?.let { reason -> return CaptureAttemptSettlementResult.Rejected(reason) }
+        if (!isWellFormedUtf16(token.value)) {
+            return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        return try {
+            database.runInTransaction(
+                Callable {
+                    if (
+                        captureAttemptDao.classifyJournalFreeRecoveryCandidate(sessionId) !=
+                        JOURNAL_FREE_RECOVERY_VALID
+                    ) {
+                        return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                        )
+                    }
+                    val session = captureAttemptDao.findSession(sessionId)
+                        ?: return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+                        )
+                    if (session.nextAttemptNumber <= 0L) {
+                        return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+                        )
+                    }
+                    val attempt = captureAttemptDao.findAttemptBySessionAndNumber(
+                        sessionId,
+                        session.nextAttemptNumber - 1L,
+                    ) ?: return@Callable settlementRejected(
+                        CaptureAttemptSettlementRejectionReason.UNKNOWN_ATTEMPT,
+                    )
+                    val shoot = captureAttemptDao.findShoot(session.shootId)
+                        ?: return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+                        )
+                    if (attempt.commandToken != token.value) {
+                        return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.TOKEN_SESSION_CONFLICT,
+                        )
+                    }
+                    if (
+                        settledAtEpochMillis < attempt.updatedAtEpochMillis ||
+                        settledAtEpochMillis < session.updatedAtEpochMillis ||
+                        settledAtEpochMillis < shoot.updatedAtEpochMillis
+                    ) {
+                        return@Callable settlementRejected(
+                            CaptureAttemptSettlementRejectionReason.INVALID_TIMESTAMP,
+                        )
+                    }
+                    applyFailedCleanedSettlement(
+                        attempt = attempt,
+                        session = session,
+                        journalRowCount = 0,
+                        settledAtEpochMillis = settledAtEpochMillis,
+                    )
+                },
+            )
+        } catch (_: AttemptSettlementCasFailedException) {
+            settlementRejected(CaptureAttemptSettlementRejectionReason.CAS_FAILED)
+        } catch (_: IllegalArgumentException) {
+            settlementRejected(CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID)
+        }
+    }
+
     fun beginShootDeletion(
         shootId: String,
         requestedAtEpochMillis: Long,
@@ -198,6 +362,7 @@ class RoomShootRepository(
         BeginShootDeletionPolicy.validate(shootId, requestedAtEpochMillis)
             ?.let { reason -> return BeginShootDeletionResult.Rejected(reason) }
 
+        beforeBeginDeletionTransaction()
         return try {
             database.runInTransaction(
                 Callable {
@@ -212,6 +377,10 @@ class RoomShootRepository(
                 BeginShootDeletionRejectionReason.TRANSACTION_CAS_FAILED,
             )
         } catch (_: DeletionAuthorityInconsistentException) {
+            BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+        } catch (_: IllegalArgumentException) {
             BeginShootDeletionResult.Rejected(
                 BeginShootDeletionRejectionReason.AUTHORITY_INCONSISTENT,
             )
@@ -249,7 +418,6 @@ class RoomShootRepository(
 
     fun confirmAndAdvance(
         command: ShootEffect.ConfirmAndAdvanceCapture,
-        privateOutputs: List<DurablePrivateOutput>,
         exportTargets: List<CaptureExportTarget>,
         confirmedAtEpochMillis: Long,
     ): CaptureConfirmationResult {
@@ -264,7 +432,6 @@ class RoomShootRepository(
                 Callable {
                     confirmAndAdvanceInTransaction(
                         command = command,
-                        privateOutputs = privateOutputs,
                         exportTargets = exportTargets,
                         confirmedAtEpochMillis = confirmedAtEpochMillis,
                     )
@@ -538,6 +705,12 @@ class RoomShootRepository(
         }
 
         validateRawPreV4DeletionAuthority(shootId, clockRows)
+        if (
+            deletionExportDao.hasValidCaptureAttemptStorageForShoot(shootId) != 1 ||
+            deletionExportDao.hasValidCaptureFileOperationStorageForShoot(shootId) != 1
+        ) {
+            throw DeletionAuthorityInconsistentException()
+        }
         val sessionsBefore = deletionExportDao.findSessionsForShoot(shootId)
         val attemptsBefore = deletionExportDao.findAttemptsForShoot(shootId)
         val privateOutputsBefore = deletionExportDao.findPrivateOutputsForShoot(shootId)
@@ -546,6 +719,10 @@ class RoomShootRepository(
         val outboxesBefore = deletionExportDao.findOutboxesForShoot(shootId)
         val outputsBefore = deletionExportDao.findOutputsForShoot(shootId)
         val journalOperationsBefore = deletionExportDao.findJournalOperationsForShoot(shootId)
+        validateDeletionJournalGraph(
+            attempts = attemptsBefore,
+            journalOperations = journalOperationsBefore,
+        )
         val maximumAuthorityClock = validatePreV4DeletionClocks(
             shoot = shoot,
             sessions = sessionsBefore,
@@ -567,6 +744,11 @@ class RoomShootRepository(
         if (requestedAtEpochMillis < maximumAuthorityClock) {
             return BeginShootDeletionResult.Rejected(
                 BeginShootDeletionRejectionReason.INVALID_TIMESTAMP,
+            )
+        }
+        if (hasAdmittedCaptureFileEffect(journalOperationsBefore.map { operation -> operation.stage })) {
+            return BeginShootDeletionResult.Rejected(
+                BeginShootDeletionRejectionReason.CAPTURE_FILE_EFFECT_IN_FLIGHT,
             )
         }
 
@@ -645,6 +827,8 @@ class RoomShootRepository(
             deletionExportDao.findExportReceiptsForShoot(shootId) != receiptsBefore ||
             deletionExportDao.findOutboxesForShoot(shootId) != expectedOutboxes ||
             deletionExportDao.findOutputsForShoot(shootId) != expectedOutputs ||
+            deletionExportDao.hasValidCaptureAttemptStorageForShoot(shootId) != 1 ||
+            deletionExportDao.hasValidCaptureFileOperationStorageForShoot(shootId) != 1 ||
             deletionExportDao.findJournalOperationsForShoot(shootId) != journalOperationsBefore
         ) {
             throw DeletionAuthorityInconsistentException()
@@ -1031,6 +1215,114 @@ class RoomShootRepository(
         return maximumClock
     }
 
+    private fun validateDeletionJournalGraph(
+        attempts: List<CaptureAttemptEntity>,
+        journalOperations: List<CaptureFileOperationEntity>,
+    ) {
+        val attemptsByToken = attempts.associateBy(CaptureAttemptEntity::commandToken)
+        if (attemptsByToken.size != attempts.size) {
+            throw DeletionAuthorityInconsistentException()
+        }
+        val operationsByToken = journalOperations.groupBy(CaptureFileOperationEntity::commandToken)
+        if (
+            !attemptsByToken.keys.containsAll(operationsByToken.keys) ||
+            attempts.any { attempt ->
+                when (attempt.lifecycleState) {
+                    REGISTERED ->
+                        attempt.reconciliationRequired ||
+                        attempt.updatedAtEpochMillis != attempt.createdAtEpochMillis ||
+                            attempt.confirmedAtEpochMillis != null
+                    CAPTURING ->
+                        attempt.reconciliationRequired ||
+                            attempt.confirmedAtEpochMillis != null
+                    FAILED_CLEANED ->
+                        attempt.reconciliationRequired ||
+                            attempt.confirmedAtEpochMillis != null
+                    RECONCILIATION_REQUIRED ->
+                        !attempt.reconciliationRequired ||
+                            attempt.confirmedAtEpochMillis != null
+                    CONFIRMED ->
+                        attempt.reconciliationRequired ||
+                            attempt.confirmedAtEpochMillis == null ||
+                            attempt.confirmedAtEpochMillis != attempt.updatedAtEpochMillis
+                    else -> true
+                }
+            }
+        ) {
+            throw DeletionAuthorityInconsistentException()
+        }
+        if (
+            attempts.any { attempt ->
+                attempt.lifecycleState in
+                    setOf(REGISTERED, CAPTURING, RECONCILIATION_REQUIRED) &&
+                    attempt.commandToken !in operationsByToken
+            }
+        ) {
+            throw DeletionAuthorityInconsistentException()
+        }
+
+        operationsByToken.forEach { (commandToken, operations) ->
+            val attempt = attemptsByToken.getValue(commandToken)
+            if (
+                operations.size != BURST_OUTPUT_COUNT ||
+                operations.mapTo(linkedSetOf(), CaptureFileOperationEntity::burstOrdinal) !=
+                    (0 until BURST_OUTPUT_COUNT).toSet() ||
+                operations.any { operation ->
+                    val identity = PrivateOutputIdentity(
+                        CaptureToken(operation.commandToken),
+                        operation.burstOrdinal,
+                    )
+                    val paths = CaptureFileOperationPaths.forIdentity(identity)
+                    operation.createdAtEpochMillis != attempt.createdAtEpochMillis ||
+                        operation.relativeFinalPath != paths.relativeFinalPath ||
+                        operation.relativeTempPath != paths.relativeTempPath ||
+                        operation.relativeQuarantinePath != paths.relativeQuarantinePath
+                }
+            ) {
+                throw DeletionAuthorityInconsistentException()
+            }
+            when (attempt.lifecycleState) {
+                REGISTERED -> if (
+                    operations.any { operation ->
+                        operation.stage != CaptureFileOperationStage.EXPECTING_RESERVATION ||
+                            operation.lastFailureCode != null ||
+                            operation.updatedAtEpochMillis != operation.createdAtEpochMillis
+                    }
+                ) {
+                    throw DeletionAuthorityInconsistentException()
+                }
+                CAPTURING -> if (
+                    operations.any { operation ->
+                        val hasProgressed =
+                            operation.stage != CaptureFileOperationStage.EXPECTING_RESERVATION ||
+                                operation.lastFailureCode != null ||
+                                operation.updatedAtEpochMillis > operation.createdAtEpochMillis
+                        hasProgressed &&
+                            (
+                                operation.updatedAtEpochMillis <= operation.createdAtEpochMillis ||
+                                    operation.updatedAtEpochMillis < attempt.updatedAtEpochMillis ||
+                                    operation.capturedAtEpochMillis?.let { capturedAt ->
+                                        capturedAt < attempt.updatedAtEpochMillis
+                                    } == true
+                                )
+                    }
+                ) {
+                    throw DeletionAuthorityInconsistentException()
+                }
+                RECONCILIATION_REQUIRED -> if (
+                    operations.any { operation ->
+                        operation.updatedAtEpochMillis > attempt.updatedAtEpochMillis
+                    }
+                ) {
+                    throw DeletionAuthorityInconsistentException()
+                }
+                FAILED_CLEANED,
+                CONFIRMED -> throw DeletionAuthorityInconsistentException()
+                else -> throw DeletionAuthorityInconsistentException()
+            }
+        }
+    }
+
     private fun validateDeletionAuthority(
         previousGeneration: Long,
         attempts: List<CaptureAttemptEntity>,
@@ -1084,7 +1376,6 @@ class RoomShootRepository(
 
     private fun confirmAndAdvanceInTransaction(
         command: ShootEffect.ConfirmAndAdvanceCapture,
-        privateOutputs: List<DurablePrivateOutput>,
         exportTargets: List<CaptureExportTarget>,
         confirmedAtEpochMillis: Long,
     ): CaptureConfirmationResult {
@@ -1098,23 +1389,6 @@ class RoomShootRepository(
                 CaptureConfirmationRejectionReason.TOKEN_POSE_CONFLICT,
             )
         }
-        // Task 3D fail-closed gate — direct caller confirmation of unfinished
-        // (REGISTERED/CAPTURING) attempts is unavailable; live capture confirmation flows only
-        // through the journal-owned path (Task 14B.1C). This gate fires before receipt/journal
-        // reads, session/shoot loads, deletion classification, and caller-list validation.
-        if (attempt.lifecycleState == REGISTERED || attempt.lifecycleState == CAPTURING) {
-            return CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_CONFIRMATION_NOT_AVAILABLE,
-            )
-        }
-        val privateOutputsSnapshot = privateOutputs.toList()
-        val exportTargetsSnapshot = exportTargets.toList()
-        CaptureConfirmationPolicy.validate(
-            command = command,
-            privateOutputs = privateOutputsSnapshot,
-            exportTargets = exportTargetsSnapshot,
-            confirmedAtEpochMillis = confirmedAtEpochMillis,
-        )?.let { reason -> return CaptureConfirmationResult.Rejected(reason) }
         captureConfirmationDao.findReceipt(commandToken)?.let { receipt ->
             // Receipt-backed replay is immutable evidence only when no residual V4 journal
             // authority exists; any residual row fail-closes.
@@ -1123,45 +1397,49 @@ class RoomShootRepository(
                     CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
                 )
             }
+            val exportTargetsSnapshot = exportTargets.toList()
+            CaptureConfirmationPolicy.validate(
+                command = command,
+                exportTargets = exportTargetsSnapshot,
+                confirmedAtEpochMillis = confirmedAtEpochMillis,
+            )?.let { reason -> return CaptureConfirmationResult.Rejected(reason) }
             return classifyDuplicateConfirmation(
                 command = command,
-                privateOutputs = privateOutputsSnapshot,
                 exportTargets = exportTargetsSnapshot,
                 receipt = receipt,
             )
         }
-        // A CONFIRMED attempt reaching direct confirmation has no receipt (the receipt branch
-        // above owns replay). Residual V4 journal authority for that token fail-closes before
-        // any state classification; a receiptless confirmed attempt with zero journal rows is
-        // an inconsistent graph and remains WRONG_ATTEMPT_STATE below.
-        if (captureFileOperationDao.countOperationsForToken(commandToken) > 0L) {
-            return CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
-            )
-        }
-        // Post-Task-3D this gate is intentionally always taken (confirmedAtEpochMillis != null
-        // is guaranteed by the unavailable-gate above): the direct first-application path below
-        // is fail-closed dead code retained as the reference implementation for the
-        // journal-owned confirmation rework in Task 14B.1C.
         if (
             attempt.lifecycleState != CAPTURING ||
             attempt.reconciliationRequired ||
             attempt.confirmedAtEpochMillis != null
         ) {
+            if (
+                attempt.lifecycleState == CONFIRMED &&
+                captureFileOperationDao.countOperationsForToken(commandToken) > 0L
+            ) {
+                return CaptureConfirmationResult.Rejected(
+                    CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                )
+            }
             return CaptureConfirmationResult.Rejected(
                 CaptureConfirmationRejectionReason.WRONG_ATTEMPT_STATE,
             )
         }
-        check(attempt.capturedDeletionGeneration >= 0L) {
-            "capture confirmation deletion generation is invalid"
+        if (attempt.capturedDeletionGeneration < 0L) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
         }
 
         val session = captureConfirmationDao.findSession(attempt.sessionId)
             ?: throw IllegalStateException("capture confirmation has no owning session")
         val shoot = captureConfirmationDao.findShoot(session.shootId)
             ?: throw IllegalStateException("capture confirmation has no owning shoot")
-        check(shoot.deletionGeneration >= 0L) {
-            "capture confirmation shoot deletion generation is invalid"
+        if (shoot.deletionGeneration < 0L) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
         }
         if (
             shoot.lifecycleState != ACTIVE ||
@@ -1193,6 +1471,89 @@ class RoomShootRepository(
             )
         }
 
+        val exportTargetsSnapshot = exportTargets.toList()
+        CaptureConfirmationPolicy.validate(
+            command = command,
+            exportTargets = exportTargetsSnapshot,
+            confirmedAtEpochMillis = confirmedAtEpochMillis,
+        )?.let { reason -> return CaptureConfirmationResult.Rejected(reason) }
+
+        if (confirmedAtEpochMillis < attempt.updatedAtEpochMillis ||
+            confirmedAtEpochMillis < session.updatedAtEpochMillis
+        ) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.INVALID_TIMESTAMP,
+            )
+        }
+
+        if (!hasValidFinalConfirmationJournal(command.token, attempt)) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        val finalJournalRows = captureFileOperationDao.findOperations(commandToken)
+        if (finalJournalRows.size != BURST_OUTPUT_COUNT) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        if (!hasValidConfirmationClocks(finalJournalRows, confirmedAtEpochMillis)) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.INVALID_TIMESTAMP,
+            )
+        }
+        val ownerClassifications = finalJournalRows.map { operation ->
+            captureFileOperationDao.classifyMutationOwner(
+                commandToken = commandToken,
+                operationCreatedAtEpochMillis = operation.createdAtEpochMillis,
+                operationStage = operation.stage.name,
+                operationFailureCode = operation.lastFailureCode?.name,
+                operationUpdatedAtEpochMillis = operation.updatedAtEpochMillis,
+                operationCapturedAtEpochMillis = operation.capturedAtEpochMillis,
+                targetUpdatedAtEpochMillis = confirmedAtEpochMillis,
+                targetCapturedAtEpochMillis = operation.capturedAtEpochMillis,
+                allowReconciliationAttempt = false,
+            )
+        }
+        if (ownerClassifications.any { classification -> classification == 0 }) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        if (ownerClassifications.any { classification -> classification == 1 }) {
+            return CaptureConfirmationResult.BlockedByDeletion
+        }
+        if (ownerClassifications.any { classification -> classification == 3 || classification == 4 }) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.INVALID_TIMESTAMP,
+            )
+        }
+        if (ownerClassifications.any { classification -> classification != 5 }) {
+            return CaptureConfirmationResult.Rejected(
+                CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        val journalDerivedPrivateOutputs = finalJournalRows.mapIndexed { ordinal, operation ->
+            if (
+                operation.commandToken != commandToken ||
+                operation.burstOrdinal != ordinal ||
+                operation.stage != CaptureFileOperationStage.FINAL_DURABLE ||
+                operation.reconciliationRequired ||
+                operation.lastFailureCode != null
+            ) {
+                return CaptureConfirmationResult.Rejected(
+                    CaptureConfirmationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                )
+            }
+            DurablePrivateOutput(
+                identity = PrivateOutputIdentity(command.token, ordinal),
+                relativePath = operation.relativeFinalPath,
+                byteCount = requireNotNull(operation.byteCount),
+                capturedAtEpochMillis = requireNotNull(operation.capturedAtEpochMillis),
+                integrityMetadata = requireNotNull(operation.sha256),
+            )
+        }
+
         val remainingPoseCount = captureConfirmationDao.countPosesAfter(
             shootId = session.shootId,
             poseIndex = session.currentPoseIndex,
@@ -1210,7 +1571,7 @@ class RoomShootRepository(
         }
 
         captureConfirmationDao.insertPrivateOutputs(
-            privateOutputsSnapshot.map { output ->
+            journalDerivedPrivateOutputs.map { output ->
                 PrivateCaptureOutputEntity(
                     commandToken = commandToken,
                     burstOrdinal = output.identity.ordinal,
@@ -1290,19 +1651,69 @@ class RoomShootRepository(
         )
 
         if (
+            !hasValidFinalConfirmationJournal(command.token, attempt) ||
+            captureFileOperationDao.findOperations(commandToken).let { postWriteJournalRows ->
+                postWriteJournalRows.size != BURST_OUTPUT_COUNT ||
+                    !hasValidConfirmationClocks(
+                        postWriteJournalRows,
+                        confirmedAtEpochMillis,
+                    )
+            }
+        ) {
+            throw ConfirmationCardinalityException()
+        }
+        if (captureFileOperationDao.deleteOperationsForConfirmedAttempt(commandToken) !=
+            BURST_OUTPUT_COUNT
+        ) {
+            throw ConfirmationCardinalityException()
+        }
+        afterConfirmationJournalDelete()
+
+        if (
             captureConfirmationDao.countPrivateOutputs(commandToken) != BURST_OUTPUT_COUNT ||
             captureConfirmationDao.countReceipts(commandToken) != 1 ||
             captureConfirmationDao.countOutboxes(commandToken) != 1 ||
-            captureConfirmationDao.countExportOutputs(commandToken) != BURST_OUTPUT_COUNT
+            captureConfirmationDao.countExportOutputs(commandToken) != BURST_OUTPUT_COUNT ||
+            captureFileOperationDao.countOperationsForToken(commandToken) != 0L
         ) {
             throw ConfirmationCardinalityException()
         }
         return CaptureConfirmationResult.Applied
     }
 
+    private fun hasValidFinalConfirmationJournal(
+        token: CaptureToken,
+        attempt: CaptureAttemptEntity,
+    ): Boolean {
+        val expectedPaths = captureStartExpectedPaths(token)
+        return captureFileOperationDao.hasValidFinalDurableConfirmationJournal(
+            commandToken = token.value,
+            attemptCreatedAtEpochMillis = attempt.createdAtEpochMillis,
+            attemptUpdatedAtEpochMillis = attempt.updatedAtEpochMillis,
+            relativeFinalPath0 = expectedPaths[0].relativeFinalPath,
+            relativeTempPath0 = expectedPaths[0].relativeTempPath,
+            relativeQuarantinePath0 = expectedPaths[0].relativeQuarantinePath,
+            relativeFinalPath1 = expectedPaths[1].relativeFinalPath,
+            relativeTempPath1 = expectedPaths[1].relativeTempPath,
+            relativeQuarantinePath1 = expectedPaths[1].relativeQuarantinePath,
+            relativeFinalPath2 = expectedPaths[2].relativeFinalPath,
+            relativeTempPath2 = expectedPaths[2].relativeTempPath,
+            relativeQuarantinePath2 = expectedPaths[2].relativeQuarantinePath,
+        ) == 1
+    }
+
+    private fun hasValidConfirmationClocks(
+        operations: List<CaptureFileOperationEntity>,
+        confirmedAtEpochMillis: Long,
+    ): Boolean = operations.none { operation ->
+        confirmedAtEpochMillis < operation.updatedAtEpochMillis ||
+            operation.capturedAtEpochMillis?.let { capturedAtEpochMillis ->
+                confirmedAtEpochMillis < capturedAtEpochMillis
+            } == true
+    }
+
     private fun classifyDuplicateConfirmation(
         command: ShootEffect.ConfirmAndAdvanceCapture,
-        privateOutputs: List<DurablePrivateOutput>,
         exportTargets: List<CaptureExportTarget>,
         receipt: DuplicateReceiptAuthority,
     ): CaptureConfirmationResult {
@@ -1390,7 +1801,7 @@ class RoomShootRepository(
         check(persistedPrivateOutputs.size == BURST_OUTPUT_COUNT) {
             "capture confirmation private output cardinality is inconsistent"
         }
-        val persistedPrivateDtos = persistedPrivateOutputs.mapIndexed { ordinal, output ->
+        persistedPrivateOutputs.forEachIndexed { ordinal, output ->
             check(
                 output.commandToken == attempt.commandToken &&
                     output.burstOrdinal == ordinal &&
@@ -1404,11 +1815,6 @@ class RoomShootRepository(
                 byteCount = output.byteCount,
                 capturedAtEpochMillis = output.capturedAtEpochMillis,
                 integrityMetadata = output.integrityMetadata,
-            )
-        }
-        if (persistedPrivateDtos != privateOutputs) {
-            return CaptureConfirmationResult.Rejected(
-                CaptureConfirmationRejectionReason.INVALID_PRIVATE_OUTPUTS,
             )
         }
 
@@ -1543,6 +1949,322 @@ class RoomShootRepository(
             poseId == command.poseId &&
             poseIndex == command.poseIndex
 
+    private fun settleCaptureAttemptFailureInTransaction(
+        sessionId: String,
+        token: CaptureToken,
+        settledAtEpochMillis: Long,
+    ): CaptureAttemptSettlementResult {
+        val candidate = captureAttemptDao.classifyCaptureStartCandidate(
+            sessionId = sessionId,
+            commandToken = token.value,
+        )
+        when (candidate) {
+            CAPTURE_START_CANDIDATE_ABSENT -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.UNKNOWN_ATTEMPT,
+            )
+            CAPTURE_START_CANDIDATE_AUTHORITY_INVALID -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+            CAPTURE_START_CANDIDATE_SESSION_CONFLICT -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.TOKEN_SESSION_CONFLICT,
+            )
+            CAPTURE_START_CANDIDATE_CONFIRMED -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.WRONG_STATE,
+            )
+            CAPTURE_START_CANDIDATE_REGISTERED,
+            CAPTURE_START_CANDIDATE_CAPTURING,
+            CAPTURE_START_CANDIDATE_FAILED_CLEANED,
+            CAPTURE_START_CANDIDATE_RECONCILIATION_REQUIRED,
+            -> Unit
+            else -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+        }
+
+        val attempt = captureAttemptDao.findAttemptByToken(token.value)
+            ?: return settlementRejected(CaptureAttemptSettlementRejectionReason.UNKNOWN_ATTEMPT)
+        val session = captureAttemptDao.findSession(sessionId)
+            ?: return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+        val shoot = captureAttemptDao.findShoot(session.shootId)
+            ?: return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+
+        if (
+            captureConfirmationDao.countPrivateOutputs(token.value) != 0 ||
+            captureConfirmationDao.countReceipts(token.value) != 0 ||
+            captureConfirmationDao.countOutboxes(token.value) != 0 ||
+            captureConfirmationDao.countExportOutputs(token.value) != 0
+        ) {
+            return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.IMMUTABLE_AUTHORITY_PRESENT,
+            )
+        }
+
+        val bootstrap = GuidedSessionBootstrapMapper.map(
+            guidedSessionDao.loadGuidedSessionBootstrap(sessionId),
+        )
+        val snapshot = when (bootstrap) {
+            is GuidedSessionBootstrapResult.Ready -> bootstrap.snapshot
+            is GuidedSessionBootstrapResult.ReconciliationRequired -> bootstrap.snapshot
+            is GuidedSessionBootstrapResult.Completed -> bootstrap.snapshot
+            GuidedSessionBootstrapResult.UnknownSession,
+            is GuidedSessionBootstrapResult.Rejected,
+            -> return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.AUTHORITY_INCONSISTENT,
+            )
+        }
+        val journal = loadSettlementJournal(token)
+            ?: return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        if (candidate == CAPTURE_START_CANDIDATE_FAILED_CLEANED) {
+            if (settledAtEpochMillis < attempt.updatedAtEpochMillis) {
+                return settlementRejected(
+                    CaptureAttemptSettlementRejectionReason.INVALID_TIMESTAMP,
+                )
+            }
+            return if (journal.isEmpty()) {
+                CaptureAttemptSettlementResult.AlreadyFailedCleaned
+            } else {
+                settlementRejected(
+                    CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                )
+            }
+        }
+        if (
+            attempt.sessionId != sessionId ||
+            attempt.attemptNumber != session.nextAttemptNumber - 1L ||
+            attempt.poseIndex != session.currentPoseIndex ||
+            attempt.poseId != snapshot.orderedPoseIds[session.currentPoseIndex] ||
+            attempt.capturedDeletionGeneration != shoot.deletionGeneration
+        ) {
+            return settlementRejected(CaptureAttemptSettlementRejectionReason.STALE_POSE)
+        }
+        if (shoot.lifecycleState != ACTIVE) {
+            return CaptureAttemptSettlementResult.BlockedByDeletion
+        }
+        if (session.lifecycleState != ACTIVE) {
+            return settlementRejected(CaptureAttemptSettlementRejectionReason.WRONG_STATE)
+        }
+
+        val latestJournalClock = journal.maxOfOrNull { operation ->
+            maxOf(
+                operation.updatedAtEpochMillis,
+                operation.capturedAtEpochMillis ?: operation.updatedAtEpochMillis,
+            )
+        } ?: attempt.updatedAtEpochMillis
+        if (
+            settledAtEpochMillis < attempt.updatedAtEpochMillis ||
+            settledAtEpochMillis < session.updatedAtEpochMillis ||
+            settledAtEpochMillis < shoot.updatedAtEpochMillis ||
+            settledAtEpochMillis < latestJournalClock
+        ) {
+            return settlementRejected(CaptureAttemptSettlementRejectionReason.INVALID_TIMESTAMP)
+        }
+
+        if (candidate == CAPTURE_START_CANDIDATE_RECONCILIATION_REQUIRED) {
+            val recoveredClean = journal.size == BURST_OUTPUT_COUNT && journal.all { operation ->
+                operation.stage == CaptureFileOperationStage.CLEANED_DURABLE &&
+                    operation.lastFailureCode == null &&
+                    !operation.reconciliationRequired
+            }
+            if (recoveredClean) {
+                return applyFailedCleanedSettlement(
+                    attempt = attempt,
+                    session = session,
+                    journalRowCount = journal.size,
+                    settledAtEpochMillis = settledAtEpochMillis,
+                )
+            }
+            return if (
+                journal.size == BURST_OUTPUT_COUNT &&
+                snapshot.blockingAttempt?.commandToken == token.value
+            ) {
+                CaptureAttemptSettlementResult.AlreadyReconciliationRequired
+            } else {
+                settlementRejected(
+                    CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                )
+            }
+        }
+
+        if (
+            snapshot.blockingAttempt?.commandToken != token.value ||
+            journal.size != BURST_OUTPUT_COUNT
+        ) {
+            return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        val noCandidateBytes = journal.all { operation ->
+            operation.lastFailureCode == null &&
+                !operation.reconciliationRequired &&
+                operation.stage in setOf(
+                    CaptureFileOperationStage.EXPECTING_RESERVATION,
+                    CaptureFileOperationStage.CLEANED_DURABLE,
+                )
+        } && journal.map(CaptureFileOperationSnapshot::stage).distinct().size == 1
+        if (
+            candidate == CAPTURE_START_CANDIDATE_REGISTERED &&
+            !journal.all { operation ->
+                operation.stage == CaptureFileOperationStage.EXPECTING_RESERVATION &&
+                    operation.updatedAtEpochMillis == operation.createdAtEpochMillis
+            }
+        ) {
+            return settlementRejected(
+                CaptureAttemptSettlementRejectionReason.JOURNAL_AUTHORITY_INVALID,
+            )
+        }
+        if (noCandidateBytes) {
+            return applyFailedCleanedSettlement(
+                attempt = attempt,
+                session = session,
+                journalRowCount = journal.size,
+                settledAtEpochMillis = settledAtEpochMillis,
+            )
+        }
+        if (
+            journal.all { operation ->
+                operation.stage == CaptureFileOperationStage.FINAL_DURABLE &&
+                    operation.lastFailureCode == null &&
+                    !operation.reconciliationRequired
+            }
+        ) {
+            return CaptureAttemptSettlementResult.ReadyToConfirm
+        }
+        if (candidate != CAPTURE_START_CANDIDATE_CAPTURING) {
+            return settlementRejected(CaptureAttemptSettlementRejectionReason.WRONG_STATE)
+        }
+        if (
+            captureAttemptDao.markAttemptReconciliationRequired(
+                commandToken = token.value,
+                sessionId = sessionId,
+                expectedUpdatedAtEpochMillis = attempt.updatedAtEpochMillis,
+                settledAtEpochMillis = settledAtEpochMillis,
+            ) != 1
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+        advanceSessionClockForSettlement(session, attempt, settledAtEpochMillis)
+        val post = GuidedSessionBootstrapMapper.map(
+            guidedSessionDao.loadGuidedSessionBootstrap(sessionId),
+        )
+        if (
+            post !is GuidedSessionBootstrapResult.ReconciliationRequired ||
+            post.snapshot.blockingAttempt?.state !=
+            GuidedCaptureAttemptState.RECONCILIATION_REQUIRED ||
+            post.snapshot.blockingAttempt.commandToken != token.value
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+        return CaptureAttemptSettlementResult.ReconciliationRequired
+    }
+
+    private fun applyFailedCleanedSettlement(
+        attempt: CaptureAttemptEntity,
+        session: ShootSessionEntity,
+        journalRowCount: Int,
+        settledAtEpochMillis: Long,
+    ): CaptureAttemptSettlementResult {
+        if (captureFileOperationDao.deleteOperationsForConfirmedAttempt(attempt.commandToken) !=
+            journalRowCount
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+        afterSettlementJournalDelete()
+        if (
+            captureAttemptDao.settleAttemptFailedCleaned(
+                commandToken = attempt.commandToken,
+                sessionId = attempt.sessionId,
+                expectedLifecycleState = attempt.lifecycleState,
+                expectedUpdatedAtEpochMillis = attempt.updatedAtEpochMillis,
+                settledAtEpochMillis = settledAtEpochMillis,
+            ) != 1
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+        advanceSessionClockForSettlement(session, attempt, settledAtEpochMillis)
+        val post = GuidedSessionBootstrapMapper.map(
+            guidedSessionDao.loadGuidedSessionBootstrap(session.sessionId),
+        )
+        if (
+            post !is GuidedSessionBootstrapResult.Ready ||
+            post.snapshot.blockingAttempt != null ||
+            post.snapshot.failedAttemptCount < 1
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+        return CaptureAttemptSettlementResult.FailedCleaned
+    }
+
+    private fun advanceSessionClockForSettlement(
+        session: ShootSessionEntity,
+        attempt: CaptureAttemptEntity,
+        settledAtEpochMillis: Long,
+    ) {
+        if (
+            captureAttemptDao.advanceSessionClockForAttemptSettlement(
+                sessionId = session.sessionId,
+                expectedPoseIndex = attempt.poseIndex,
+                expectedNextAttemptNumber = attempt.attemptNumber + 1L,
+                expectedDeletionGeneration = attempt.capturedDeletionGeneration,
+                expectedUpdatedAtEpochMillis = session.updatedAtEpochMillis,
+                settledAtEpochMillis = settledAtEpochMillis,
+            ) != 1
+        ) {
+            throw AttemptSettlementCasFailedException()
+        }
+    }
+
+    private fun loadSettlementJournal(
+        token: CaptureToken,
+    ): List<CaptureFileOperationSnapshot>? {
+        val count = captureFileOperationDao.countOperationsForToken(token.value)
+        if (count == 0L) return emptyList()
+        if (count != BURST_OUTPUT_COUNT.toLong()) return null
+        return (0 until BURST_OUTPUT_COUNT).map { ordinal ->
+            val identity = PrivateOutputIdentity(token, ordinal)
+            val paths = CaptureFileOperationPaths.forIdentity(identity)
+            if (
+                captureFileOperationDao.classifyOperationStorage(
+                    commandToken = token.value,
+                    burstOrdinal = ordinal,
+                    relativeFinalPath = paths.relativeFinalPath,
+                    relativeTempPath = paths.relativeTempPath,
+                    relativeQuarantinePath = paths.relativeQuarantinePath,
+                ) != OPERATION_STORAGE_VALID
+            ) {
+                return null
+            }
+            val operation = captureFileOperationDao.findOperationCandidates(
+                token.value,
+                ordinal,
+            ).singleOrNull() ?: return null
+            CaptureFileOperationSnapshot(
+                identity = identity,
+                paths = paths,
+                stage = operation.stage,
+                byteCount = operation.byteCount,
+                sha256 = operation.sha256,
+                capturedAtEpochMillis = operation.capturedAtEpochMillis,
+                lastFailureCode = operation.lastFailureCode,
+                reconciliationRequired = operation.reconciliationRequired,
+                createdAtEpochMillis = operation.createdAtEpochMillis,
+                updatedAtEpochMillis = operation.updatedAtEpochMillis,
+            ).also { snapshot ->
+                require(operation.relativeFinalPath == snapshot.paths.relativeFinalPath)
+                require(operation.relativeTempPath == snapshot.paths.relativeTempPath)
+                require(operation.relativeQuarantinePath == snapshot.paths.relativeQuarantinePath)
+            }
+        }
+    }
+
+    private fun settlementRejected(reason: CaptureAttemptSettlementRejectionReason) =
+        CaptureAttemptSettlementResult.Rejected(reason)
+
     private fun registerCaptureAttemptInTransaction(
         sessionId: String,
         command: ShootEffect.CaptureCommand,
@@ -1601,6 +2323,20 @@ class RoomShootRepository(
         if (session.lifecycleState != ACTIVE) {
             return AttemptRegistrationResult.Rejected(
                 AttemptRegistrationRejectionReason.INACTIVE_SESSION,
+            )
+        }
+
+        when (captureAttemptDao.classifySessionAttemptAdmission(sessionId)) {
+            ATTEMPT_ADMISSION_CLEAR -> Unit
+            ATTEMPT_ADMISSION_BLOCKED -> return AttemptRegistrationResult.Rejected(
+                AttemptRegistrationRejectionReason.UNRESOLVED_ATTEMPT,
+            )
+            ATTEMPT_ADMISSION_AUTHORITY_INVALID ->
+                return AttemptRegistrationResult.Rejected(
+                    AttemptRegistrationRejectionReason.JOURNAL_AUTHORITY_INVALID,
+                )
+            else -> return AttemptRegistrationResult.Rejected(
+                AttemptRegistrationRejectionReason.JOURNAL_AUTHORITY_INVALID,
             )
         }
 
@@ -1748,6 +2484,11 @@ class RoomShootRepository(
                 )
             }
             CAPTURE_START_CANDIDATE_CONFIRMED -> {
+                return captureStartRejected(CaptureAttemptStartRejectionReason.WRONG_STATE)
+            }
+            CAPTURE_START_CANDIDATE_FAILED_CLEANED,
+            CAPTURE_START_CANDIDATE_RECONCILIATION_REQUIRED,
+            -> {
                 return captureStartRejected(CaptureAttemptStartRejectionReason.WRONG_STATE)
             }
             CAPTURE_START_CANDIDATE_REGISTERED,
@@ -1929,6 +2670,9 @@ class RoomShootRepository(
         const val REGISTRATION_REPLAY_TOKEN_CONFLICT = 1
         const val REGISTRATION_REPLAY_COHERENT = 2
         const val REGISTRATION_REPLAY_AUTHORITY_INVALID = 3
+        const val ATTEMPT_ADMISSION_CLEAR = 0
+        const val ATTEMPT_ADMISSION_BLOCKED = 1
+        const val ATTEMPT_ADMISSION_AUTHORITY_INVALID = 2
 
         const val CAPTURE_START_CANDIDATE_ABSENT = 0
         const val CAPTURE_START_CANDIDATE_AUTHORITY_INVALID = 1
@@ -1936,6 +2680,10 @@ class RoomShootRepository(
         const val CAPTURE_START_CANDIDATE_REGISTERED = 3
         const val CAPTURE_START_CANDIDATE_CAPTURING = 4
         const val CAPTURE_START_CANDIDATE_CONFIRMED = 5
+        const val CAPTURE_START_CANDIDATE_FAILED_CLEANED = 6
+        const val CAPTURE_START_CANDIDATE_RECONCILIATION_REQUIRED = 7
+        const val JOURNAL_FREE_RECOVERY_ABSENT = 0
+        const val JOURNAL_FREE_RECOVERY_VALID = 1
 
         const val CAPTURE_START_INITIAL_AUTHORITY_COHERENT = 0
         const val CAPTURE_START_INITIAL_TIMESTAMP_BACKWARD = 1
@@ -1954,6 +2702,8 @@ class RoomShootRepository(
         const val REGISTERED = "REGISTERED"
         const val CAPTURING = "CAPTURING"
         const val CONFIRMED = "CONFIRMED"
+        const val FAILED_CLEANED = "FAILED_CLEANED"
+        const val RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
         const val DURABLE = "DURABLE"
         const val PENDING = "PENDING"
         const val CLAIMED = "CLAIMED"
@@ -1965,3 +2715,19 @@ class RoomShootRepository(
         const val NONE = "NONE"
     }
 }
+
+private const val OPERATION_STORAGE_VALID = 1
+
+private class AttemptSettlementCasFailedException : RuntimeException()
+
+internal fun hasAdmittedCaptureFileEffect(stages: Iterable<CaptureFileOperationStage>): Boolean =
+    stages.any { stage ->
+        when (stage) {
+            CaptureFileOperationStage.WRITING_TEMP,
+            CaptureFileOperationStage.FINAL_RENAME_PENDING_SYNC,
+            CaptureFileOperationStage.CLEANUP_PENDING_SYNC,
+            CaptureFileOperationStage.QUARANTINE_PENDING_SYNC,
+            -> true
+            else -> false
+        }
+    }

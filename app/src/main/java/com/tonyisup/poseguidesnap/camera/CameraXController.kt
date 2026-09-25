@@ -2,6 +2,7 @@ package com.tonyisup.poseguidesnap.camera
 
 import android.content.Context
 import android.view.Surface
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -11,6 +12,7 @@ import androidx.camera.core.ViewPort
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -29,6 +31,7 @@ class CameraXController private constructor(
     private val onFailure: (Throwable) -> Unit,
 ) : CameraController {
     private data class OwnedUseCases(
+        val camera: Camera,
         val preview: Preview,
         val analysis: ImageAnalysis,
         val imageCapture: ImageCapture,
@@ -133,6 +136,14 @@ class CameraXController private constructor(
         requireNotNull(ownedUseCases).imageCapture
     }
 
+    /** Asynchronous control of this controller's bound rear light; callers must turn it off. */
+    internal fun setTorchEnabled(enabled: Boolean): ListenableFuture<Void> = synchronized(lock) {
+        check(!closed && currentState.status == CameraControllerStatus.READY) {
+            "Torch control is unavailable before the controller is ready"
+        }
+        requireNotNull(ownedUseCases).camera.cameraControl.enableTorch(enabled)
+    }
+
     /** Privacy-safe aggregate cadence counters for device acceptance; retains no frame evidence. */
     internal fun cadenceSnapshot(): AnalysisCadenceGate.Snapshot = analyzer.cadenceSnapshot()
 
@@ -163,6 +174,8 @@ class CameraXController private constructor(
             ownedUseCases.also { ownedUseCases = null }
         }
         if (owned != null) {
+            // Unbinding must still run if the camera can no longer accept a torch request.
+            runCatching { owned.camera.cameraControl.enableTorch(false) }
             owned.analysis.clearAnalyzer()
             if (provider != null) {
                 provider.unbind(owned.preview, owned.analysis, owned.imageCapture)
@@ -223,7 +236,7 @@ class CameraXController private constructor(
             return
         }
 
-        try {
+        val camera = try {
             resolvedProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
@@ -240,7 +253,7 @@ class CameraXController private constructor(
                 false
             } else {
                 provider = resolvedProvider
-                ownedUseCases = OwnedUseCases(preview, analysis, imageCapture)
+                ownedUseCases = OwnedUseCases(camera, preview, analysis, imageCapture)
                 true
             }
         }
