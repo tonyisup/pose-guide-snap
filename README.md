@@ -1,10 +1,8 @@
 # Pose Guide Snap
 
-> **Project status: Tasks 1–12, 14A.1–14A.3, Task 14B.1B–14B.3, Task 15A manual guided capture, and Tasks 16A–16H are implemented; Task 16I's unchanged-build bright-light repeat detected one person in all 96 frames with all 17 landmarks confidence-qualified. The last host gate passed 728/728 JVM tests and 14/14 Python tests with zero lint errors. Task 16J's same-setup empty-scene control reported no person in 97/97 frames. Task 16K evaluated 97/97 reference-pose frames but acquired no lock; framing failed throughout. Task 16L measured centering `0.382–0.386` and size `0.692–0.711`; both miss the existing `0.800` framing gate. Task 16M improved centering to `0.787–0.793`, but size `0.663–0.668` and pose criteria still prevented a lock; live alignment feedback is the next development step. Repeated calibration remains needed. No threshold changed, automatic capture remains disabled, and Gate 2 remains incomplete. No product-shipped claim is made.**
->
-> Task 15A now loads the exact selected Room reference, restores reducer state, exposes manual Capture and safe Stop controls, and serializes CameraX through Room admission, exact three-file publication, journal-derived confirmation, and one advance. Startup finishes exact cleanup or an already-durable confirmation before camera admission. Automatic capture, MediaStore execution, physical deletion UI, TTS/audio, calibrated matching, and complete end-to-end hardware acceptance remain open.
+> **Status:** the current state of the project is kept in one place, [Development progress](docs/DEVELOPMENT_PROGRESS.md). The [25 September 2026 review](docs/PROJECT_REVIEW_2026-09-25.md) has the current assessment and milestone order.
 
-Current development: see the [September 8 checkpoint](docs/DEVELOPMENT_PROGRESS.md) for the manual-capture evidence, calibration collector, and remaining hardware boundary.
+Current development: see [Development progress](docs/DEVELOPMENT_PROGRESS.md).
 
 Pose Guide Snap is a planned Android-first guided selfie app. The intended MVP will let one person arrange a sequence of reference poses, receive concise framing and pose guidance, automatically trigger a three-photo capture only after a stable, high-confidence pose match, or request the same three-photo protocol manually. Pose processing is planned to stay on the device.
 

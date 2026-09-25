@@ -1,6 +1,6 @@
 # Product Contract
 
-> **Project status: Tasks 1–12, 14A.1–14A.3, Task 14B.1B–14B.3, Task 15A manual guided capture, and Tasks 16A–16H are implemented. The last host gate passed 728/728 JVM and 14/14 Python tests with zero lint errors.** Task 16I's unchanged-build bright-light repeat detected one person with all 17 landmarks qualified in 96/96 frames. Task 16J's same-setup empty-scene control reported no person in 97/97 frames. Task 16K evaluated 97/97 intended reference-match frames but never locked; framing is the largest blocker. Task 16L identified center alignment as the lower component, with size also below the existing requirement. Further calibration remains needed; no threshold changed. Automatic capture, MediaStore execution, audio, physical deletion, calibrated matching, and the complete guided workflow remain open. Repository landing is not a product-shipped claim. Task 16M collected 97 fully evaluated frames with the flash cue: centering improved, but scale and pose criteria still prevented a lock. Exact cleanup passed; live alignment feedback is next. See the [Task 16M record](validation/2026-09-17-task16m-recentered-reference-match-pixel6.md).
+> **Status:** see [Development progress](DEVELOPMENT_PROGRESS.md) for the current state of the project and the [25 September 2026 review](PROJECT_REVIEW_2026-09-25.md) for the current assessment and milestone order.
 
 ## Product goal
 
